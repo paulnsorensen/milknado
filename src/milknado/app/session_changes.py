@@ -97,7 +97,8 @@ class SessionChangesMixin(metaclass=type(MessagePump)):
             self._changes_token += 1
             self._diff_token += 1
             self._diff_identity = None
-            self._pending_changes = self._pending_diff = None
+            self._pending_changes = None
+            self._pending_diff = None
             self._clear_changes(
                 None if identity else "Changes unavailable: no session worktree.",
                 loading=identity is not None,

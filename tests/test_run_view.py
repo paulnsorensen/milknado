@@ -17,6 +17,7 @@ from milknado.app.run_view import (
     format_duration,
     format_eta,
     format_progress,
+    goal_review_prompt,
     output_body,
     output_border_title,
     run_index,
@@ -25,6 +26,7 @@ from milknado.app.run_view import (
     subtitle_text,
     summary_text,
 )
+from milknado.domains.graph import GoalReviewDecision, GoalReviewRecord
 
 
 def active_run(**overrides: object) -> ActiveRunSnapshot:
@@ -150,6 +152,48 @@ def test_subtitle_text_renders_available_count() -> None:
     )
     assert subtitle_text(snapshot) == (
         "2 active · 3 completed · 1 failed · 2 stopped · 5 available"
+    )
+
+
+def test_subtitle_text_identifies_pending_goal_review() -> None:
+    review = GoalReviewRecord(
+        review_id=4,
+        goal_id=9,
+        goal_revision="sha256:goal",
+        evidence="Evidence",
+        proposed_change="Change",
+        decision=GoalReviewDecision.PENDING,
+        affected_node_ids=None,
+        reviewer="worker",
+        assessed_at="2026-09-13T12:00:00+00:00",
+        decided_at=None,
+        decided_by=None,
+    )
+    snapshot = execution_snapshot(pending_goal_reviews=(review,))
+
+    assert goal_review_prompt(snapshot) == "Review pending: goal 9 · review 4"
+    assert subtitle_text(snapshot).endswith(" · Review pending: goal 9 · review 4")
+
+
+def test_goal_review_prompt_shows_remaining_count() -> None:
+    review = GoalReviewRecord(
+        review_id=4,
+        goal_id=9,
+        goal_revision="sha256:goal",
+        evidence="Evidence",
+        proposed_change="Change",
+        decision=GoalReviewDecision.PENDING,
+        affected_node_ids=None,
+        reviewer="worker",
+        assessed_at="2026-09-13T12:00:00+00:00",
+        decided_at=None,
+        decided_by=None,
+    )
+    other_review = replace(review, review_id=5, goal_id=10)
+
+    assert (
+        goal_review_prompt(execution_snapshot(pending_goal_reviews=(review, other_review)))
+        == "Review pending: goal 9 · review 4 (+1 more)"
     )
 
 

@@ -196,7 +196,9 @@ async def test_palette_quit_requires_confirmation_and_preserves_session_draft(
 ) -> None:
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("i", *"keep this input", "escape", "h")
+        await pilot.press("i")
+        await pilot.pause()
+        await pilot.press(*"keep this input", "escape", "h")
         await pilot.pause()
         assert app.screen.is_modal
         await pilot.press("escape", "ctrl+p", *"quit")

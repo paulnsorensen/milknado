@@ -17,7 +17,8 @@ def close_owner(
     with conn:
         _ = conn.execute(
             """UPDATE owner_capabilities
-               SET actions_json = '[]', permission_ids_json = '[]', published_at = ?
+               SET actions_json = '[]', permission_ids_json = '[]',
+                   permission_commands_json = '[]', published_at = ?
                WHERE run_id = ? AND owner_incarnation = ? AND invocation_id = ?""",
             (timestamp, *fence),
         )

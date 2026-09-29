@@ -16,7 +16,14 @@ from typing import NoReturn, TypedDict, cast
 
 import pytest
 
-from milknado.domains.common import MikadoNode, MilknadoConfig, NodeKind, NodeSpec, NodeStatus
+from milknado.domains.common import (
+    MikadoNode,
+    MilknadoConfig,
+    NodeKind,
+    NodeSpec,
+    NodeStatus,
+    SessionContext,
+)
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import open_graph
@@ -308,8 +315,21 @@ def test_node_verify_passing_gates_returns_ok(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
     claim = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
-    # Produce a stageable change so the change-rejection check passes.
-    _ = (_worktree(claim) / "out.txt").write_text("work\n", encoding="utf-8")
+    worktree = _worktree(claim)
+    base_oid = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=worktree, text=True
+    ).strip()
+    graph, _cfg = open_graph(repo)
+    try:
+        graph.sessions.start(
+            claim["run_id"],
+            SessionContext(family="claude", cwd=str(worktree), base_oid=base_oid),
+        )
+    finally:
+        graph.close()
+    _ = (worktree / "out.txt").write_text("work\n", encoding="utf-8")
+    for command in (["git", "add", "out.txt"], ["git", "commit", "-m", "work"]):
+        _ = subprocess.run(command, cwd=worktree, check=True, capture_output=True)
 
     verdict = _call(milknado_node_verify, run_id=claim["run_id"], project_root=str(repo))
     assert verdict == {"ok": True, "feedback": ""}

@@ -150,6 +150,27 @@ def _events(conn: sqlite3.Connection, run_id: str, limit: int) -> tuple[SessionE
     return tuple(_decode_event(cast(str, row[1]), cast(int, row[0])) for row in reversed(rows))
 
 
+def _permission_events(
+    events: tuple[SessionEvent, ...], permission_ids: tuple[str, ...]
+) -> tuple[SessionEvent, ...]:
+    permission_events = tuple(event for event in events if event.kind == "permission")
+    known = {event.event_id for event in permission_events}
+    requested = tuple(event for event in permission_events if event.state == "requested")
+    return (
+        *requested,
+        *(
+            SessionEvent(
+                kind="permission",
+                text=permission_id,
+                event_id=permission_id,
+                state="requested",
+            )
+            for permission_id in permission_ids
+            if permission_id not in known
+        ),
+    )
+
+
 def event_page(
     conn: sqlite3.Connection, run_id: str, page: int, limit: int
 ) -> SnapshotPage[SessionEvent]:
@@ -192,8 +213,8 @@ def view_session(
         active=is_active,
         owner_incarnation=capabilities.owner_incarnation if capabilities is not None else "",
         invocation_id=capabilities.invocation_id if capabilities is not None else "",
-        permissions=tuple(
-            event for event in events if event.kind == "permission" and event.state == "requested"
+        permissions=_permission_events(
+            events, capabilities.permission_ids if capabilities is not None else ()
         ),
     )
 

@@ -10,9 +10,11 @@ from typing import Literal, cast
 import msgspec
 
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
+import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common.session import SessionView
 from milknado.domains.graph._run_persistence import run_row_to_dict
 from milknado.domains.graph._session_persistence import view_session
+from milknado.domains.graph.goal_review import GoalReviewRecord
 from milknado.domains.graph.snapshot import (
     connect_readonly,
     read_graph_snapshot_connection,
@@ -21,6 +23,7 @@ from milknado.domains.graph.snapshot import (
 from milknado.domains.graph.snapshot_models import GraphSnapshot, NodeDetailResponse
 
 _NODE_DETAIL_DEFAULT_LIMIT = 50
+_MAX_PENDING_GUIDANCE = 64
 
 
 class DurableRun(msgspec.Struct, frozen=True):
@@ -38,6 +41,7 @@ class DurableRun(msgspec.Struct, frozen=True):
     timeout_seconds: int | None
     detail: str | None
     rebased: bool | None
+    pending_guidance: tuple[str, ...] = ()
     session: SessionView = SessionView()
 
 
@@ -46,9 +50,24 @@ class ObserverSnapshot:
     runs: tuple[DurableRun, ...]
     goal: str
     available: int
+    completed: int
+    failed: int
+    stopped: int
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
     graph_revision: int | None = None
+    pending_goal_reviews: tuple[GoalReviewRecord, ...] = ()
+
+
+def _pending_guidance(conn: sqlite3.Connection, run_id: str) -> tuple[str, ...]:
+    query = (
+        "SELECT action, text FROM session_commands "
+        "WHERE run_id = ? AND status = 'queued' "
+        "AND action IN ('steer', 'follow_up') "
+        "ORDER BY admission_seq LIMIT ?"
+    )
+    rows: list[sqlite3.Row] = conn.execute(query, (run_id, _MAX_PENDING_GUIDANCE)).fetchall()
+    return tuple(cast(str, row[1]) or cast(str, row[0]) for row in rows)
 
 
 def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
@@ -69,6 +88,7 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
         timeout_seconds=record["timeout_seconds"],
         detail=record["detail"],
         rebased=record["rebased"],
+        pending_guidance=_pending_guidance(conn, record["run_id"]),
         session=session,
     )
 
@@ -76,10 +96,24 @@ def _durable_run(conn: sqlite3.Connection, row: sqlite3.Row) -> DurableRun:
 def _durable_runs(conn: sqlite3.Connection, limit: int) -> tuple[DurableRun, ...]:
     rows: list[sqlite3.Row] = conn.execute(
         "SELECT r.*, n.description FROM runs r JOIN nodes n ON n.id = r.node_id "
-        + "ORDER BY r.started_at DESC LIMIT ?",
+        + "WHERE n.archived_at IS NULL ORDER BY r.started_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return tuple(_durable_run(conn, row) for row in rows)
+
+
+def _run_totals(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    row = cast(
+        sqlite3.Row,
+        conn.execute(
+            "SELECT "
+            + "COALESCE(SUM(status = 'done'), 0), "
+            + "COALESCE(SUM(status = 'failed'), 0), "
+            + "COALESCE(SUM(status = 'stopped'), 0) "
+            + "FROM runs"
+        ).fetchone(),
+    )
+    return cast(int, row[0]), cast(int, row[1]), cast(int, row[2])
 
 
 def _goal_description(conn: sqlite3.Connection) -> str:
@@ -142,6 +176,7 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
     try:
         available = _available_count(conn)
         revision = _graph_revision(conn)
+        completed, failed, stopped = _run_totals(conn)
         graph = (
             cached_graph
             if cached_graph is not None and revision == cached_graph_revision
@@ -158,9 +193,13 @@ def read_observer_snapshot_connection(  # noqa: PLR0913 - observer and detail fe
             runs=_durable_runs(conn, limit),
             goal=_goal_description(conn),
             available=available,
+            completed=completed,
+            failed=failed,
+            stopped=stopped,
             graph=graph,
             node=node,
             graph_revision=revision,
+            pending_goal_reviews=_goal_review.pending_goal_reviews(conn),
         )
     finally:
         conn.rollback()

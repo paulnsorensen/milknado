@@ -14,10 +14,12 @@ from milknado.domains.common import (
     NodeKind,
     NodeSpec,
     NodeStatus,
+    RunResult,
     SessionContext,
     SessionEvent,
+    SessionInput,
 )
-from milknado.domains.graph import MikadoGraph, read_observer_snapshot
+from milknado.domains.graph import MikadoGraph, admit_session_command, read_observer_snapshot
 from milknado.domains.graph import snapshot_history as history
 from milknado.domains.graph.snapshot import connect_readonly
 
@@ -152,6 +154,53 @@ def test_observer_snapshot_uses_readonly_connection_and_response_fences(tmp_path
     assert missing.detail is None
 
 
+def test_observer_snapshot_projects_queued_guidance(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    node = graph.add_node("node")
+    assert graph.claim_node(node.id, "run-1", now="2026-09-12T00:00:00+00:00")
+    graph.runs.start("run-1", node.id, str(tmp_path / "run.log"), "2026-09-12T00:00:00+00:00", 60)
+    graph.sessions.start("run-1", SessionContext(family="codex", cwd=str(tmp_path)))
+    _ = graph.commands.publish_capabilities(
+        "run-1",
+        node.id,
+        "invoke-1",
+        "owner-1",
+        ("steer", "approve", "interrupt"),
+        ("permission-1",),
+        published_at="2026-09-12T00:00:00+00:00",
+    )
+    admitted = admit_session_command(
+        graph,
+        "run-1",
+        SessionInput(action="steer", text="guidance"),
+        owner_incarnation="owner-1",
+    )
+    assert admitted is not None
+    assert (
+        admit_session_command(
+            graph,
+            "run-1",
+            SessionInput(action="approve", request_id="permission-1"),
+            owner_incarnation="owner-1",
+        )
+        is not None
+    )
+    assert (
+        admit_session_command(
+            graph,
+            "run-1",
+            SessionInput(action="interrupt", text="goal review 1 pending"),
+            owner_incarnation="owner-1",
+        )
+        is not None
+    )
+
+    snapshot = read_observer_snapshot(db_path)
+    assert snapshot.runs[0].pending_guidance == ("guidance",)
+    graph.close()
+
+
 def test_detail_history_pages_are_bounded_and_keep_retained_state(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
     graph = MikadoGraph(db_path)
@@ -270,6 +319,33 @@ def test_detail_dag_references_hide_archived_nodes_consistently(tmp_path: Path) 
     graph.close()
 
 
+def test_observer_hides_runs_for_archived_nodes(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    node = graph.add_node("archived run")
+    graph.mark_running(node.id, run_id="archived-run")
+    graph.runs.start(
+        "archived-run", node.id, str(tmp_path / "run.log"), "2026-09-12T00:00:00+00:00", 60
+    )
+    graph.runs.finish(
+        "archived-run",
+        RunResult(
+            status="done",
+            exit_code=0,
+            timed_out=False,
+            ended_at="2026-09-12T00:01:00+00:00",
+        ),
+    )
+    assert graph.mark_terminal(node.id, "archived-run", NodeStatus.DONE)
+    assert graph.archive_subtree(node.id) == 1
+    graph.close()
+
+    snapshot = read_observer_snapshot(db_path)
+    assert snapshot.runs == ()
+    assert snapshot.graph is not None
+    assert snapshot.graph.nodes == ()
+
+
 def test_graph_snapshot_cache_refreshes_after_graph_mutation(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
     graph = MikadoGraph(db_path)
@@ -305,7 +381,39 @@ def test_graph_snapshot_roots_follow_parent_identity_not_dag_edges(tmp_path: Pat
     detail = graph.get_node_detail_snapshot(root.id, limit=10).detail
     assert detail is not None
     assert tuple(node.id for node in detail.children.items or ()) == (child.id,)
+
     assert detail.prerequisite_ids.items == (child.id,)
+    graph.close()
+
+
+def test_watch_totals_include_runs_outside_the_bounded_run_page(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    for index, status in enumerate(("failed", "failed", "done")):
+        node = graph.add_node(f"worker {index}")
+        run_id = f"run-{index}"
+        graph.runs.start(
+            run_id, node.id, str(tmp_path / f"{run_id}.log"), "2026-09-11T00:00:00+00:00", 60
+        )
+        graph.runs.finish(
+            run_id,
+            RunResult(
+                status=status,
+                exit_code=0 if status == "done" else 1,
+                timed_out=False,
+                ended_at="2026-09-11T00:00:01+00:00",
+                error=None if status == "done" else "worker failed",
+                detail=None,
+                rebased=None,
+            ),
+        )
+
+    source = WatchSnapshotSource(tmp_path, db_path, limit=1)
+    snapshot = source.snapshot()
+
+    assert len(snapshot.terminal_runs) == 1
+    assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 2, 0)
+    source.close()
     graph.close()
 
 

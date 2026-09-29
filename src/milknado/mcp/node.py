@@ -194,10 +194,13 @@ def milknado_node_verify(run_id: str, project_root: str = "") -> Response:
             raise ValueError(f"node {run['node_id']} for run {run_id!r} not found")
 
         cwd = Path(node.worktree_path) if node.worktree_path is not None else root
+        session = graph.sessions.view(run_id, limit=1)
+        base_oid = session.context.base_oid if session.context is not None else None
         profile = resolve_flavor_profile(cfg, node.flavor)
         verifier = build_completion_verifier(
             cwd,
             profile.quality_gates,
+            base_oid=base_oid,
             in_place=node.worktree_path is None,
             artifact_path=node.artifact_path,
         )
