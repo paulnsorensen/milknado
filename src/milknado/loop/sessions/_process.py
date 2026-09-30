@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import IO
 from weakref import WeakKeyDictionary
 
-from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._agent import (
     AgentRunSpec,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
+    _build_spawn_env,  # pyright: ignore[reportPrivateUsage]
     _setup_wind_down,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
@@ -252,23 +252,13 @@ def log_path(log_dir: Path, iteration: int) -> Path:
     return log_dir / f"{iteration:04d}_{uuid.uuid4().hex}.log"
 
 
-def worker_environment(env: dict[str, str] | None) -> dict[str, str]:
-    spawn_env = os.environ.copy()
-    _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
-    if env:
-        spawn_env.update(env)
-        _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
-    spawn_env[WORKER_CONTEXT_ENV] = "1"
-    return spawn_env
-
-
 def start_process(
     protocol: SessionProtocol,
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
     """Start a marked worker process without controller authority."""
-    spawn_env = worker_environment(env)
+    spawn_env = _build_spawn_env(env)
     if os.name == "nt":
         proc = subprocess.Popen(
             protocol.command,

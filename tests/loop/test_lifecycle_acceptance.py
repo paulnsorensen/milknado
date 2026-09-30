@@ -110,6 +110,32 @@ def _protected(
     return spawn_protected(options, context)
 
 
+def test_protected_executable_only_command_runs_after_ready(tmp_path: Path) -> None:
+    graph, node_id = _graph(tmp_path)
+    command = tmp_path / "worker"
+    marker = tmp_path / "worked"
+    _ = command.write_text("#!/bin/sh\ntouch worked\n", encoding="utf-8")
+    command.chmod(0o700)
+    supervisor = psutil.Process()
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id),
+        graph.db_path,
+    )
+    worker = spawn_protected(
+        SpawnOptions((str(command),), tmp_path, None, False, subprocess.DEVNULL, None, None),
+        context,
+    )
+    try:
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.ready_generation == 0
+        assert worker.process.wait(timeout=3) == 0
+        assert marker.exists()
+    finally:
+        assert worker.cleanup()
+        graph.close()
+
+
 @pytest.mark.parametrize("replace", [False, True], ids=["initial-ready", "replacement-ready"])
 def test_ready_lifeline_reaps_worker_after_supervisor_sigkill(
     tmp_path: Path,

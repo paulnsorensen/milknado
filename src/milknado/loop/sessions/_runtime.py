@@ -13,6 +13,7 @@ from milknado.domains.common import SessionContext, SessionEvent
 from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
+    _build_spawn_env,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.loop._process_contract import WorkerHandle
@@ -35,7 +36,6 @@ from milknado.loop.sessions._process import (
     start_process,
     start_readers,
     terminate,
-    worker_environment,
     write_commands,
 )
 from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
@@ -75,7 +75,7 @@ class _SessionExecution:
                 SpawnOptions(
                     self.protocol.command,
                     cwd,
-                    worker_environment(env),
+                    _build_spawn_env(env),
                     False,
                     subprocess.PIPE,
                     subprocess.PIPE,
@@ -249,15 +249,19 @@ class _SessionExecution:
         )
 
     def cleanup(self) -> None:
-        if self.protected is not None:
-            if not self.protected.cleanup(tuple(self.threads), stop=self.stop):
-                raise RuntimeError("worker cleanup remains unresolved")
-        elif self.proc is not None:
-            cleanup_process(self.proc, self.stop, tuple(self.threads))
-        if self.log_handle is not None:
-            self.log_handle.close()
-        if self.wind_down is not None:
-            self.wind_down.cleanup()
+        try:
+            if self.protected is not None:
+                if not self.protected.cleanup(tuple(self.threads), stop=self.stop):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            elif self.proc is not None:
+                cleanup_process(self.proc, self.stop, tuple(self.threads))
+        finally:
+            try:
+                if self.log_handle is not None:
+                    self.log_handle.close()
+            finally:
+                if self.wind_down is not None:
+                    self.wind_down.cleanup()
 
 
 def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecution:

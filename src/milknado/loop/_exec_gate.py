@@ -7,7 +7,7 @@ import sys
 
 
 def main() -> int:
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 3:
         return 72
     gate_fd = int(sys.argv[1])
     try:

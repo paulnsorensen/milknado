@@ -14,6 +14,7 @@ from typing import final
 import psutil
 
 from milknado.domains.common import WorkerIdentity
+from milknado.loop._output import SUBPROCESS_TEXT_KWARGS
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,7 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
         command = (sys.executable, "-m", "milknado.loop._exec_gate", str(gate_read), *command)
         kwargs["pass_fds"] = (gate_read,)
     if options.text:
-        kwargs.update(text=True, encoding="utf-8", errors="replace", bufsize=1)
+        kwargs.update(SUBPROCESS_TEXT_KWARGS)
     try:
         proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
             command,
