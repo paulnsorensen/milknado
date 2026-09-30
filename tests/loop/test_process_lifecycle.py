@@ -11,6 +11,7 @@ import psutil
 import pytest
 
 from milknado.domains.common import WorkerIdentity
+import milknado.loop._process_identity as process_identity
 from milknado.loop._process_lifecycle import SpawnOptions, spawn_gated, terminate_verified
 
 
@@ -104,3 +105,23 @@ def test_exec_gate_eof_aborts_without_agent_work(tmp_path: Path) -> None:
     worker.close_gate()
     assert worker.process.wait(timeout=3) != 0
     assert not marker.exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signal deadline is required")
+def test_verified_cleanup_never_signals_after_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[int] = []
+
+    def slow_identity(_pid: int, _token: float) -> str:
+        time.sleep(0.03)
+        return "live"
+
+    monkeypatch.setattr(process_identity, "identity_state", slow_identity)
+    monkeypatch.setattr(process_identity.os, "kill", lambda _pid, sig: signals.append(sig))
+    monkeypatch.setattr(process_identity.os, "killpg", lambda _pgid, sig: signals.append(sig))
+    monkeypatch.setattr(process_identity, "_group_state", lambda _pgid: "gone")
+    worker = WorkerIdentity("inv-1", 2345, 2345, 123.5)
+    result = terminate_verified(worker, (), time.monotonic() + 0.01)
+    assert signals == []
+    assert result.covered_exited is False
