@@ -184,6 +184,11 @@ def test_shutdown_during_takeover_uses_first_deadline(
         assert time.monotonic() - start < 1.7
         record = graph.runs.get_worker(worker.identity.invocation_id)
         assert record is not None and record.ended_at is None
+        release.set()
+        assert _until(lambda: worker._watch is not None and not worker._watch.is_alive())  # pyright: ignore[reportPrivateUsage]
+        assert worker._write_fd is None  # pyright: ignore[reportPrivateUsage]
+        assert _until(lambda: worker._helper.poll() is not None, timeout=5)  # pyright: ignore[reportPrivateUsage]
+        assert worker.process.poll() is not None
     finally:
         release.set()
         if worker.process.poll() is None:

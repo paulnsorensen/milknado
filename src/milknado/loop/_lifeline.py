@@ -103,6 +103,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
             _log.warning(
                 "lifeline observation unresolved invocation=%s: %s", helper.invocation_id, exc
             )
+            _ = terminate_verified(worker, record.descendants, deadline)
             return 1
     try:
         current = store.get(helper.invocation_id)
@@ -131,6 +132,11 @@ def run_lifeline(read_fd: int, helper: HelperIdentity, store: EvidenceStore) -> 
         if record is None:
             return 1
         if identity_state(record.pid, record.start_token) != "live":
+            return 1
+        if any(
+            identity_state(pid, token) not in ("live", "gone")
+            for pid, token, _ in record.descendants
+        ):
             return 1
         if not store.ready(helper, record.snapshot_seq):
             return 1

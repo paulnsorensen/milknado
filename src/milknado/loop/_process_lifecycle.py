@@ -146,8 +146,12 @@ class ProtectedWorker:
                     exc,
                 )
                 continue
-            self._helper = helper
-            self._write_fd = write_fd
+            with self._state_lock:
+                self._helper = helper
+                if self._stop.is_set() or self._stop_deadline is not None:
+                    os.close(write_fd)
+                    return False
+                self._write_fd = write_fd
             return True
         self._abort_replacement()
         return False
@@ -170,6 +174,7 @@ class ProtectedWorker:
             self._cleanup_lock.release()
 
     def _monitor(self) -> None:
+        next_snapshot = time.monotonic() + 1
         while not self._stop.wait(0.2):
             if self.process.poll() is not None:
                 self._normal_exit()
@@ -177,9 +182,13 @@ class ProtectedWorker:
             if self._helper.poll() is not None:
                 if not self._replace_helper():
                     return
+                next_snapshot = time.monotonic() + 1
+                continue
+            if time.monotonic() < next_snapshot:
                 continue
             try:
                 _ = _snapshot(self.worker, self._context.evidence)
+                next_snapshot = time.monotonic() + 1
             except (OSError, RuntimeError):
                 _log.exception(
                     "worker observation unresolved invocation=%s", self.identity.invocation_id

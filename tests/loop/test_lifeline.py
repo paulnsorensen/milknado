@@ -140,7 +140,7 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
         assert time.monotonic() - start < 4.0
         assert helper.stderr is not None
         assert "Traceback" not in helper.stderr.read()
-        assert worker.poll() is None
+        assert worker.wait(timeout=2) != 0
         lock.rollback()
         assert len(graph.runs.live_workers(run_id="run-1")) == 1
     finally:
