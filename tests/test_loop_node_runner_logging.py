@@ -1,4 +1,4 @@
-"""Ralph runner logs correlate terminal events with the dispatch run ID."""
+"""Loop runner logs correlate terminal events with the dispatch run ID."""
 
 from __future__ import annotations
 
@@ -7,15 +7,19 @@ from typing import NoReturn
 
 import pytest
 
+from milknado.domains.common import RunResult
 
+
+@pytest.mark.parametrize("case", [(True, False, 0), (False, False, 2), (True, True, 1)])
 def test_main_logs_terminal_event_with_run_id(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: tuple[bool, bool, int]
 ) -> None:
+    finish_result, fail_run, expected_rc = case
     import milknado.adapters as adapters
     import milknado.app.project as project
     import milknado.domains.execution as execution
-    from milknado.domains.execution.headless import HeadlessOutcome
-    from milknado.mcp import _ralph_node_runner
+    from milknado.domains.execution import NodeLoopOutcome
+    from milknado.mcp import _loop_node_runner
 
     messages: list[tuple[str, tuple[object, ...]]] = []
 
@@ -23,7 +27,7 @@ def test_main_logs_terminal_event_with_run_id(
         messages.append((message, args))
 
     monkeypatch.setattr(
-        _ralph_node_runner._logger,  # pyright: ignore[reportPrivateUsage]
+        _loop_node_runner._logger,  # pyright: ignore[reportPrivateUsage]
         "info",
         _log_info,
     )
@@ -45,14 +49,14 @@ def test_main_logs_terminal_event_with_run_id(
         def __init__(self) -> None:
             self.closed: bool = False
             self.finish_result: bool = True
-            self.finished: dict[str, object] | None = None
+            self.finished: RunResult | None = None
             self.runs: _Graph = self
 
         def get_node(self, _node_id: int) -> None:
             return None
 
-        def finish(self, run_id: str, result: object) -> None:
-            self.finished = {"run_id": run_id, "result": result}
+        def finish(self, _run_id: str, result: RunResult) -> None:
+            self.finished = result
             if not self.finish_result:
                 from milknado.domains.graph import RunFenceLostError
 
@@ -73,7 +77,7 @@ def test_main_logs_terminal_event_with_run_id(
         def current_branch(self) -> str:
             return "main"
 
-    class _StubRalph:
+    class _StubLoop:
         def poll_progress_events(self) -> list[object]:
             return []
 
@@ -85,8 +89,8 @@ def test_main_logs_terminal_event_with_run_id(
     def _make_git(_root: object) -> _Git:
         return _Git(_root)
 
-    def _make_ralph(*_args: object, **_kwargs: object) -> _StubRalph:
-        return _StubRalph()
+    def _make_loop(*_args: object, **_kwargs: object) -> _StubLoop:
+        return _StubLoop()
 
     def _make_executor(**_kwargs: object) -> object:
         return object()
@@ -97,18 +101,30 @@ def test_main_logs_terminal_event_with_run_id(
         captured_configs.append(kwargs)
         return object()
 
-    def _run_node_to_completion(*_args: object, **_kwargs: object) -> HeadlessOutcome:
-        return HeadlessOutcome(node_id=1, success=True, detail=None)
+    confirmed: list[bool] = []
+
+    class _StubRunLoop:
+        def __init__(self, **_kwargs: object) -> None: ...
+
+        def run_node(self, *_args: object, **_kwargs: object) -> NodeLoopOutcome:
+            if fail_run:
+                raise RuntimeError("worker wait failed")
+            return NodeLoopOutcome(node_id=1, success=True)
+
+        def confirm_preserved_stop(self, outcome: NodeLoopOutcome) -> NodeLoopOutcome:
+            confirmed.append(outcome.ownership_preserved)
+            return outcome
 
     monkeypatch.setattr(project, "open_graph", _open_graph)
     monkeypatch.setattr(adapters, "GitAdapter", _make_git)
-    monkeypatch.setattr(adapters, "LoopAdapter", _make_ralph)
+    monkeypatch.setattr(adapters, "LoopAdapter", _make_loop)
     monkeypatch.setattr(execution, "Executor", _make_executor)
     monkeypatch.setattr(execution, "ExecutionConfig", _make_execution_config)
-    monkeypatch.setattr(execution, "run_node_to_completion", _run_node_to_completion)
+    monkeypatch.setattr(execution, "RunLoop", _StubRunLoop)
 
+    graph.finish_result = finish_result
     run_id = "node-1-20260101T000000Z-abcd"
-    rc = _ralph_node_runner.main(
+    rc = _loop_node_runner.main(
         [
             "--node-id",
             "1",
@@ -123,34 +139,19 @@ def test_main_logs_terminal_event_with_run_id(
         ]
     )
 
-    assert rc == 0
-    assert any("ralph runner terminal" in message and run_id in args for message, args in messages)
+    assert rc == expected_rc
+    assert confirmed == [fail_run]
     assert captured_configs[0]["brief_prepend"] == "Detached worker instruction."
     assert list((tmp_path / ".milknado").glob("run-*.log")) == []
-
-    graph.finish_result = False
-    assert (
-        _ralph_node_runner.main(
-            [
-                "--node-id",
-                "1",
-                "--project-root",
-                str(tmp_path),
-                "--run-id",
-                "node-1-20260101T000000Z-beef",
-                "--target-branch",
-                "main",
-                "--base-oid",
-                "base",
-            ]
-        )
-        == 2
+    assert expected_rc != 0 or any(
+        "loop runner terminal" in message and run_id in args for message, args in messages
     )
+    assert expected_rc != 1 or (graph.finished is not None and graph.finished.status == "failed")
 
 
 def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) -> None:
     from milknado.domains.common import RunResult
-    from milknado.mcp import _ralph_node_runner
+    from milknado.mcp import _loop_node_runner
 
     class Graph:
         def __init__(self) -> None:
@@ -168,7 +169,7 @@ def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) 
         ended_at="2026-01-01T00:00:00+00:00",
     )
     assert (
-        _ralph_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
+        _loop_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
             Graph(), tmp_path, "run-1", result
         )
         is False
@@ -179,7 +180,7 @@ def test_finish_run_writes_terminal_error_sidecar_on_fence_loss(tmp_path: Path) 
 
 def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) -> None:
     from milknado.domains.common import RunResult
-    from milknado.mcp import _ralph_node_runner
+    from milknado.mcp import _loop_node_runner
 
     class Graph:
         def __init__(self) -> None:
@@ -195,7 +196,7 @@ def test_finish_run_records_exception_when_graph_write_raises(tmp_path: Path) ->
         ended_at="2026-01-01T00:00:00+00:00",
     )
     assert (
-        _ralph_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
+        _loop_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
             Graph(), tmp_path, "run-raise", result
         )
         is False
@@ -209,7 +210,7 @@ def test_finish_run_logs_sidecar_write_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.domains.common import RunResult
-    from milknado.mcp import _ralph_node_runner
+    from milknado.mcp import _loop_node_runner
 
     class Graph:
         def __init__(self) -> None:
@@ -231,7 +232,7 @@ def test_finish_run_logs_sidecar_write_failure(
     def _runs_dir(_root: Path) -> RunDirectory:
         return RunDirectory()
 
-    monkeypatch.setattr(_ralph_node_runner, "runs_dir", _runs_dir)
+    monkeypatch.setattr(_loop_node_runner, "runs_dir", _runs_dir)
     result = RunResult(
         status="failed",
         exit_code=1,
@@ -239,7 +240,7 @@ def test_finish_run_logs_sidecar_write_failure(
         ended_at="2026-01-01T00:00:00+00:00",
     )
     assert (
-        _ralph_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
+        _loop_node_runner._finish_run(  # pyright: ignore[reportPrivateUsage]
             Graph(), tmp_path, "run-sidecar", result
         )
         is False

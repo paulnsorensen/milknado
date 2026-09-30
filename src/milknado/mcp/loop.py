@@ -1,16 +1,16 @@
-"""Milknado MCP ralph-loop tools — thin registration over milknado.app.ralph.
+"""Milknado MCP loop tools — thin registration over milknado.app.loop.
 
 COORDINATOR-ONLY: never add these to WORKER_ALLOWED_TOOLS — a worker must not be
-able to spawn sub-ralph-loops. Unlike milknado_run_inline* (a single-shot worker
+able to spawn sub-loops. Unlike milknado_run_inline* (a single-shot worker
 piped a brief on stdin, isolated in its own worktree by default and merged back
 on success — or run in the shared checkout via worktree=THIS_BRANCH), these
-dispatch a node into its own git worktree + branch, iterate the ralph loop until
+dispatch a node into its own git worktree + branch, iterate the loop until
 the node's quality gates pass, then rebase-merge the branch back. The loop runs
 in its own detached process so it survives the MCP server restarting (hot-reload)
 or a cloud env being reclaimed; run state and node status both live in SQLite (the
 `runs` table and the `nodes` table), with log files on the filesystem.
 
-The claim/spawn policy and adapter wiring live in `milknado.app.ralph`; this
+The claim/spawn policy and adapter wiring live in `milknado.app.loop`; this
 module only parses I/O and registers the tools. The claim/spawn helpers are
 re-exported here for the tests that exercise them directly.
 """
@@ -24,14 +24,14 @@ from typing import cast
 from milknado.adapters import (
     TmuxAdapter,  # pyright: ignore[reportUnusedImport]  # noqa: F401  # monkeypatch seam for tests
 )
-from milknado.app.ralph import (
+from milknado.app.loop import (
     _DEFAULT_RUNNER,  # pyright: ignore[reportPrivateUsage]
-    RalphClaim,
-    RalphStartRequest,
-    _record_spawn_failure,  # pyright: ignore[reportPrivateUsage]
+    LoopClaim,
+    LoopStartRequest,
+    _record_start_failure,  # pyright: ignore[reportPrivateUsage]
     _remove_reclaimed_worktree,  # pyright: ignore[reportPrivateUsage]
     _resolve_runner_cmd,  # pyright: ignore[reportPrivateUsage]
-    start_ralph_run,
+    start_loop_run,
 )
 from milknado.domains.dispatch import (
     RUN_ID_RE,
@@ -51,9 +51,9 @@ _logger = logging.getLogger(__name__)
 
 __all__ = [
     "_DEFAULT_RUNNER",
-    "RalphClaim",
-    "RalphStartRequest",
-    "_record_spawn_failure",
+    "LoopClaim",
+    "LoopStartRequest",
+    "_record_start_failure",
     "_remove_reclaimed_worktree",
     "_resolve_runner_cmd",
     "milknado_run_loop_poll",
@@ -69,31 +69,30 @@ def milknado_run_loop_start(
     use_tmux: bool = False,
     project_root: str = "",
 ) -> RunDict:
-    """Start a task node in a detached worktree-backed Ralph loop.
+    """Start a task node in a detached worktree-backed loop.
 
     Returns immediately with a run ID for polling. Refuses concurrent dispatch.
     At the graph's concurrency_limit it spawns nothing and returns status
     "deferred" with running, limit, and detail. Wait for a slot, then retry.
     """
     root = resolve_project_root(project_root or None)
-    graph, cfg = open_graph(root)
+    graph, _cfg = open_graph(root)
     try:
-        request = RalphStartRequest(
+        request = LoopStartRequest(
             node_id=node_id,
             runner_cmd=runner_cmd,
             timeout_seconds=timeout_seconds,
             use_tmux=use_tmux,
             root=root,
-            concurrency_limit=cfg.concurrency_limit,
         )
-        return build_run_dict(cast(object, start_ralph_run(graph, request)))
+        return build_run_dict(cast(object, start_loop_run(graph, request)))
     finally:
         graph.close()
 
 
 @mcp.tool()
 def milknado_run_loop_poll(run_id: str, project_root: str = "") -> RunDict:
-    """Poll a ralph run from durable state and its persisted logs."""
+    """Poll a loop run from durable state and its persisted logs."""
     root = resolve_project_root(project_root or None)
     if not RUN_ID_RE.match(run_id):
         raise ValueError(f"invalid run_id format: {run_id!r}")

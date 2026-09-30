@@ -2,6 +2,7 @@ from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._command_admission import admit_session_command
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._run_persistence import RunRecord
+from milknado.domains.graph._transitions import ConcurrencyLimitReached
 from milknado.domains.graph.commands import (
     CommandFenceError,
     CommandReceipt,
@@ -61,6 +62,7 @@ from milknado.domains.graph.traversals import walk_ancestors
 __all__ = [
     "admit_session_command",
     "ControllerAuthorizationError",
+    "ConcurrencyLimitReached",
     "connect_readonly",
     "CommandFenceError",
     "CommandReceipt",

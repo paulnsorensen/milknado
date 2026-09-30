@@ -22,18 +22,22 @@ from milknado.domains.common.config import Gate, MilknadoConfig
 from milknado.domains.common.types import NodeSpec, NodeStatus, RebaseResult
 from milknado.domains.execution import (
     NO_GATES_CONFIGURED_MESSAGE,
-    DispatchResult,
     ExecutionConfig,
     Executor,
     RunLoop,
 )
-from milknado.domains.execution.executor import RebaseConflict, WorktreeManager
+from milknado.domains.execution._models import (
+    DispatchResult,
+    PreservedWorkerRun,
+    RebaseConflict,
+)
+from milknado.domains.execution.executor import WorktreeManager
 from milknado.domains.execution.run_loop.state import (
     RunLoopState,
     TerminalRunState,
     summarize_description,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import ConcurrencyLimitReached, MikadoGraph
 from milknado.loop import RunStatus
 
 T = TypeVar("T")
@@ -67,16 +71,16 @@ def _terminal_runs(loop: RunLoop) -> collections.deque[TerminalRunState]:
     return cast(collections.deque[TerminalRunState], attrgetter("_terminal_runs")(loop))
 
 
-def _success(ralph: object) -> dict[str, bool]:
-    return cast(dict[str, bool], attrgetter("_success")(ralph))
+def _success(loop: object) -> dict[str, bool]:
+    return cast(dict[str, bool], attrgetter("_success")(loop))
 
 
-def _runs(ralph: object) -> dict[str, "FakeRun"]:
-    return cast(dict[str, "FakeRun"], attrgetter("_runs")(ralph))
+def _runs(loop: object) -> dict[str, "FakeRun"]:
+    return cast(dict[str, "FakeRun"], attrgetter("_runs")(loop))
 
 
-def _ordinal_to_run_id(ralph: object) -> dict[str, str]:
-    return cast(dict[str, str], attrgetter("_ordinal_to_run_id")(ralph))
+def _ordinal_to_run_id(loop: object) -> dict[str, str]:
+    return cast(dict[str, str], attrgetter("_ordinal_to_run_id")(loop))
 
 
 def _mock_attr(value: object, name: str) -> MagicMock:
@@ -144,8 +148,8 @@ def _publish_state(loop: RunLoop) -> None:
     method()
 
 
-def _progress_before_completion(ralph: object) -> list[ProgressEvent]:
-    return cast(list[ProgressEvent], attrgetter("_progress_before_completion")(ralph))
+def _progress_before_completion(loop: object) -> list[ProgressEvent]:
+    return cast(list[ProgressEvent], attrgetter("_progress_before_completion")(loop))
 
 
 @dataclass
@@ -263,7 +267,7 @@ class FakeCrg:
         return []
 
 
-class FakeRalph:
+class FakeLoop:
     _run_counter: int
 
     def __init__(self) -> None:
@@ -283,8 +287,8 @@ class FakeRalph:
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -298,8 +302,8 @@ class FakeRalph:
     ) -> FakeRun:
         _ = (
             agent,
-            ralph_dir,
-            ralph_file,
+            loop_dir,
+            loop_file,
             quality_gates,
             project_root,
             commit_footer,
@@ -428,7 +432,7 @@ class FakeRalph:
         _ = (spec_text, graph_state)
         return VerifySpecResult(outcome="done")
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,
@@ -464,8 +468,8 @@ def fake_git() -> FakeGit:
 
 
 @pytest.fixture()
-def fake_ralph() -> FakeRalph:
-    return FakeRalph()
+def fake_loop() -> FakeLoop:
+    return FakeLoop()
 
 
 @pytest.fixture()
@@ -477,23 +481,23 @@ def fake_crg() -> FakeCrg:
 def executor(
     graph: MikadoGraph,
     fake_git: FakeGit,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
     fake_crg: FakeCrg,
 ) -> Executor:
-    return Executor(graph=graph, git=fake_git, ralph=fake_ralph, crg=fake_crg)
+    return Executor(graph=graph, git=fake_git, loop=fake_loop, crg=fake_crg)
 
 
 def test_state_is_bounded_and_published(
     run_loop: RunLoop,
     graph: MikadoGraph,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> None:
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
-    fake_ralph.output["run-1"] = [f"line {index}" for index in range(35)]
-    fake_ralph.guidance["run-1"] = ("use domain barrels",)
+    _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
+    fake_loop.output["run-1"] = [f"line {index}" for index in range(35)]
+    fake_loop.guidance["run-1"] = ("use domain barrels",)
     _active(run_loop)["run-1"] = leaf.id
     _progress_by_run(run_loop)["run-1"] = ProgressEvent(
         run_id="run-1", work=1, total=2, message="building"
@@ -622,12 +626,12 @@ class TestActiveStateProjectedFields:
         assert state.active_runs[0].attempt == 2
 
     def test_max_attempts_from_config_dispatch_max_retries(
-        self, graph: MikadoGraph, executor: Executor, fake_ralph: FakeRalph
+        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
     ) -> None:
         run_loop = RunLoop(
             executor=executor,
             graph=graph,
-            ralph=fake_ralph,
+            loop=fake_loop,
             config=MilknadoConfig(dispatch_max_retries=4),
         )
         _ = self._seed_active(run_loop, graph)
@@ -637,12 +641,12 @@ class TestActiveStateProjectedFields:
         assert state.active_runs[0].max_attempts == 5
 
     def test_stalled_false_below_threshold(
-        self, graph: MikadoGraph, executor: Executor, fake_ralph: FakeRalph
+        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
     ) -> None:
         run_loop = RunLoop(
             executor=executor,
             graph=graph,
-            ralph=fake_ralph,
+            loop=fake_loop,
             config=MilknadoConfig(stall_threshold_seconds=300),
         )
         _, run_id = self._seed_active(run_loop, graph)
@@ -654,12 +658,12 @@ class TestActiveStateProjectedFields:
         assert state.active_runs[0].stalled is False
 
     def test_stalled_true_at_or_above_threshold(
-        self, graph: MikadoGraph, executor: Executor, fake_ralph: FakeRalph
+        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
     ) -> None:
         run_loop = RunLoop(
             executor=executor,
             graph=graph,
-            ralph=fake_ralph,
+            loop=fake_loop,
             config=MilknadoConfig(stall_threshold_seconds=300),
         )
         _, run_id = self._seed_active(run_loop, graph)
@@ -672,7 +676,7 @@ class TestActiveStateProjectedFields:
 
 
 def test_terminal_run_duration_seconds_from_stopped_completion(
-    run_loop: RunLoop, graph: MikadoGraph, fake_ralph: FakeRalph
+    run_loop: RunLoop, graph: MikadoGraph, fake_loop: FakeLoop
 ) -> None:
     from milknado.domains.execution.run_loop._completion import handle_completion
 
@@ -681,7 +685,7 @@ def test_terminal_run_duration_seconds_from_stopped_completion(
     graph.mark_running(leaf.id)
     _active(run_loop)["run-1"] = leaf.id
     _dispatched_at(run_loop)["run-1"] = 100.0
-    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1"))
+    _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1"))
 
     with patch(
         "milknado.domains.execution.run_loop._completion.time.monotonic",
@@ -702,13 +706,13 @@ def test_terminal_run_duration_seconds_from_stopped_completion(
 def test_terminal_active_run_disables_all_controls(
     run_loop: RunLoop,
     graph: MikadoGraph,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
     status: RunStatus,
     reason: str,
 ) -> None:
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
-    _runs(fake_ralph)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
+    _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
     _active(run_loop)["run-1"] = leaf.id
 
     active = run_loop.state().active_runs[0]
@@ -721,35 +725,35 @@ def test_terminal_active_run_disables_all_controls(
 def test_control_queue_applies_cancel_and_force_stop(
     run_loop: RunLoop,
     graph: MikadoGraph,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> None:
     root = graph.add_node("ship controller")
     leaf = graph.add_node("stop worker", parent_id=root.id)
     graph.mark_running(leaf.id)
-    _runs(fake_ralph)["run-1"] = FakeRun()
+    _runs(fake_loop)["run-1"] = FakeRun()
     _active(run_loop)["run-1"] = leaf.id
 
     run_loop.cancel("run-1")
-    assert fake_ralph.requested_stops == ["run-1"]
+    assert fake_loop.requested_stops == ["run-1"]
     assert run_loop.force_stop("run-1", timeout=2.5) is True
-    assert fake_ralph.force_stops == [("run-1", 2.5)]
+    assert fake_loop.force_stops == [("run-1", 2.5)]
     assert run_loop.state().active_runs[0].actions.force_stop_reason == (
         "force stop already requested"
     )
 
     run_loop.stop_scheduling()
-    assert fake_ralph.requested_stops == ["run-1", "run-1"]
+    assert fake_loop.requested_stops == ["run-1", "run-1"]
 
 
 def test_progress_snapshot_is_published_before_terminal_completion(
     run_loop: RunLoop,
     graph: MikadoGraph,
     config: ExecutionConfig,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> None:
     root = graph.add_node("ship controller")
     _ = graph.add_node("build snapshots", parent_id=root.id)
-    _progress_before_completion(fake_ralph).append(
+    _progress_before_completion(fake_loop).append(
         ProgressEvent(run_id="run-1", work=1, total=2, message="building")
     )
     received: list[RunLoopState] = []
@@ -779,9 +783,9 @@ def test_state_listener_failure_logs_listener_identity(
 def run_loop(
     executor: Executor,
     graph: MikadoGraph,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> RunLoop:
-    return RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+    return RunLoop(executor=executor, graph=graph, loop=fake_loop)
 
 
 def test_initial_dispatch_respects_a_preexisting_scheduling_stop(
@@ -815,7 +819,7 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
     run_loop: RunLoop,
     graph: MikadoGraph,
     config: ExecutionConfig,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> None:
     from milknado.domains.common.errors import CompletionTimeout
 
@@ -837,7 +841,7 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
     ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
         raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
 
-    _set_attr(fake_ralph, "wait_for_next_completion", short_poll_timeout)
+    _set_attr(fake_loop, "wait_for_next_completion", short_poll_timeout)
     _set_attr(run_loop, "_process_controls", process_controls)
 
     with patch(
@@ -860,7 +864,7 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
     run_loop: RunLoop,
     graph: MikadoGraph,
     config: ExecutionConfig,
-    fake_ralph: FakeRalph,
+    fake_loop: FakeLoop,
 ) -> None:
     from milknado.domains.common.errors import CompletionTimeout
 
@@ -884,7 +888,7 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
         observed_timeouts.append(timeout)
         raise CompletionTimeout(waited_seconds=timeout or 0.0, active_run_ids=active_run_ids)
 
-    _set_attr(fake_ralph, "wait_for_next_completion", short_poll_timeout)
+    _set_attr(fake_loop, "wait_for_next_completion", short_poll_timeout)
     _set_attr(run_loop, "_process_controls", process_controls)
 
     _ = _execute_run(
@@ -1017,12 +1021,12 @@ class TestRunLoopStoppedOutcome:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        ralph.set_run_stopped("run-1")
-        ralph.output["run-1"] = ["last worker output"]
-        ralph.guidance["run-1"] = ("not delivered",)
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        loop_adapter.set_run_stopped("run-1")
+        loop_adapter.output["run-1"] = ["last worker output"]
+        loop_adapter.guidance["run-1"] = ("not delivered",)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
         root = graph.add_node("root")
         leaf = graph.add_node("leaf", parent_id=root.id)
 
@@ -1040,7 +1044,7 @@ class TestRunLoopStoppedOutcome:
         assert state.available == 0
         assert len(state.terminal_runs) == 1
         terminal = state.terminal_runs[0]
-        real_run_id = _ordinal_to_run_id(ralph)["run-1"]
+        real_run_id = _ordinal_to_run_id(loop_adapter)["run-1"]
         assert terminal.run_id == real_run_id
         assert terminal.status is RunStatus.STOPPED
         assert terminal.output == ("last worker output",)
@@ -1062,11 +1066,11 @@ class TestRunLoopStoppedOutcome:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         for index in range(1, 22):
-            ralph.set_run_stopped(f"run-{index}")
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+            loop_adapter.set_run_stopped(f"run-{index}")
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
         root = graph.add_node("root")
         for index in range(21):
             _ = graph.add_node(f"leaf-{index}", parent_id=root.id)
@@ -1076,7 +1080,7 @@ class TestRunLoopStoppedOutcome:
         assert state.stopped == 21
         assert len(state.terminal_runs) == 20
         assert tuple(run.run_id for run in state.terminal_runs) == tuple(
-            _ordinal_to_run_id(ralph)[f"run-{index}"] for index in range(2, 22)
+            _ordinal_to_run_id(loop_adapter)[f"run-{index}"] for index in range(2, 22)
         )
 
 
@@ -1118,6 +1122,121 @@ class TestRunLoopConcurrencyLimit:
         assert result.completed_total == 3
         assert result.root_done is True
 
+    def test_capacity_refusal_leaves_task_pending_without_failure(
+        self,
+        run_loop: RunLoop,
+        graph: MikadoGraph,
+        executor: Executor,
+        config: ExecutionConfig,
+    ) -> None:
+        root = graph.add_node("root")
+        task = graph.add_node("task", parent_id=root.id)
+        with patch.object(executor, "dispatch", side_effect=ConcurrencyLimitReached(1, 1)):
+            dispatched, failed = _dispatch_batch(run_loop, config, 1)
+
+        assert (dispatched, failed) == (0, 0)
+        node = graph.get_node(task.id)
+        assert node is not None and node.status is NodeStatus.PENDING
+        assert not _active(run_loop)
+
+    def test_post_start_dispatch_error_keeps_cli_worker_owned(
+        self,
+        run_loop: RunLoop,
+        graph: MikadoGraph,
+        executor: Executor,
+        config: ExecutionConfig,
+    ) -> None:
+        root = graph.add_node("root")
+        task = graph.add_node("task", parent_id=root.id)
+        with (
+            patch.object(
+                executor, "dispatch", side_effect=PreservedWorkerRun(task.id, "started-run")
+            ),
+            patch.object(executor, "force_stop_run", side_effect=[False, True]) as stop,
+            patch.object(executor, "fail") as fail,
+            patch("milknado.domains.execution.run_loop.time.sleep"),
+        ):
+            assert _dispatch_batch(run_loop, config, 1) == (0, 1)
+        assert stop.call_count == 2
+        fail.assert_called_once_with(task.id)
+
+    def test_raced_claim_does_not_fail_other_owner(
+        self, run_loop: RunLoop, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        task = graph.add_node("task", parent_id=root.id)
+        claim = graph.claim_node
+
+        def other_claim(*_args: object, **_kwargs: object) -> bool:
+            assert claim(task.id, "other-owner", now="2026-01-01T00:00:00Z")
+            return False
+
+        with patch.object(graph, "claim_node", side_effect=other_claim):
+            assert _dispatch_batch(run_loop, config, 1) == (0, 0)
+        node = graph.get_node(task.id)
+        assert node is not None
+        assert node.status is NodeStatus.RUNNING
+        assert node.run_id == "other-owner"
+        assert not _active(run_loop)
+
+    def test_invalid_worktree_pattern_releases_claim(
+        self, graph: MikadoGraph, executor: Executor, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        task = graph.add_node("task", parent_id=root.id)
+
+        with pytest.raises(ValueError, match="outside project_root"):
+            _ = executor.dispatch(task.id, replace(config, worktree_pattern="../outside"))
+
+        node = graph.get_node(task.id)
+        assert node is not None
+        assert node.status is NodeStatus.PENDING
+        assert node.run_id is None
+
+    def test_detached_parent_claim_blocks_scheduler_on_same_graph(
+        self,
+        tmp_path: Path,
+        config: ExecutionConfig,
+        fake_git: FakeGit,
+        fake_loop: FakeLoop,
+        fake_crg: FakeCrg,
+    ) -> None:
+        graph = MikadoGraph(tmp_path / "capacity.db", concurrency_limit=1)
+        try:
+            root = graph.add_node("root")
+            busy = graph.add_node("detached", parent_id=root.id)
+            waiting = graph.add_node("scheduled", parent_id=root.id)
+            graph.claim_node_for_dispatch(busy.id, "detached-parent", now="2026-01-01T00:00:00Z")
+            executor = Executor(graph=graph, git=fake_git, loop=fake_loop, crg=fake_crg)
+            driver = RunLoop(executor=executor, graph=graph, loop=fake_loop)
+
+            assert _dispatch_batch(driver, config, 4) == (0, 0)
+            node = graph.get_node(waiting.id)
+            assert node is not None and node.status is NodeStatus.PENDING
+            assert graph.mark_terminal(busy.id, "detached-parent", NodeStatus.DONE)
+            assert _dispatch_batch(driver, config, 4) == (1, 0)
+            node = graph.get_node(waiting.id)
+            assert node is not None and node.status is NodeStatus.RUNNING
+        finally:
+            graph.close()
+
+    def test_single_node_driver_leaves_sibling_and_root_untouched(
+        self, run_loop: RunLoop, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        root = graph.add_node("root")
+        selected = graph.add_node("selected", parent_id=root.id)
+        sibling = graph.add_node("sibling", parent_id=root.id)
+
+        outcome = run_loop.run_node(selected.id, config, "main", 30.0)
+
+        assert outcome.success is True
+        selected_node = graph.get_node(selected.id)
+        sibling_node = graph.get_node(sibling.id)
+        root_node = graph.get_node(root.id)
+        assert selected_node is not None and selected_node.status is NodeStatus.DONE
+        assert sibling_node is not None and sibling_node.status is NodeStatus.PENDING
+        assert root_node is not None and root_node.status is NodeStatus.PENDING
+
 
 class TestRunLoopFailure:
     def test_failed_leaf_marks_leaf_failed(
@@ -1128,11 +1247,11 @@ class TestRunLoopFailure:
         fake_crg: FakeCrg,
     ) -> None:
         # Root is not dispatched; only the leaf is. Set the leaf's run to fail.
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         leaf = graph.add_node("will fail", parent_id=root.id)
@@ -1151,11 +1270,11 @@ class TestRunLoopFailure:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -1189,14 +1308,14 @@ class TestRunLoopDispatchFailure:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
 
         def fail_generate(*_args: object, **_kwargs: object) -> Path:
-            raise RuntimeError("ralph exploded")
+            raise RuntimeError("loop exploded")
 
-        ralph.generate_ralph_md = fail_generate
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter.generate_loop_md = fail_generate
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         leaf = graph.add_node("doomed", parent_id=root.id)
@@ -1216,9 +1335,9 @@ class TestRunLoopDispatchFailure:
         fake_crg: FakeCrg,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
         root = graph.add_node("root")
         leaf = graph.add_node("missing gates", parent_id=root.id)
 
@@ -1238,9 +1357,9 @@ class TestRunLoopDispatchFailure:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         call_count = 0
-        original_generate = ralph.generate_ralph_md
+        original_generate = loop_adapter.generate_loop_md
 
         def fail_first_only(
             brief: str,
@@ -1252,14 +1371,14 @@ class TestRunLoopDispatchFailure:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                raise RuntimeError("ralph exploded")
+                raise RuntimeError("loop exploded")
             return original_generate(
                 brief, quality_gates, output_path, prior_findings, findings_round
             )
 
-        ralph.generate_ralph_md = fail_first_only  # type: ignore
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter.generate_loop_md = fail_first_only  # type: ignore
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("doomed-leaf", parent_id=root.id)
@@ -1286,9 +1405,9 @@ class TestRunLoopRebaseConflicts:
             conflicting_files=("src/models.py", "src/views.py"),
             detail="CONFLICT (content): Merge conflict in src/models.py",
         )
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         leaf = graph.add_node("conflicting node", parent_id=root.id)
@@ -1320,16 +1439,16 @@ class TestRunLoopFileConflicts:
         graph: MikadoGraph,
         config: ExecutionConfig,
         fake_git: FakeGit,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
         fake_crg: FakeCrg,
     ) -> None:
         executor = Executor(
             graph=graph,
             git=fake_git,
-            ralph=fake_ralph,
+            loop=fake_loop,
             crg=fake_crg,
         )
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
 
         root = graph.add_node("root")
         a = graph.add_node("a", parent_id=root.id)
@@ -1354,11 +1473,11 @@ class TestStrictDrain:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False  # leaf-a fails, leaf-b (run-2) succeeds
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False  # leaf-a fails, leaf-b (run-2) succeeds
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf-a", parent_id=root.id)
@@ -1389,9 +1508,9 @@ class TestStrictDrain:
             project_root=tmp_path,
         )
 
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf-a", parent_id=root.id)
@@ -1482,9 +1601,9 @@ class TestOrphanCleanupTransientRetries:
         from milknado.domains.common.errors import TransientDispatchError
         from milknado.domains.execution.executor import Executor as _Executor
 
-        ralph = FakeRalph()
+        loop = FakeLoop()
         call_count = 0
-        original_generate = ralph.generate_ralph_md
+        original_generate = loop.generate_loop_md
 
         def fail_thrice(
             brief: str,
@@ -1501,9 +1620,9 @@ class TestOrphanCleanupTransientRetries:
                 brief, quality_gates, output_path, prior_findings, findings_round
             )
 
-        ralph.generate_ralph_md = fail_thrice  # type: ignore
+        loop.generate_loop_md = fail_thrice  # type: ignore
 
-        executor = _Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        executor = _Executor(graph=graph, git=fake_git, loop=loop, crg=fake_crg)
 
         clean_calls: list[int] = []
         worktree_sizes: list[int] = []
@@ -1544,9 +1663,9 @@ class TestRootCompletionViaVerifySpec:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         leaf = graph.add_node("leaf", parent_id=root.id)
@@ -1569,8 +1688,8 @@ class TestRootCompletionViaVerifySpec:
         fake_crg: FakeCrg,
     ) -> None:
         dispatched_ids: list[int] = []
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
         original_dispatch = executor.dispatch
 
         def tracking_dispatch(node_id: int, cfg: ExecutionConfig) -> DispatchResult:
@@ -1578,7 +1697,7 @@ class TestRootCompletionViaVerifySpec:
             return original_dispatch(node_id, cfg)
 
         _set_attr(executor, "dispatch", tracking_dispatch)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -1593,11 +1712,11 @@ class TestRootCompletionViaVerifySpec:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -1618,18 +1737,18 @@ class TestRootCompletionStructuralFallback:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         verify_calls: list[tuple[str, str]] = []
-        original_verify_spec = ralph.verify_spec
+        original_verify_spec = loop_adapter.verify_spec
 
         def tracking_verify_spec(spec_text: str, graph_state: str) -> VerifySpecResult:
             verify_calls.append((spec_text, graph_state))
             return original_verify_spec(spec_text, graph_state)
 
-        _set_attr(ralph, "verify_spec", tracking_verify_spec)
+        _set_attr(loop_adapter, "verify_spec", tracking_verify_spec)
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         leaf = graph.add_node("leaf", parent_id=root.id)
@@ -1653,10 +1772,10 @@ class TestRootCompletionStructuralFallback:
     ) -> None:
         from milknado.domains.planning.planner import Planner
 
-        ralph = LoopAdapter()
+        loop_adapter = LoopAdapter()
         planner = MagicMock(spec=Planner)
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, planner=planner)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, planner=planner)
 
         root = graph.add_node("root goal")
         leaf = graph.add_node("leaf", parent_id=root.id)
@@ -1683,11 +1802,11 @@ class TestRootCompletionStructuralFallback:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -1706,11 +1825,11 @@ class TestRootCompletionStructuralFallback:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        _success(ralph)["run-1"] = False
+        loop_adapter = FakeLoop()
+        _success(loop_adapter)["run-1"] = False
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
         leaf = graph.add_node("leaf", parent_id=root.id)
@@ -1730,9 +1849,9 @@ class TestRootCompletionStructuralFallback:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root goal")
 
@@ -1758,10 +1877,10 @@ class TestLoopAdapterLogDir:
         self,
         tmp_path: Path,
     ) -> None:
-        ralph_dir = tmp_path / "wt-node-1"
-        ralph_dir.mkdir()
-        ralph_file = ralph_dir / "ralph.md"
-        _ = ralph_file.write_text("# task", encoding="utf-8")
+        loop_dir = tmp_path / "wt-node-1"
+        loop_dir.mkdir()
+        loop_file = loop_dir / "loop.md"
+        _ = loop_file.write_text("# task", encoding="utf-8")
 
         captured_configs: list[_RunConfig] = []
 
@@ -1781,15 +1900,15 @@ class TestLoopAdapterLogDir:
         ):
             _ = adapter.create_run(
                 agent="claude",
-                ralph_dir=ralph_dir,
-                ralph_file=ralph_file,
+                loop_dir=loop_dir,
+                loop_file=loop_file,
                 quality_gates=(),
                 project_root=None,
             )
 
         assert len(captured_configs) == 1
         cfg = captured_configs[0]
-        assert cfg.log_dir == ralph_dir / ".ralph-logs"
+        assert cfg.log_dir == loop_dir / ".loop-logs"
 
 
 # ---------------------------------------------------------------------------
@@ -1837,19 +1956,22 @@ class TestHandleCompletionTimeout:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         _set_attr(
-            ralph, "wait_for_next_completion", MagicMock(wraps=ralph.wait_for_next_completion)
+            loop_adapter,
+            "wait_for_next_completion",
+            MagicMock(wraps=loop_adapter.wait_for_next_completion),
         )
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
         root = graph.add_node("root")
         _ = graph.add_node("slow-leaf", parent_id=root.id)
 
         result = loop.run(config, "main")
 
         assert result.completed_total == 1
-        assert _call_kwargs(_mock_attr(ralph, "wait_for_next_completion"))["timeout"] is None
+        wait_kwargs = _call_kwargs(_mock_attr(loop_adapter, "wait_for_next_completion"))
+        assert wait_kwargs["timeout"] is None
 
     def test_configured_wait_keeps_explicit_timeout(
         self,
@@ -1860,13 +1982,13 @@ class TestHandleCompletionTimeout:
     ) -> None:
         from milknado.domains.common.config import MilknadoConfig
 
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
         milknado_config = MilknadoConfig(completion_timeout_seconds=60.0)
         loop = RunLoop(
             executor=executor,
             graph=graph,
-            ralph=ralph,
+            loop=loop_adapter,
             config=milknado_config,
         )
 
@@ -1887,7 +2009,7 @@ class TestHandleCompletionTimeout:
     ) -> None:
         from milknado.domains.common.errors import CompletionTimeout
 
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
 
         # Make wait_for_next_completion raise CompletionTimeout
         def raise_timeout(
@@ -1896,10 +2018,10 @@ class TestHandleCompletionTimeout:
             _ = timeout
             raise CompletionTimeout(waited_seconds=60.0, active_run_ids=active_run_ids)
 
-        _set_attr(ralph, "wait_for_next_completion", raise_timeout)
+        _set_attr(loop_adapter, "wait_for_next_completion", raise_timeout)
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("slow-leaf", parent_id=root.id)
@@ -1918,7 +2040,7 @@ class TestHandleCompletionTimeout:
     ) -> None:
         from milknado.domains.common.errors import CompletionTimeout
 
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         first_call = [True]
 
         def raise_timeout(
@@ -1930,10 +2052,10 @@ class TestHandleCompletionTimeout:
                 raise CompletionTimeout(waited_seconds=60.0, active_run_ids=active_run_ids)
             return next(iter(active_run_ids)), True
 
-        _set_attr(ralph, "wait_for_next_completion", raise_timeout)
+        _set_attr(loop_adapter, "wait_for_next_completion", raise_timeout)
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("slow-leaf", parent_id=root.id)
@@ -1949,9 +2071,9 @@ class TestHandleCompletionTimeout:
         from milknado.domains.common.errors import CompletionTimeout
 
         executor = MagicMock()
-        executor.stop_run = MagicMock(return_value=False)
-        ralph = FakeRalph()
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor.force_stop_run = MagicMock(return_value=False)
+        loop_adapter = FakeLoop()
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
         _set_attr(loop, "_active", {"run-1": 7})
 
         failed = _handle_completion_timeout(
@@ -1961,7 +2083,7 @@ class TestHandleCompletionTimeout:
         assert failed == 0
         assert _active(loop) == {"run-1": 7}
         _mock_attr(executor, "fail").assert_not_called()
-        _mock_attr(executor, "stop_run").assert_called_once_with("run-1", timeout=10.0)
+        _mock_attr(executor, "force_stop_run").assert_called_once_with("run-1", timeout=10.0)
 
 
 class TestVerifySpecGapsPath:
@@ -1974,19 +2096,19 @@ class TestVerifySpecGapsPath:
     ) -> None:
         from milknado.domains.common.protocols import VerifySpecResult
 
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
 
         def gaps_verify(spec_text: str, graph_state: str) -> VerifySpecResult:
             _ = (spec_text, graph_state)
             return VerifySpecResult(outcome="gaps", goal_delta="add feature X")
 
-        ralph.verify_spec = gaps_verify
+        loop_adapter.verify_spec = gaps_verify
 
         from milknado.domains.planning.planner import Planner
 
         planner = MagicMock(spec=Planner)
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph, planner=planner)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, planner=planner)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -2001,17 +2123,17 @@ class TestVerifySpecGapsPath:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
         verify_calls: list[tuple[object, ...]] = []
 
         def done_verify(spec_text: str, graph_state: str) -> VerifySpecResult:
             verify_calls.append((spec_text, graph_state))
             return VerifySpecResult(outcome="done")
 
-        ralph.verify_spec = done_verify
+        loop_adapter.verify_spec = done_verify
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         graph.mark_running(root.id)
@@ -2029,9 +2151,9 @@ class TestDispatchBatchConcurrencyFull:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        loop_adapter = FakeLoop()
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf-a", parent_id=root.id)
@@ -2052,7 +2174,7 @@ class TestKeyboardInterrupt:
         fake_git: FakeGit,
         fake_crg: FakeCrg,
     ) -> None:
-        ralph = FakeRalph()
+        loop_adapter = FakeLoop()
 
         def raise_interrupt(
             active_run_ids: set[str], timeout: float | None = None
@@ -2061,10 +2183,10 @@ class TestKeyboardInterrupt:
             _ = active_run_ids
             raise KeyboardInterrupt
 
-        _set_attr(ralph, "wait_for_next_completion", raise_interrupt)
+        _set_attr(loop_adapter, "wait_for_next_completion", raise_interrupt)
 
-        executor = Executor(graph=graph, git=fake_git, ralph=ralph, crg=fake_crg)
-        loop = RunLoop(executor=executor, graph=graph, ralph=ralph)
+        executor = Executor(graph=graph, git=fake_git, loop=loop_adapter, crg=fake_crg)
+        loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
 
         root = graph.add_node("root")
         _ = graph.add_node("leaf", parent_id=root.id)
@@ -2079,10 +2201,10 @@ class TestDispatchBatchDirectGuards:
         executor: Executor,
         graph: MikadoGraph,
         config: ExecutionConfig,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
     ) -> None:
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         _set_attr(loop, "_strict", True)
         _set_attr(loop, "_failure_triggered", True)
 
@@ -2095,10 +2217,10 @@ class TestDispatchBatchDirectGuards:
         executor: Executor,
         graph: MikadoGraph,
         config: ExecutionConfig,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
     ) -> None:
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         # Fill active to the limit
         _set_attr(loop, "_active", {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4})
 
@@ -2110,7 +2232,7 @@ class TestDispatchBatchDirectGuards:
         self,
         graph: MikadoGraph,
         config: ExecutionConfig,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
     ) -> None:
         from unittest.mock import MagicMock
 
@@ -2119,7 +2241,7 @@ class TestDispatchBatchDirectGuards:
         root = graph.add_node("root")
         leaf = graph.add_node("failing-leaf", parent_id=root.id)
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         dispatched, failed = _dispatch_batch(loop, config, 4)
 
         assert dispatched == 0
@@ -2130,7 +2252,7 @@ class TestDispatchBatchDirectGuards:
         self,
         graph: MikadoGraph,
         config: ExecutionConfig,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
     ) -> None:
         from unittest.mock import MagicMock
 
@@ -2140,7 +2262,7 @@ class TestDispatchBatchDirectGuards:
         _ = graph.add_node("leaf-a", parent_id=root.id)
         _ = graph.add_node("leaf-b", parent_id=root.id)
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         _set_attr(loop, "_strict", True)
         _ = _dispatch_batch(loop, config, 4)
 
@@ -2154,7 +2276,7 @@ class TestDispatchBatchFlavoredGates:
     def test_research_node_dispatches_with_empty_quality_gates(
         self,
         graph: MikadoGraph,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
         config: ExecutionConfig,
         tmp_path: Path,
     ) -> None:
@@ -2190,7 +2312,7 @@ class TestDispatchBatchFlavoredGates:
 
         _mock_attr(executor, "dispatch").side_effect = dispatch
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop, config=milknado_cfg)
         _ = _dispatch_batch(loop, config, 4)
 
         assert len(captured) == 1, "expected exactly one dispatch call"
@@ -2202,7 +2324,7 @@ class TestDispatchBatchFlavoredGates:
     def test_flavored_node_dispatches_with_attempt_caps(
         self,
         graph: MikadoGraph,
-        fake_ralph: FakeRalph,
+        fake_loop: FakeLoop,
         config: ExecutionConfig,
         tmp_path: Path,
     ) -> None:
@@ -2234,7 +2356,7 @@ class TestDispatchBatchFlavoredGates:
 
         _mock_attr(executor, "dispatch").side_effect = dispatch
 
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph, config=milknado_cfg)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop, config=milknado_cfg)
         _ = _dispatch_batch(loop, config, 4)
 
         assert len(captured) == 1, "expected exactly one dispatch call"
@@ -2253,7 +2375,7 @@ class TestOwnerIdleWait:
 
     @staticmethod
     def _owner_loop(
-        graph: MikadoGraph, fake_ralph: FakeRalph, controls: Callable[[], None]
+        graph: MikadoGraph, fake_loop: FakeLoop, controls: Callable[[], None]
     ) -> tuple[RunLoop, MagicMock, list[float]]:
         executor = MagicMock()
 
@@ -2261,7 +2383,7 @@ class TestOwnerIdleWait:
             return MagicMock(run_id=f"r{node_id}")
 
         _mock_attr(executor, "dispatch").side_effect = dispatch
-        loop = RunLoop(executor=executor, graph=graph, ralph=fake_ralph)
+        loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         sleeps: list[float] = []
         _set_attr(loop, "_await_owner_work", True)
         _set_attr(loop, "_process_controls", controls)
@@ -2269,7 +2391,7 @@ class TestOwnerIdleWait:
         return loop, executor, sleeps
 
     def test_dispatches_a_node_the_owner_readies_while_idle(
-        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+        self, graph: MikadoGraph, fake_loop: FakeLoop, config: ExecutionConfig
     ) -> None:
         root = graph.add_node("root")
         calls: list[int] = []
@@ -2279,7 +2401,7 @@ class TestOwnerIdleWait:
             if len(calls) == 2:
                 _ = graph.add_node("late leaf", parent_id=root.id)
 
-        loop, executor, sleeps = self._owner_loop(graph, fake_ralph, controls)
+        loop, executor, sleeps = self._owner_loop(graph, fake_loop, controls)
 
         assert _wait_for_owner_work(loop, config, 4) == 1
         assert sleeps == [1.0], "the loop must sleep once before the node became ready"
@@ -2287,10 +2409,10 @@ class TestOwnerIdleWait:
         assert list(_active(loop).values()) == [root.id + 1]
 
     def test_stops_waiting_when_the_owner_closes_scheduling(
-        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+        self, graph: MikadoGraph, fake_loop: FakeLoop, config: ExecutionConfig
     ) -> None:
         _ = graph.add_node("root")
-        loop, executor, sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+        loop, executor, sleeps = self._owner_loop(graph, fake_loop, lambda: None)
         _set_attr(loop, "_process_controls", loop.stop_scheduling)
 
         assert _wait_for_owner_work(loop, config, 4) == 0
@@ -2298,11 +2420,11 @@ class TestOwnerIdleWait:
         _mock_attr(executor, "dispatch").assert_not_called()
 
     def test_batch_run_ends_instead_of_waiting(
-        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+        self, graph: MikadoGraph, fake_loop: FakeLoop, config: ExecutionConfig
     ) -> None:
         _ = graph.add_node("root")
         controls = MagicMock()
-        loop, _executor, sleeps = self._owner_loop(graph, fake_ralph, controls)
+        loop, _executor, sleeps = self._owner_loop(graph, fake_loop, controls)
         _set_attr(loop, "_await_owner_work", False)
 
         assert _wait_for_owner_work(loop, config, 4) == 0
@@ -2310,10 +2432,10 @@ class TestOwnerIdleWait:
         assert sleeps == []
 
     def test_execute_run_returns_once_the_owner_stops_an_idle_run(
-        self, graph: MikadoGraph, fake_ralph: FakeRalph, config: ExecutionConfig
+        self, graph: MikadoGraph, fake_loop: FakeLoop, config: ExecutionConfig
     ) -> None:
         _ = graph.add_node("root")
-        loop, executor, _sleeps = self._owner_loop(graph, fake_ralph, lambda: None)
+        loop, executor, _sleeps = self._owner_loop(graph, fake_loop, lambda: None)
         _set_attr(loop, "_process_controls", loop.stop_scheduling)
 
         dispatched, completed, failed, conflicts, timed_out = _execute_run(

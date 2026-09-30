@@ -1,6 +1,6 @@
 ---
 name: milknado-run
-description: Run milknado parallel leaf execution (ralph loops)
+description: Run milknado parallel leaf execution (loops)
 ---
 
 # milknado run

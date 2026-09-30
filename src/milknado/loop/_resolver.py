@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 
-from milknado.loop._frontmatter import FIELD_ARGS, FIELD_COMMANDS, FIELD_RALPH, NAME_RE
+from milknado.loop._frontmatter import FIELD_ARGS, FIELD_COMMANDS, FIELD_LOOP, NAME_RE
 
 _NAME = NAME_RE.pattern  # inlined for readability inside verbose regexes
 
@@ -54,7 +54,7 @@ _ALL_RE = re.compile(
     (                   # group 1: placeholder kind
         {FIELD_COMMANDS}
       | {FIELD_ARGS}
-      | {FIELD_RALPH}
+      | {FIELD_LOOP}
     )
     \.                  # dot separator
     ({_NAME})           # group 2: placeholder name
@@ -69,18 +69,18 @@ def resolve_all(
     prompt: str,
     command_outputs: dict[str, str],
     user_args: dict[str, str],
-    ralph_context: dict[str, str] | None = None,
+    loop_context: dict[str, str] | None = None,
 ) -> str:
     """Resolve all placeholders in a single pass to prevent cross-contamination.
 
     Resolves ``{{ commands.name }}``, ``{{ args.name }}``, and
-    ``{{ ralph.name }}`` in a single pass so values inserted by one
+    ``{{ loop.name }}`` in a single pass so values inserted by one
     kind of placeholder are not re-processed as the other kind.
     """
     lookups: dict[str, dict[str, str]] = {
         FIELD_COMMANDS: command_outputs,
         FIELD_ARGS: user_args,
-        FIELD_RALPH: ralph_context or {},
+        FIELD_LOOP: loop_context or {},
     }
 
     def _replace(match: re.Match[str]) -> str:

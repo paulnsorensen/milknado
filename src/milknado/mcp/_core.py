@@ -102,7 +102,7 @@ class RunDict(TypedDict):
     summary: str | None
     result: str | None
     worktree_preserved: str | None
-    running: int | None  # set with `limit` only on a deferred ralph start
+    running: int | None  # set with `limit` only on a deferred loop start
     limit: int | None
 
 
@@ -121,12 +121,12 @@ mcp = FastMCP(
     "Milknado",
     instructions=(
         "Mikado graph execution tools: graph CRUD, batch planning, worker dispatch, "
-        "detached ralph runs, run polling/cancel, and roadmap import/export. "
+        "detached loop runs, run polling/cancel, and roadmap import/export. "
         "Set MILKNADO_PROJECT_ROOT or pass project_root to target a repo.\n\n"
         "Ephemeral cloud containers may be reclaimed on timeout. Before going idle, "
         "persist in-progress work to your branch; if you need run state, force-add "
         "`.milknado/milknado.db` plus its `-wal`/`-shm` sidecars, then remove "
-        "ignored state (`.milknado/`, `*.db`, `ralphs/`, `.claude/`, `.context/`, "
+        "ignored state (`.milknado/`, `*.db`, `loops/`, `.claude/`, `.context/`, "
         "`.venv/`, etc.) before opening the final PR."
     ),
 )

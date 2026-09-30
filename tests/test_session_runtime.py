@@ -408,7 +408,7 @@ def test_interrupted_iteration_does_not_stop_on_error(
     channel.set_sink(sink)
     config = RunConfig(
         agent=shlex.join(("claude", "claude.py", "engine", str(counter))),
-        ralph_dir=tmp_path,
+        loop_dir=tmp_path,
         prompt="initial prompt",
         max_iterations=2,
         stop_on_error=True,

@@ -27,8 +27,7 @@ Set `agent_family = "codex"` for built-in defaults, then optionally override
 uv run milknado agents check --project-root .
 ```
 
-## Leaf workers (ralphify)
+## Leaf workers (loop engine)
 
-Ralphify receives `execution_agent` from `milknado.toml`. Ensure your Codex
-invocation matches ralphify’s non-interactive / stdin contract for the version
-you ship.
+Milknado's loop engine receives `execution_agent` from `milknado.toml`. Use a
+Codex command that accepts non-interactive input on stdin.

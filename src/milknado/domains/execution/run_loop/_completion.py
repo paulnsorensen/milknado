@@ -5,7 +5,7 @@ import time
 from typing import Literal
 
 from milknado.domains.common import TerminalRunOutcome
-from milknado.domains.execution.executor import RebaseConflict
+from milknado.domains.execution._models import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop._protocols import RunLoopState
 from milknado.domains.execution.run_loop.state import TerminalRunState
@@ -39,17 +39,17 @@ def handle_completion(
     desc = node.description if node else str(node_id)
     start = dispatched_at.pop(run_id, time.monotonic())
     duration = time.monotonic() - start
-    ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
+    loop_adapter = loop._loop  # pyright: ignore[reportPrivateUsage]
     loop._terminal_runs.append(  # pyright: ignore[reportPrivateUsage]
         TerminalRunState(
             run_id=run_id,
             node_id=node_id,
             description=desc,
             status=RunStatus(status),
-            output=tuple(ralph.get_run_output_tail(run_id, 30)),
-            pending_guidance=tuple(ralph.get_run_guidance(run_id)),
+            output=tuple(loop_adapter.get_run_output_tail(run_id, 30)),
+            pending_guidance=tuple(loop_adapter.get_run_guidance(run_id)),
             duration_seconds=duration,
-            session=ralph.get_run_session(run_id),
+            session=loop_adapter.get_run_session(run_id),
         )
     )
 
@@ -97,6 +97,13 @@ def handle_completion(
             if strict:
                 loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
             failed += 1
+        elif not result.rebased:
+            _logger.warning("node_completion_unrebased node_id=%d", node_id)
+            logs.append(f"[{ts()}] ✗ node {node_id} did not complete")
+            attempts[node_id] = attempts.get(node_id, 0) + 1
+            if strict:
+                loop._failure_triggered = True  # pyright: ignore[reportPrivateUsage]
+            failed += 1
         else:
             _logger.info("node_completed node_id=%d duration=%.1fs", node_id, duration)
             logs.append(f"[{ts()}] ✓ node {node_id} in {int(duration)}s")
@@ -120,7 +127,7 @@ def handle_completion(
         executor = loop._executor  # pyright: ignore[reportPrivateUsage]
         attempts = loop._attempts  # pyright: ignore[reportPrivateUsage]
         strict = loop._strict  # pyright: ignore[reportPrivateUsage]
-        detail = ralph.get_run_failure_detail(run_id)
+        detail = loop_adapter.get_run_failure_detail(run_id)
         executor.fail(node_id, detail=detail)
         if detail:
             _logger.warning("node_failed node_id=%d detail=%s", node_id, detail)

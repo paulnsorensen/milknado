@@ -32,5 +32,5 @@ The restarted coordinator dispatched 52, 53, 55, 56 and every one failed 1800 s 
 with a fresh session while the budget has room; the last allowed attempt, and any non-zero exit,
 still fail the run. Bound it with `max_iterations` and the
 `max_consecutive_failures` cap, not with `stop_on_error`. Worker logs live under the worktree's
-`.ralph-logs`, which fail-closed teardown removes, so the failure detail in `runs.detail` was the
+`.loop-logs`, which fail-closed teardown removes, so the failure detail in `runs.detail` was the
 only evidence (node 106 tracks persisting it).

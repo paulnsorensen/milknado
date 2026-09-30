@@ -1573,7 +1573,7 @@ class TestBlockingInheritPath:
 
     When both ``log_dir`` and ``on_output_line`` are ``None``, the
     blocking path should inherit stdout/stderr from the parent (no PIPE,
-    no reader threads) so that ``ralph run | cat`` shows output.
+    no reader threads) so that ``loop run | cat`` shows output.
     """
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
@@ -1634,7 +1634,7 @@ class TestBlockingInheritPath:
 
     def test_inherit_path_shows_output(self, capfd: CaptureFixture[str]):
         """Real subprocess in inherit mode: child output reaches the parent's
-        stdout, verifying the ``ralph run | cat`` scenario works.
+        stdout, verifying the ``loop run | cat`` scenario works.
 
         Uses ``capfd`` (fd-level capture) rather than ``capsys`` because
         the inherit path writes to the raw file descriptor, bypassing

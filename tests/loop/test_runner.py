@@ -74,11 +74,11 @@ class TestRunCommand:
     def test_env_merged_with_parent(self, mock_run: MagicMock):
         mock_run.return_value = ok_result()
         _ = run_command(
-            command="echo", cwd=Path("/project"), timeout=60, env={"RALPH_NAME": "docs"}
+            command="echo", cwd=Path("/project"), timeout=60, env={"LOOP_NAME": "docs"}
         )
 
         passed_env = mock_run.call_args.kwargs["env"]  # pyright: ignore[reportAny]
-        assert passed_env["RALPH_NAME"] == "docs"
+        assert passed_env["LOOP_NAME"] == "docs"
         # Parent env vars (like PATH) should be preserved
         assert "PATH" in passed_env
 

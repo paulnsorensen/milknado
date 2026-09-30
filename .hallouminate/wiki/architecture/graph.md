@@ -82,12 +82,13 @@ Lifecycle semantics live in [[execution]]; the repo invariants live here:
 
 ## Module split
 
-`MikadoGraph` is a thin facade over free functions, kept this way so `graph.py`
-stays under the 300-line ceiling. Every function takes the `sqlite3.Connection`:
+`MikadoGraph` delegates persistence and transition operations to private modules.
+These modules take the shared SQLite connection and keep the facade within its existing file-size budget.
 
 - **`graph.py`** — the `MikadoGraph` class: traversal queries, dispatch helpers,
   cycle guard, plugin notification.
 - **`_transitions.py`** — the status state machine and atomic claim/release.
+- **`_connection.py`** — SQLite open, quick-check, and corrupt-database quarantine; shared by normal opening, snapshots, and recovery.
 - **`_mutations.py`** — structural edits: subtree delete, field update, reparent,
   `would_create_cycle`.
 - **`_analytics_facade.py`** — `_AnalyticsFacade` mixin; pure pass-throughs to
@@ -134,10 +135,14 @@ clear run-ownership fields (worktree/branch/run_id). Status changes fire
 clause *is* the guard, evaluated atomically by SQLite under the write lock,
 which is correct across processes where an in-process mutex would not be.
 
-- **`claim_node`** — one conditional `UPDATE` flipping a claimable node
-  (`pending|failed|blocked`) to `running`, writing the `run_id` fence + dispatch
-  timestamp + resetting `pid` to NULL. `rowcount == 1` means this caller won; a
-  concurrent claimant gets 0. This is the cross-process mutual-exclusion point.
+- **`claim_node`** uses `BEGIN IMMEDIATE` to serialize capacity checking and the guarded ownership update across connections.
+  Capacity counts task nodes with `status='running'` and a non-null `run_id`.
+  Goals, unowned status edits, and additional diagnostic run rows consume no slots.
+  `open_project_graph` supplies `concurrency_limit` from project configuration.
+  `ConcurrencyLimitReached(running, limit)` reports refusal without changing the task.
+  `SELECT changes()` reports claim success inside the transaction; SQLite cursor `rowcount` is unreliable for this CTE-prefixed update.
+  Dispatch refusal also releases newly acquired ancestor-goal claims.
+  Terminal transitions or fenced release free capacity; review redispatch retains the same node ownership.
 - **`run_id` is a fence**: every later ownership-gated write
   (`mark_terminal`, `release`, `set_pid`, `set_worktree`) carries
   `AND run_id = ?`. If the node was re-claimed under a new run, the stale
@@ -180,3 +185,5 @@ which is correct across processes where an in-process mutex would not be.
   `parent_id` for fast upward walks and the canonical `edges` row. `reparent`
   keeps them in sync. Multi-parent wiring via raw `add_edge` is possible but
   `reparent` collapses a node to a single parent.
+
+_Source: PR #488 atomic admission; `graph/_transitions.py:149-202`, `graph/graph.py`, `project.py`, and `tests/test_execution_admission.py` · Updated: 2026-09-29 · Supersedes: claim-only concurrency without shared capacity enforcement._

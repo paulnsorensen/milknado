@@ -1,7 +1,7 @@
-"""Application-layer policy for detached, worktree-isolated ralph runs.
+"""Application-layer policy for detached, worktree-isolated loop runs.
 
 The MCP ``milknado_run_loop_start`` tool is a thin registration veneer over
-``start_ralph_run`` here, which owns the claim/spawn policy and constructs the
+``start_loop_run`` here, which owns the claim/spawn policy and constructs the
 git / process / tmux adapters. Entry modules therefore build no adapters and
 hold no dispatch policy inline.
 """
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter, TmuxDispatchError
+from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
@@ -40,33 +40,33 @@ from milknado.domains.dispatch import (
     reconcile_orphaned_runs,
     runs_dir,
 )
+from milknado.domains.graph import ConcurrencyLimitReached
 
 _logger = logging.getLogger(__name__)
 
-_DEFAULT_RUNNER = (sys.executable, "-m", "milknado.mcp._ralph_node_runner")
+_DEFAULT_RUNNER = (sys.executable, "-m", "milknado.mcp._loop_node_runner")
 
 
 def _resolve_runner_cmd(explicit: str | None) -> list[str]:
     if explicit and explicit.strip():
         return shlex.split(explicit)
-    env = os.environ.get("MILKNADO_RALPH_RUNNER_CMD", "").strip()
+    env = os.environ.get("MILKNADO_LOOP_RUNNER_CMD", "").strip()
     if env:
         return shlex.split(env)
     return list(_DEFAULT_RUNNER)
 
 
 @dataclass(frozen=True)
-class RalphStartRequest:
+class LoopStartRequest:
     node_id: int
     runner_cmd: str | None
     timeout_seconds: int
     use_tmux: bool
     root: Path
-    concurrency_limit: int
 
 
 @dataclass(frozen=True)
-class RalphClaim:
+class LoopClaim:
     run_id: str
     node_id: int
     target_branch: str
@@ -74,7 +74,7 @@ class RalphClaim:
     stale_worktree: Path | None
 
 
-def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest) -> RalphClaim:
+def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) -> LoopClaim:
     node = graph.get_node(request.node_id)
     if node is None:
         raise ValueError(f"node {request.node_id} not found")
@@ -99,19 +99,20 @@ def _claim_ralph(graph: MikadoGraph, git: GitAdapter, request: RalphStartRequest
             if orphan is not None:
                 reconcile_node_status(graph, request.node_id, orphan["status"])
         _ = graph.try_reclaim(request.node_id, now=now_iso())
+    target_branch = git.current_branch()
+    base_oid = git.resolve_ref(f"refs/heads/{target_branch}")
     run_id = make_run_id(request.node_id)
     graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
-    target_branch = git.current_branch()
-    return RalphClaim(
+    return LoopClaim(
         run_id=run_id,
         node_id=request.node_id,
         target_branch=target_branch,
-        base_oid=git.resolve_ref(f"refs/heads/{target_branch}"),
+        base_oid=base_oid,
         stale_worktree=stale_worktree,
     )
 
 
-def _remove_reclaimed_worktree(git: GitAdapter, claim: RalphClaim) -> None:
+def _remove_reclaimed_worktree(git: GitAdapter, claim: LoopClaim) -> None:
     worktree = claim.stale_worktree
     if worktree is None or not worktree.exists():
         return
@@ -128,7 +129,7 @@ def _remove_reclaimed_worktree(git: GitAdapter, claim: RalphClaim) -> None:
         )
 
 
-def _runner_argv(request: RalphStartRequest, claim: RalphClaim) -> list[str]:
+def _runner_argv(request: LoopStartRequest, claim: LoopClaim) -> list[str]:
     return [
         *_resolve_runner_cmd(request.runner_cmd),
         "--node-id",
@@ -144,11 +145,11 @@ def _runner_argv(request: RalphStartRequest, claim: RalphClaim) -> list[str]:
     ]
 
 
-def _spawn_ralph(
+def _spawn_loop(
     process: ProcessPort,
     tmux: TmuxAdapter | None,
-    request: RalphStartRequest,
-    claim: RalphClaim,
+    request: LoopStartRequest,
+    claim: LoopClaim,
     log_path: Path,
 ) -> int:
     argv = _runner_argv(request, claim)
@@ -174,103 +175,96 @@ def _spawn_ralph(
     return process.spawn_detached(tuple(argv), request.root, log_path, env)
 
 
-def _record_spawn_failure(graph: MikadoGraph, claim: RalphClaim, exc: Exception) -> None:
+def _record_start_failure(
+    graph: MikadoGraph, claim: LoopClaim, exc: Exception, *, run_started: bool
+) -> None:
     node_written = False
     persistence_error: Exception | None = None
-    try:
-        graph.runs.finish(
-            claim.run_id,
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=now_iso(),
-                rebased=False,
-                detail=f"spawn failed: {type(exc).__name__}: {exc}",
-            ),
-        )
-    except RunFenceLostError:
-        _logger.info("spawn failure run already finalized: %s", claim.run_id)
-    except Exception as error:
-        persistence_error = error
-        _logger.exception("spawn failure run terminal write failed: run_id=%s", claim.run_id)
+    if run_started:
+        try:
+            graph.runs.finish(
+                claim.run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=now_iso(),
+                    rebased=False,
+                    detail=f"start failed: {type(exc).__name__}: {exc}",
+                ),
+            )
+        except RunFenceLostError:
+            _logger.info("start failure run already finalized: %s", claim.run_id)
+        except Exception as error:
+            persistence_error = error
+            _logger.exception("start failure run terminal write failed: run_id=%s", claim.run_id)
     try:
         node_written = graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
     except Exception as error:
         persistence_error = persistence_error or error
-        _logger.exception("spawn failure node terminal write failed: node_id=%d", claim.node_id)
+        _logger.exception("start failure node terminal write failed: node_id=%d", claim.node_id)
     if persistence_error is not None or node_written is False:
         detail = (
-            f"spawn failure persistence failed: terminal writes incomplete: "
+            f"start failure persistence failed: terminal writes incomplete: "
             f"node_written={node_written}"
         )
         _logger.error("%s run_id=%s node_id=%d", detail, claim.run_id, claim.node_id)
         raise RuntimeError(detail) from persistence_error
 
 
-def _deferral(graph: MikadoGraph, request: RalphStartRequest) -> dict[str, object] | None:
-    """Return the deferred result when the graph is at its concurrency limit.
-
-    The sweep of dead runs comes first so a crashed loop does not hold a slot
-    forever. The count covers every dispatch path because all paths share the
-    ``runs`` table.
-    """
-    _ = reconcile_orphaned_runs(graph)
-    running = graph.runs.count_running()
-    if running < request.concurrency_limit:
-        return None
-    _logger.info(
-        "ralph dispatch deferred: node_id=%d running=%d limit=%d",
-        request.node_id,
-        running,
-        request.concurrency_limit,
-    )
-    return {
-        "node_id": request.node_id,
-        "status": "deferred",
-        "running": running,
-        "limit": request.concurrency_limit,
-        "detail": (
-            f"concurrency limit reached: {running} of {request.concurrency_limit} runs are "
-            "running; wait for a run to finish, then start this node again"
-        ),
-    }
-
-
-def start_ralph_run(graph: MikadoGraph, request: RalphStartRequest) -> dict[str, object]:
-    """Claim a task node and spawn its detached ralph loop; return the run state dict.
+def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
+    """Claim a task node and spawn its detached loop; return the run state dict.
 
     Returns a deferred result instead when the graph is at its concurrency limit.
     Owns the adapter composition (git, process, tmux) and the claim/spawn policy
     so the MCP tool never constructs an adapter or holds this policy inline.
     """
     graph.register_controller_master()
-    if (deferred := _deferral(graph, request)) is not None:
-        return deferred
+    _ = reconcile_orphaned_runs(graph)
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)
     git = GitAdapter(request.root)
-    claim = _claim_ralph(graph, git, request)
-    _remove_reclaimed_worktree(git, claim)
-    log_path = runs_dir(request.root) / f"{claim.run_id}.log"
-    log_path.touch()
-    graph.runs.start(
-        claim.run_id,
-        request.node_id,
-        str(log_path),
-        now_iso(),
-        request.timeout_seconds,
-    )
     try:
-        pid = _spawn_ralph(ProcessAdapter(), tmux, request, claim, log_path)
-    except (OSError, TmuxDispatchError) as exc:
-        _record_spawn_failure(graph, claim, exc)
+        claim = _claim_loop(graph, git, request)
+    except ConcurrencyLimitReached as exc:
+        _logger.info(
+            "loop dispatch deferred: node_id=%d running=%d limit=%d",
+            request.node_id,
+            exc.running,
+            exc.limit,
+        )
+        return {
+            "node_id": request.node_id,
+            "status": "deferred",
+            "running": exc.running,
+            "limit": exc.limit,
+            "detail": (
+                f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
+                "running; wait for a task to finish, then start this node again"
+            ),
+        }
+    run_started = False
+    try:
+        _remove_reclaimed_worktree(git, claim)
+        log_path = runs_dir(request.root) / f"{claim.run_id}.log"
+        log_path.touch()
+        graph.runs.start(
+            claim.run_id,
+            request.node_id,
+            str(log_path),
+            now_iso(),
+            request.timeout_seconds,
+        )
+        run_started = True
+        pid = _spawn_loop(ProcessAdapter(), tmux, request, claim, log_path)
+    except Exception as exc:
+        _record_start_failure(graph, claim, exc, run_started=run_started)
         raise
     graph.runs.set_pid(claim.run_id, pid)
     graph.set_pid(request.node_id, claim.run_id, pid)
     _logger.info(
-        "ralph dispatch started: run_id=%s node_id=%d pid=%d target_branch=%s base_oid=%s",
+        "loop dispatch started: run_id=%s node_id=%d pid=%d target_branch=%s base_oid=%s",
         claim.run_id,
         request.node_id,
         pid,

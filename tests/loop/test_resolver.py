@@ -167,46 +167,46 @@ class TestResolveArgs:
         assert result == "/tmp"
 
 
-class TestResolveRalphContext:
-    """Tests for {{ ralph.X }} placeholders passed through resolve_all."""
+class TestResolveLoopContext:
+    """Tests for {{ loop.X }} placeholders passed through resolve_all."""
 
-    def test_resolves_ralph_name(self):
-        result = resolve_all("Ralph: {{ ralph.name }}", {}, {}, {"name": "my-ralph"})
-        assert result == "Ralph: my-ralph"
+    def test_resolves_loop_name(self):
+        result = resolve_all("Loop: {{ loop.name }}", {}, {}, {"name": "my-loop"})
+        assert result == "Loop: my-loop"
 
-    def test_resolves_ralph_iteration(self):
-        result = resolve_all("Iter: {{ ralph.iteration }}", {}, {}, {"iteration": "3"})
+    def test_resolves_loop_iteration(self):
+        result = resolve_all("Iter: {{ loop.iteration }}", {}, {}, {"iteration": "3"})
         assert result == "Iter: 3"
 
-    def test_resolves_ralph_max_iterations(self):
+    def test_resolves_loop_max_iterations(self):
         result = resolve_all(
-            "Max: {{ ralph.max_iterations }}",
+            "Max: {{ loop.max_iterations }}",
             {},
             {},
             {"max_iterations": "10"},
         )
         assert result == "Max: 10"
 
-    def test_unknown_ralph_key_resolves_to_empty(self):
-        result = resolve_all("{{ ralph.unknown }}", {}, {}, {"name": "test"})
+    def test_unknown_loop_key_resolves_to_empty(self):
+        result = resolve_all("{{ loop.unknown }}", {}, {}, {"name": "test"})
         assert result == ""
 
-    def test_no_ralph_context_clears_placeholders(self):
-        result = resolve_all("{{ ralph.name }}", {}, {})
+    def test_no_loop_context_clears_placeholders(self):
+        result = resolve_all("{{ loop.name }}", {}, {})
         assert result == ""
 
-    def test_ralph_with_commands_and_args(self):
+    def test_loop_with_commands_and_args(self):
         result = resolve_all(
-            "{{ commands.tests }} {{ args.dir }} {{ ralph.iteration }}",
+            "{{ commands.tests }} {{ args.dir }} {{ loop.iteration }}",
             {"tests": "ok"},
             {"dir": "./src"},
             {"iteration": "2"},
         )
         assert result == "ok ./src 2"
 
-    def test_ralph_value_not_resolved_as_command_placeholder(self):
+    def test_loop_value_not_resolved_as_command_placeholder(self):
         result = resolve_all(
-            "Ctx: {{ ralph.name }}\nCmd: {{ commands.tests }}",
+            "Ctx: {{ loop.name }}\nCmd: {{ commands.tests }}",
             {"tests": "5 passed"},
             {},
             {"name": "{{ commands.tests }}"},
@@ -215,5 +215,5 @@ class TestResolveRalphContext:
         assert "Cmd: 5 passed" in result
 
     def test_whitespace_tolerant(self):
-        result = resolve_all("{{  ralph.name  }}", {}, {}, {"name": "test"})
+        result = resolve_all("{{  loop.name  }}", {}, {}, {"name": "test"})
         assert result == "test"

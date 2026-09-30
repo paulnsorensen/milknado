@@ -64,7 +64,7 @@ class SymbolSpread:
     spread: int
 
 
-# one batch = one ralph-loop execution context = one review unit;
+# one batch = one loop execution context = one review unit;
 # more than this many CHANGES in a single batch is too coarse to review/run atomically.
 # Distinct from token-budget `oversized`; uncalibrated heuristic, tune here if needed.
 MEGA_BATCH_THRESHOLD = 5

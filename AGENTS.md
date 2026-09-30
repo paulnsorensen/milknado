@@ -85,7 +85,7 @@ from `web/` source.
 
 ## Project Overview
 
-Milknado is a Mikado execution engine — it decomposes goals into dependency graphs and executes them as parallel ralph loops.
+Milknado is a Mikado execution engine — it decomposes goals into dependency graphs and executes them as parallel loops.
 
 - **Entry points**: `milknado` CLI (`src/milknado/cli/`, `milknado.cli:app`), `milknado-mcp` MCP server (`src/milknado/mcp/server.py`, `milknado.mcp.server:main`)
 - **Architecture**: Sliced Bread — vertical slices under `src/milknado/domains/`, adapters in `src/milknado/adapters/`

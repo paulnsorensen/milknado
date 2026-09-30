@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, cast
 
 from typing_extensions import override
 
+import milknado.domains.graph._connection as _connection
 import milknado.domains.graph._creation as _creation
 import milknado.domains.graph._dispatch_readiness as _dispatch_readiness
 import milknado.domains.graph._follow_up as _follow_up
@@ -65,12 +66,6 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-def _quick_check(conn: sqlite3.Connection) -> str:
-    row = cast(object, conn.execute("PRAGMA quick_check").fetchone())
-    values = cast(tuple[object, ...], row)
-    return cast(str, values[0])
-
-
 class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     """Thin facade over the graph slice's free-function modules.
 
@@ -86,6 +81,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     _raw_conn: sqlite3.Connection | None
     _pipeline: StatusPipeline
     _dispatch_exclusions: set[int]
+    _concurrency_limit: int
     _graph_snapshot_cache: GraphSnapshot | None
     runs: _RunFacade
     sessions: _SessionFacade
@@ -97,11 +93,23 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     def synchronization_lock(self) -> AbstractContextManager[object]:
         return self._lock
 
-    def __init__(self, db_path: Path, plugins: Sequence[PluginHook] = ()) -> None:
-        self._initialize(db_path, self._open(db_path), plugins)
+    def __init__(
+        self,
+        db_path: Path,
+        plugins: Sequence[PluginHook] = (),
+        *,
+        concurrency_limit: int = 4,
+    ) -> None:
+        if type(concurrency_limit) is not int or concurrency_limit < 1:
+            raise ValueError("concurrency_limit must be a positive integer")
+        self._initialize(db_path, _connection.open_connection(db_path), plugins, concurrency_limit)
 
     def _initialize(
-        self, db_path: Path, raw_conn: sqlite3.Connection, plugins: Sequence[PluginHook]
+        self,
+        db_path: Path,
+        raw_conn: sqlite3.Connection,
+        plugins: Sequence[PluginHook],
+        concurrency_limit: int = 4,
     ) -> None:
         self._lock = RLock()
         self._db_path = db_path
@@ -112,6 +120,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             cast(Sequence[StatusMiddleware], [_PluginAsMiddleware(p) for p in plugins])
         )
         self._dispatch_exclusions = set()
+        self._concurrency_limit = concurrency_limit
         self._graph_snapshot_cache = None
         self._graph_snapshot_revision: tuple[int, int] | None = None
         self._controller_master: bytes | None = None
@@ -127,7 +136,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
         source = sqlite3.connect(uri, uri=True, check_same_thread=False)
         snapshot = sqlite3.connect(":memory:", check_same_thread=False)
         try:
-            if _quick_check(source) != "ok":
+            if _connection.quick_check(source) != "ok":
                 raise sqlite3.DatabaseError(f"database failed PRAGMA quick_check: {db_path}")
             source.backup(snapshot)
             snapshot.row_factory = sqlite3.Row
@@ -145,64 +154,6 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
 
     # ── Connection lifecycle (self-heal chokepoint) ──────────────────────────
 
-    @staticmethod
-    def _quarantine(db_path: Path) -> list[Path]:
-        # Microsecond resolution: two quarantines of the same db within one
-        # second must not collide and silently overwrite forensic evidence.
-        ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%f")
-        moved: list[Path] = []
-        for suffix in ("", "-wal", "-shm"):
-            candidate = Path(f"{db_path}{suffix}")
-            if candidate.exists():
-                target = Path(f"{candidate}.corrupt-{ts}")
-                _ = candidate.rename(target)
-                moved.append(target)
-        return moved
-
-    def _open(self, db_path: Path) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        try:
-            quick_check = _quick_check(conn)
-        except sqlite3.DatabaseError:
-            quick_check = "error"
-        if quick_check != "ok":
-            # Quarantine BEFORE closing: close() on the last connection makes
-            # sqlite delete the -wal/-shm sidecars, destroying the very
-            # evidence (and data) the quarantine exists to preserve.
-            moved = self._quarantine(db_path)
-            try:
-                conn.close()
-            except sqlite3.Error:
-                # Best-effort close: the db was already renamed aside by the
-                # quarantine, so this handle to the moved file is abandoned
-                # either way — a close failure changes nothing.
-                pass
-            _logger.warning(
-                "database failed PRAGMA quick_check (%s); quarantined %s to %s; recreating fresh",
-                quick_check,
-                db_path,
-                [str(p) for p in moved],
-            )
-            conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        _ = conn.execute("PRAGMA journal_mode=WAL")
-        _ = conn.execute("PRAGMA foreign_keys=ON")
-        # Explicit so the concurrent-writer wait window (detached runner + server
-        # both writing the same db) is documented, not implicit in connect()'s default.
-        _ = conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            _persistence.create_tables(conn)
-            _persistence.migrate(conn)
-        except Exception:
-            # Never leak the handle on a schema/migration failure — close
-            # best-effort, then re-raise the original error unchanged.
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
-            raise
-        return conn
-
     def _heal_conn(self, reason: str) -> None:
         """Reopen an unexpectedly-closed connection, logging both stacks.
 
@@ -218,7 +169,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
             "".join(self._close_stack) if self._close_stack else "(no close() recorded)",
             "".join(heal_stack),
         )
-        self._raw_conn = self._open(self._db_path)
+        self._raw_conn = _connection.open_connection(self._db_path)
         self._graph_snapshot_cache = None
         self._graph_snapshot_revision = None
         self._closed = False
@@ -578,7 +529,15 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
     @synchronized
     def claim_node(self, node_id: int, run_id: str, *, now: str, pid: int | None = None) -> bool:
         _goal_review.assert_admitted(self._conn, node_id)
-        return _status.claim_node(self._pipeline, self._conn, node_id, run_id, now=now, pid=pid)
+        return _status.claim_node(
+            self._pipeline,
+            self._conn,
+            node_id,
+            run_id,
+            now=now,
+            concurrency_limit=self._concurrency_limit,
+            pid=pid,
+        )
 
     @synchronized
     def release(self, node_id: int, run_id: str) -> bool:

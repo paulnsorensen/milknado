@@ -372,14 +372,14 @@ def build_execution_controller(
     from milknado.domains.execution import Executor, RunLoop
 
     _ = reconcile_orphaned_runs(graph)
-    ralph = LoopAdapter(graph=graph)
+    loop_adapter = LoopAdapter(graph=graph)
     executor = Executor(
         graph=graph,
         git=GitAdapter(project_root),
-        ralph=ralph,
+        loop=loop_adapter,
         crg=CrgAdapter(project_root),
     )
-    loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
+    loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
     return ExecutionController(
         loop,
         execution_config=build_exec_config(config, project_root),
@@ -406,10 +406,10 @@ def run_execution_loop(
 
     _ = reconcile_orphaned_runs(graph)
     git = GitAdapter(project_root)
-    ralph = LoopAdapter(graph=graph)
+    loop_adapter = LoopAdapter(graph=graph)
     crg = CrgAdapter(project_root)
-    executor = Executor(graph=graph, git=git, ralph=ralph, crg=crg)
-    loop = RunLoop(executor=executor, graph=graph, ralph=ralph, config=config)
+    executor = Executor(graph=graph, git=git, loop=loop_adapter, crg=crg)
+    loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
     return loop.run(
         config=build_exec_config(config, project_root),
         feature_branch=feature_branch,

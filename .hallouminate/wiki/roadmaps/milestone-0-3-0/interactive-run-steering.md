@@ -692,12 +692,12 @@ it, without restarting the task.
 With [[tmux-run-primitive]] providing the window, this goal makes the agent
 inside it steerable: a run dispatched in interactive mode runs the harness in
 its normal (non-headless) mode, so a human attaching to the window can
-converse with the worker directly. The ralph loop contract still holds — the
+converse with the worker directly. The loop contract still holds — the
 run ends when quality gates pass — but a human can participate in getting it
 there.
 
 This is the second half of the firstmate-usability adoption track. Together
-with ralph trees and wiki roadmaps, it is what lets milknado be the golden
+with loop trees and wiki roadmaps, it is what lets milknado be the golden
 path over firstmate: the same casual working-with-sub-agents feel, backed by
 a real dependency graph, deterministic batching, and hard verification gates
 instead of prose rules.
@@ -707,10 +707,10 @@ Open questions to resolve during design (not silently):
 - Harness support matrix: which of the allowlisted harnesses (claude, codex,
   cursor-agent, gemini) can run interactively under tmux with the worker
   hook still firing? Interactive mode may be per-harness opt-in.
-- Loop semantics: in interactive mode, does the ralph iteration boundary
+- Loop semantics: in interactive mode, does the loop iteration boundary
   survive (harness exits, loop re-invokes), or does the loop become a single
   long-lived interactive session with gate checks on idle?
-- How does human input mid-run interact with the run's brief/RALPH.md
+- How does human input mid-run interact with the run's brief/LOOP.md
   contract — is a human redirection recorded (e.g. as a `run_messages` row)
   so the audit trail stays truthful?
 - Supervision interplay: does typing into a window suppress

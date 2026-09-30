@@ -85,16 +85,16 @@ def _tiktoken_count(path: Path) -> int | None:
     return len(_get_encoder().encode(text))
 
 
-RALPH_STARTUP_TOKENS = 2000
+LOOP_STARTUP_TOKENS = 2000
 
 
 def batch_size_cost(k: int) -> int:
-    """Fixed ralph-loop startup overhead for a batch of k changes.
+    """Fixed loop startup overhead for a batch of k changes.
 
     Models system-prompt + tool-setup tokens that don't scale with file content.
-    k=0 means no ralph invocation, so no overhead.
+    k=0 means no loop invocation, so no overhead.
     """
-    return RALPH_STARTUP_TOKENS if k > 0 else 0
+    return LOOP_STARTUP_TOKENS if k > 0 else 0
 
 
 def _estimate_path_level(change: FileChange, root: Path) -> int:

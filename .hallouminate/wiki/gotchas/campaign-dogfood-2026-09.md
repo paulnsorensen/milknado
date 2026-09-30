@@ -33,7 +33,7 @@ Save `git diff` from the preserved worktree before removing it if the earlier so
 An Opus review of the largest node diff (three fence-invariant issues in graph persistence) exceeded it and was recorded as `reviewer timed out before producing a verdict`.
 The campaign adds `review_timeout_seconds` (per flavor, inherits like `review_max_rounds`) so the cap is configurable.
 Review logs used to live in a `tempfile.TemporaryDirectory`, so a timed-out review left no log to diagnose.
-The campaign moves them to `<worktree>/.ralph-logs/review/` so they persist.
+The campaign moves them to `<worktree>/.loop-logs/review/` so they persist.
 
 ## Large briefs overflow one argv element
 

@@ -139,9 +139,9 @@ def _run_controller_session(
 
 
 def _loop_adapter(controller: ExecutionController) -> LoopAdapter:
-    loop = controller._loop  # pyright: ignore[reportPrivateUsage]
-    ralph = loop._ralph  # pyright: ignore[reportPrivateUsage]
-    return cast(LoopAdapter, ralph)
+    run_loop = controller._loop  # pyright: ignore[reportPrivateUsage]
+    loop_adapter = run_loop._loop  # pyright: ignore[reportPrivateUsage]
+    return cast(LoopAdapter, loop_adapter)
 
 
 def test_controller_session_reaches_worker_and_replays(
@@ -186,9 +186,9 @@ def test_controller_session_reaches_worker_and_replays(
             event.kind == "status" and event.event_id.endswith(_SESSION_ID)
             for event in terminal.session.events
         )
-        ralph = _loop_adapter(controller)
-        assert ralph.get_run_session_id(run_id) == _SESSION_ID
-        assert ralph.get_run_session(run_id) == terminal.session
+        loop_adapter = _loop_adapter(controller)
+        assert loop_adapter.get_run_session_id(run_id) == _SESSION_ID
+        assert loop_adapter.get_run_session(run_id) == terminal.session
         assert (repo / "guidance.txt").read_text(encoding="utf-8") == _FOLLOW_UP
         assert (
             controller.session_input(run_id, SessionInput(action="follow_up", text="late input"))

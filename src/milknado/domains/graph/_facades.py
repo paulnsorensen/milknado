@@ -52,10 +52,6 @@ class _RunFacade(_SubFacade):
         return _reads.latest_unowned_terminal_run(self._conn, node_id)
 
     @synchronized
-    def count_running(self) -> int:
-        return _reads.count_running_runs(self._conn)
-
-    @synchronized
     def recent(self, limit: int) -> list[_run_persistence.RunRecord]:
         return _run_persistence.recent_runs(self._conn, limit)
 

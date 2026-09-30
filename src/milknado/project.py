@@ -30,7 +30,7 @@ def open_project_graph(
     plugins: tuple[PluginHook, ...] = (),
 ) -> MikadoGraph:
     config.db_path.parent.mkdir(parents=True, exist_ok=True)
-    return MikadoGraph(config.db_path, plugins=plugins)
+    return MikadoGraph(config.db_path, plugins=plugins, concurrency_limit=config.concurrency_limit)
 
 
 def open_project(root: Path, config: MilknadoConfig | None = None) -> OpenProject:

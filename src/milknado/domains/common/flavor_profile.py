@@ -16,9 +16,9 @@ class FlavorProfile(msgspec.Struct, frozen=True, kw_only=True):
     """Resolved, ready-to-use per-flavor configuration. No identity.
 
     ``worker_agent_type`` / ``loop_mode`` / ``max_turns`` drive the native
-    Workflow backend. ``max_iterations`` also bounds the detached ralph worker
+    Workflow backend. ``max_iterations`` also bounds the detached loop worker
     loop (its in-run retry budget); the plain subprocess dispatcher ignores it.
-    ``attempt_timeout_seconds`` caps each detached ralph attempt's wall clock.
+    ``attempt_timeout_seconds`` caps each detached loop attempt's wall clock.
     """
 
     execution_agent: str

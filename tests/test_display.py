@@ -161,7 +161,7 @@ class TestRenderTree:
         output = render_tree(graph)
         assert "Active Worktrees" not in output
 
-    def test_ralph_run_state_displayed(self, graph: MikadoGraph):
+    def test_loop_run_state_displayed(self, graph: MikadoGraph):
         root = graph.add_node("Root")
         c1 = graph.add_node("Worker", parent_id=root.id)
         graph.mark_running(c1.id, worktree_path="/tmp/wt-1", run_id="run-abc")

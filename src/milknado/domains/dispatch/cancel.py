@@ -227,7 +227,7 @@ def cancel_run(
     owner_pid = node.pid if node is not None and node.run_id == run_id else None
     run_pid = cast(int | None, state.get("pid"))
     if run_pid is not None:
-        # A detached ralph run records the same process as its node owner and
+        # A detached loop run records the same process as its node owner and
         # can be terminated directly. Async runs retain the coordinator as the
         # node owner while their run row names the child worker, so they must
         # use the cooperative sentinel path instead of killing the coordinator's

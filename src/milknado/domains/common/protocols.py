@@ -155,8 +155,8 @@ class LoopPort(Protocol):
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -202,7 +202,7 @@ class LoopPort(Protocol):
         spec_text: str,
         graph_state: str,
     ) -> VerifySpecResult: ...
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,

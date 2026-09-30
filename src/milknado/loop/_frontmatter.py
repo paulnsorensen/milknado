@@ -1,6 +1,6 @@
-"""Parse YAML frontmatter from RALPH.md files.
+"""Parse YAML frontmatter from LOOP.md files.
 
-A ralph is a directory containing a ``RALPH.md`` file.  The frontmatter
+A loop is a directory containing a ``LOOP.md`` file.  The frontmatter
 configures the agent command, commands to run, and accepted arguments.
 The body is the prompt template.
 
@@ -15,20 +15,20 @@ from typing import cast
 
 import yaml
 
-# Single source of truth for the ralph marker filename.
-RALPH_MARKER = "RALPH.md"
+# Single source of truth for the loop marker filename.
+LOOP_MARKER = "LOOP.md"
 
 # Frontmatter field names — used in parsing (cli.py) and placeholder
 # resolution (_resolver.py).  Centralised here so renames stay in sync.
 FIELD_AGENT = "agent"
 FIELD_COMMANDS = "commands"
 FIELD_ARGS = "args"
-FIELD_RALPH = "ralph"
+FIELD_LOOP = "loop"
 
 # YAML frontmatter delimiter line.
 _FRONTMATTER_DELIMITER = "---"
 
-# Valid characters for identifier names (commands, args, ralph context) —
+# Valid characters for identifier names (commands, args, loop context) —
 # letters, digits, hyphens, underscores.  Used by cli.py (validation) and
 # _resolver.py (placeholders).
 NAME_RE = re.compile(r"[a-zA-Z0-9_-]+")
@@ -86,7 +86,7 @@ def _extract_frontmatter_block(text: str) -> tuple[str, str]:
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, object], str]:
-    """Parse a RALPH.md file with YAML frontmatter.
+    """Parse a LOOP.md file with YAML frontmatter.
 
     Frontmatter is delimited by ``---`` lines at the start of the file.
     Full YAML is supported (nested lists, dicts).  HTML comments are

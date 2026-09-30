@@ -472,7 +472,7 @@ class TestWalDurability:
 
     def test_close_checkpoints_shared_wal_into_main_db(self, tmp_path: Path) -> None:
         db_path = tmp_path / "wal.db"
-        # Long-lived writer, mirroring the detached ralph runner: commits a node
+        # Long-lived writer, mirroring the detached loop runner: commits a node
         # but stays open, so its frames sit in the shared -wal.
         runner = MikadoGraph(db_path)
         try:

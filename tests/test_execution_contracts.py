@@ -36,8 +36,8 @@ def test_loop_port_exposes_typed_operator_control_contract() -> None:
     assert list(create_signature.parameters) == [
         "self",
         "agent",
-        "ralph_dir",
-        "ralph_file",
+        "loop_dir",
+        "loop_file",
         "quality_gates",
         "project_root",
         "commit_footer",

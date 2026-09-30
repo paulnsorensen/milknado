@@ -5,11 +5,11 @@ roadmap: milestone-0-3-0
 created: 2026-07-01
 prereqs: [worker-coordinator-messaging]
 ---
-# Zero-token event-driven supervision of ralph runs
+# Zero-token event-driven supervision of loop runs
 
 ## Intent
 
-Today a coordinator supervising detached ralph runs burns model turns polling
+Today a coordinator supervising detached loop runs burns model turns polling
 `milknado_run_loop_poll` / `milknado_run_list` — every check spends tokens even
 when nothing changed. Firstmate demonstrates the alternative: a bash watcher
 (`fm-watch.sh`) sleeps on the fleet, classifies wake events in bash at zero LLM
@@ -24,7 +24,7 @@ transition as benign or actionable, and delivers actionable events to the
 coordinator through a durable queue that survives a missed wake (firstmate's
 `state/.wake-queue` pattern). Benign transitions never reach a model.
 
-Done looks like: a coordinator driving N parallel ralph runs makes zero
+Done looks like: a coordinator driving N parallel loop runs makes zero
 polling tool calls while runs are healthy, and is woken promptly when a run
 finishes, fails a quality gate, dies, or stalls.
 
@@ -36,7 +36,7 @@ Open questions to resolve during design (not silently):
 - Where does the actionable/benign classification table live — hardcoded,
   `milknado.toml`, or per-run config at dispatch time?
 - Does the watcher belong to the MCP server process, or is it a detached
-  sibling like the ralph runs themselves (surviving server restart)?
+  sibling like the loop runs themselves (surviving server restart)?
 - Stall detection: what is the signal for "running but stuck" when there is
   no tmux pane to inspect (log mtime? progress-message age)?
 
@@ -47,7 +47,7 @@ Open questions to resolve during design (not silently):
   deterministic and unit-tested per class of transition.
 - Actionable events land in a durable queue that is drained on coordinator
   wake; an event raised while the coordinator is absent is not lost.
-- A demo/e2e scenario shows a coordinator supervising ≥2 parallel ralph runs
+- A demo/e2e scenario shows a coordinator supervising ≥2 parallel loop runs
   to completion with zero `run_loop_poll` calls during healthy execution.
 - Dead-process and stalled-run detection each produce an actionable wake,
   covered by tests.
