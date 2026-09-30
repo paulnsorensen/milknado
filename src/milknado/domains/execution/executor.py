@@ -50,6 +50,7 @@ from milknado.domains.dispatch import (
     render_brief,
     runs_dir,
 )
+from milknado.domains.execution._host_slots import SlotLedger
 from milknado.domains.execution._models import (
     CompletionResult,
     DispatchResult,
@@ -66,7 +67,13 @@ from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort, GitPort, GraphReadPort, LoopPort
+    from milknado.domains.common.protocols import (
+        CrgPort,
+        GitPort,
+        GraphReadPort,
+        HostCapacityPort,
+        LoopPort,
+    )
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
@@ -438,6 +445,11 @@ class Executor:
         self._config_by_node: dict[int, ExecutionConfig] = {}
         self._session_by_node: dict[int, NodeAgentSession] = {}
         self._review_round_by_node: dict[int, int] = {}
+        self._slots: SlotLedger = SlotLedger()
+
+    def use_host_capacity(self, port: HostCapacityPort) -> None:
+        """Cap concurrent workers across the host through ``port``."""
+        self._slots.use(port)
 
     def dispatch(
         self,
@@ -501,6 +513,22 @@ class Executor:
             )
         return wt_path, f"milknado/{node_id}-{slug}"
 
+    def _admit(self, node_id: int, owner_run_id: str, root: Path, *, adopted: bool) -> None:
+        """Take a host slot, then claim the node; free the slot if the claim fails."""
+        self._slots.take(owner_run_id, node_id, root, wait=adopted)
+        if adopted:
+            return
+        try:
+            claimed = self._graph.claim_node(
+                node_id, owner_run_id, now=datetime.now(UTC).isoformat(), pid=os.getpid()
+            )
+        except BaseException:
+            self._slots.drop(node_id)
+            raise
+        if not claimed:
+            self._slots.drop(node_id)
+            raise NodeClaimRejected(f"node {node_id} is already claimed; dispatch refused")
+
     def _dispatch_once(
         self,
         node_id: int,
@@ -536,10 +564,7 @@ class Executor:
             owner_run_id = parent_run_id
         else:
             owner_run_id = make_run_id(node_id)
-            if not self._graph.claim_node(
-                node_id, owner_run_id, now=datetime.now(UTC).isoformat(), pid=os.getpid()
-            ):
-                raise NodeClaimRejected(f"node {node_id} is already claimed; dispatch refused")
+        self._admit(node_id, owner_run_id, config.project_root, adopted=adopted)
 
         create_attempted = False
         run_id: str | None = None
@@ -1083,6 +1108,8 @@ class Executor:
                         node_id,
                     )
 
+        if stop_confirmed:
+            self._slots.drop(node_id)
         return stop_confirmed
 
     def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
@@ -1348,6 +1375,17 @@ class Executor:
         return self._handle_review_rejection(node, worktree, config, findings, review_error)
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
+        try:
+            return self._complete(node_id, feature_branch)
+        finally:
+            try:
+                current = self._graph.get_node(node_id)
+                in_flight = current is not None and current.status is NodeStatus.RUNNING
+                self._slots.settle(node_id, running=in_flight)
+            except Exception:
+                _logger.exception("host slot settle failed node_id=%d", node_id)
+
+    def _complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -1424,55 +1462,68 @@ class Executor:
         return None
 
     def finish_preserved_abort(self, node_id: int, owner_run_id: str, run_id: str) -> None:
-        node = self._graph.get_node(node_id)
-        if node is not None and node.status is NodeStatus.RUNNING and node.run_id == owner_run_id:
-            _ = self._graph.mark_terminal(
-                node_id, owner_run_id, NodeStatus.FAILED, preserve_recovery=True
+        try:
+            node = self._graph.get_node(node_id)
+            if (
+                node is not None
+                and node.status is NodeStatus.RUNNING
+                and node.run_id == owner_run_id
+            ):
+                _ = self._graph.mark_terminal(
+                    node_id, owner_run_id, NodeStatus.FAILED, preserve_recovery=True
+                )
+            self._finalize_worker_run(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=None,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    error="dispatch aborted after worker start",
+                ),
             )
-        self._finalize_worker_run(
-            run_id,
-            RunResult(
-                status="failed",
-                exit_code=None,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                error="dispatch aborted after worker start",
-            ),
-        )
+        finally:
+            self._slots.drop(node_id)
 
     def fail(self, node_id: int, detail: str | None = None) -> None:
-        self._wt.ensure_clean(node_id)
-        node = self._graph.get_node(node_id)
-        preserved = self._discard_worktree(node_id, node, "failed") if node else None
-        self._graph.mark_failed(node_id)
-        self._finish_node_worker_run(
-            node_id,
-            RunResult(
-                status="failed",
-                exit_code=None,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                detail=preserved or detail or "node failed",
-            ),
-        )
+        try:
+            self._wt.ensure_clean(node_id)
+            node = self._graph.get_node(node_id)
+            preserved = self._discard_worktree(node_id, node, "failed") if node else None
+            self._graph.mark_failed(node_id)
+            self._finish_node_worker_run(
+                node_id,
+                RunResult(
+                    status="failed",
+                    exit_code=None,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    detail=preserved or detail or "node failed",
+                ),
+            )
+        finally:
+            self._slots.drop(node_id)
 
     def cancel(self, node_id: int) -> None:
         """Clean a stopped run and make its graph node schedulable next invocation."""
-        node = self._graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        self._finish_node_worker_run(
-            node_id,
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                error="cancelled",
-            ),
-        )
-        _ = self._discard_worktree(node_id, node, "stopped")
-        if node.run_id:
-            _ = self._graph.release(node_id, node.run_id)
-        else:
-            self._graph.mark_pending(node_id)
+        try:
+            node = self._graph.get_node(node_id)
+            if node is None:
+                raise ValueError(f"Node {node_id} not found")
+            self._finish_node_worker_run(
+                node_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    error="cancelled",
+                ),
+            )
+            _ = self._discard_worktree(node_id, node, "stopped")
+            if node.run_id:
+                _ = self._graph.release(node_id, node.run_id)
+            else:
+                self._graph.mark_pending(node_id)
+        finally:
+            self._slots.drop(node_id)

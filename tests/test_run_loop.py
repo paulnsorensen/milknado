@@ -869,6 +869,136 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
     _mock(run_loop, "_handle_completion_timeout").assert_not_called()
 
 
+def _run_on_fake_clock(
+    run_loop: RunLoop,
+    config: ExecutionConfig,
+    fake_loop: FakeLoop,
+    graph: MikadoGraph,
+    *,
+    waits: list[tuple[float, ProgressEvent | None]],
+    with_controls: bool,
+    dispatches: list[tuple[int, int]],
+    retries: list[tuple[int, int]],
+) -> MagicMock:
+    """Run the loop on a fake clock; each wait advances it, the last wait ends the run.
+
+    Returns the mocked ``_handle_completion_timeout``.
+    """
+    from milknado.domains.common.errors import CompletionTimeout
+
+    node = graph.add_node("active")
+    graph.mark_running(node.id)
+    _active(run_loop)["run-1"] = node.id
+    _set_attr(run_loop, "_capacity_deferred", True)
+    queued = list(dispatches)
+
+    def dispatch() -> tuple[int, int]:
+        result = queued.pop(0)
+        if not queued:
+            _set_attr(run_loop, "_capacity_deferred", False)
+        return result
+
+    def dispatch_any(*_args: object) -> tuple[int, int]:
+        return dispatch()
+
+    _set_attr(
+        run_loop,
+        "_dispatch_if_scheduling_open",
+        MagicMock(side_effect=dispatch_any),
+    )
+    _set_attr(run_loop, "_retry_deferred_if_due", MagicMock(side_effect=retries))
+    _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
+    if with_controls:
+        _set_attr(run_loop, "_process_controls", MagicMock())
+    clock = [0.0]
+    pending = list(waits)
+
+    def wait(
+        active_run_ids: set[str], timeout: float | None = None
+    ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
+        del timeout  # signature mirrors LoopPort; the fake ignores the timeout
+        advance, event = pending.pop(0)
+        clock[0] += advance
+        if not pending:
+            _active(run_loop).clear()
+        if event is not None:
+            return "run-1", event
+        raise CompletionTimeout(waited_seconds=advance, active_run_ids=active_run_ids)
+
+    _set_attr(fake_loop, "wait_for_next_completion", wait)
+    with patch(
+        "milknado.domains.execution.run_loop.time.monotonic",
+        side_effect=lambda: clock[0],
+    ):
+        _ = _execute_run(
+            run_loop, config, "main", concurrency_limit=1, timeout=100.0, interactive=False
+        )
+    return _mock(run_loop, "_handle_completion_timeout")
+
+
+def test_controller_retry_admit_restarts_the_completion_deadline(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_loop: FakeLoop,
+) -> None:
+    """A node admitted by a deferred retry gets a full timeout, not the leftover of A's."""
+    handler = _run_on_fake_clock(
+        run_loop,
+        config,
+        fake_loop,
+        graph,
+        waits=[(60.0, None), (60.0, None)],
+        with_controls=True,
+        dispatches=[(0, 0)],
+        retries=[(1, 0), (0, 0)],
+    )
+
+    handler.assert_not_called()
+
+
+def test_no_controls_retry_admit_restarts_the_completion_deadline(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_loop: FakeLoop,
+) -> None:
+    handler = _run_on_fake_clock(
+        run_loop,
+        config,
+        fake_loop,
+        graph,
+        waits=[(60.0, None), (60.0, None)],
+        with_controls=False,
+        dispatches=[(0, 0), (1, 0), (0, 0)],
+        retries=[],
+    )
+
+    handler.assert_not_called()
+
+
+def test_no_controls_progress_restarts_the_deferred_completion_deadline(
+    run_loop: RunLoop,
+    graph: MikadoGraph,
+    config: ExecutionConfig,
+    fake_loop: FakeLoop,
+) -> None:
+    """Progress pushes the deadline out, as when each wait had its own full timeout."""
+    progress = ProgressEvent(run_id="run-1", work=1, total=2, message="building")
+    handler = _run_on_fake_clock(
+        run_loop,
+        config,
+        fake_loop,
+        graph,
+        waits=[(90.0, progress), (60.0, None)],
+        with_controls=False,
+        dispatches=[(0, 0), (0, 0)],
+        retries=[],
+    )
+
+    handler.assert_not_called()
+
+
 def test_unset_completion_timeout_polls_controls_without_timing_out(
     run_loop: RunLoop,
     graph: MikadoGraph,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import GitPort, RunFenceLostError, RunResult
+from milknado.domains.common.protocols import SlotLease
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -65,6 +66,7 @@ class AsyncRunRequest:
     default_cmd: str
     cwd: Path
     merge_ctx: IsolateContext | None = None
+    lease: SlotLease | None = None
 
 
 @dataclass(frozen=True)
@@ -320,6 +322,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                         encoding="utf-8",
                     )
     finally:
+        if request.lease is not None:
+            request.lease.release()
         if graph is not None:
             graph.close()
         # Clear the sentinel after terminal write so reused run dirs cannot carry stale cancel.

@@ -1,4 +1,5 @@
 from milknado.domains.common.agent_argv import validate_worker_argv
+from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     clear_cancel,
@@ -73,6 +74,7 @@ __all__ = [
     "clear_cancel",
     "build_worker_env",
     "create_isolated_worktree",
+    "claim_with_host_slot",
     "dispatch_node_sync",
     "merge_back_isolated",
     "exit_code_path",
