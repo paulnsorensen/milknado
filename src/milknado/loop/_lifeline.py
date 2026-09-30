@@ -40,7 +40,7 @@ class EvidenceStore(Protocol):
     def begin(self, key: ObservationKey) -> None: ...
     def commit(self, key: ObservationKey, descendants: tuple[Descendant, ...]) -> None: ...
     def ready(self, helper: HelperIdentity, sequence: int) -> bool: ...
-    def end(self, invocation_id: str) -> None: ...
+    def end(self, invocation_id: str, snapshot_seq: int, helper_generation: int) -> None: ...
 
 
 def _worker(record: WorkerEvidence) -> WorkerIdentity:
@@ -105,8 +105,8 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
     if not result.covered_exited or current.observation_owner is not None:
         return 1
     try:
-        store.end(helper.invocation_id)
-    except (sqlite3.OperationalError, TimeoutError) as exc:
+        store.end(helper.invocation_id, current.snapshot_seq, helper.generation)
+    except (sqlite3.OperationalError, TimeoutError, RuntimeError) as exc:
         _log.warning("lifeline completion unresolved: %s", exc)
         return 1
     return 0

@@ -63,6 +63,8 @@ class WorkerEvidenceStore:
         self._limit_wait()
         return _worker_persistence.ready_helper(self._conn, helper, sequence)
 
-    def end(self, invocation_id: str) -> None:
+    def end(self, invocation_id: str, snapshot_seq: int, helper_generation: int) -> None:
         self._limit_wait()
-        _worker_persistence.end_worker(self._conn, invocation_id)
+        _worker_persistence.end_worker(
+            self._conn, invocation_id, snapshot_seq, helper_generation
+        )

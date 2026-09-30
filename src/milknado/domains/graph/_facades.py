@@ -92,8 +92,10 @@ class _RunFacade(_SubFacade):
         return _worker_persistence.ready_helper(self._conn, helper, sequence)
 
     @synchronized
-    def end_worker(self, invocation_id: str) -> None:
-        _worker_persistence.end_worker(self._conn, invocation_id)
+    def end_worker(
+        self, invocation_id: str, snapshot_seq: int, helper_generation: int | None = None
+    ) -> None:
+        _worker_persistence.end_worker(self._conn, invocation_id, snapshot_seq, helper_generation)
 
     @synchronized
     def get(self, run_id: str) -> _run_persistence.RunRecord | None:

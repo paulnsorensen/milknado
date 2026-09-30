@@ -197,12 +197,17 @@ def ready_helper(conn: sqlite3.Connection, helper: HelperIdentity, sequence: int
     return cur.rowcount == 1
 
 
-def end_worker(conn: sqlite3.Connection, invocation_id: str) -> None:
+def end_worker(
+    conn: sqlite3.Connection, invocation_id: str, snapshot_seq: int,
+    helper_generation: int | None = None,
+) -> None:
     cur = conn.execute(
         "UPDATE run_workers SET ended_at = ? WHERE invocation_id = ? "
-        "AND ended_at IS NULL AND observation_owner IS NULL",
-        (datetime.now(UTC).isoformat(), invocation_id),
+        "AND snapshot_seq = ? AND ended_at IS NULL AND observation_owner IS NULL "
+        "AND (? IS NULL OR helper_generation = ?)",
+        (datetime.now(UTC).isoformat(), invocation_id, snapshot_seq,
+         helper_generation, helper_generation),
     )
     conn.commit()
     if cur.rowcount != 1:
-        raise RuntimeError("worker observation unresolved or record closed")
+        raise RuntimeError("worker snapshot, helper, or observation fence lost")

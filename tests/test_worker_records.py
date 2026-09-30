@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 
 
 def test_worker_record_persists_and_blocks_reclaim(tmp_path: Path) -> None:
@@ -77,7 +77,7 @@ def test_interrupted_observation_prevents_worker_closure(tmp_path: Path) -> None
             ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
         )
         with pytest.raises(RuntimeError, match="observation"):
-            graph.runs.end_worker("inv-1")
+            graph.runs.end_worker("inv-1", 0)
         assert graph.runs.live_workers(run_id="run-1")[0].observation_owner == "supervisor"
     finally:
         graph.close()
@@ -101,5 +101,30 @@ def test_replaced_helper_cannot_begin_or_commit_observation(tmp_path: Path) -> N
             graph.runs.commit_worker_observation(stale, ((5678, 456.5, 5678),))
         graph.runs.commit_worker_observation(current, ((5678, 456.5, 5678),))
         assert graph.runs.live_workers(run_id="run-1")[0].descendants == ((5678, 456.5, 5678),)
+    finally:
+        graph.close()
+
+
+def test_stale_verified_snapshot_cannot_close_newer_evidence(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        node = graph.add_node("worker")
+        graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+        graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+        first = ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
+        graph.runs.begin_worker_observation(first)
+        graph.runs.commit_worker_observation(first, ((4567, 345.5, 4567),))
+        with WorkerEvidenceStore(graph.db_path) as other:
+            newer = ObservationKey("inv-1", "supervisor", 2, -1, 2345, 123.5)
+            other.begin(newer)
+            other.commit(newer, ((5678, 456.5, 5678),))
+        with pytest.raises(RuntimeError, match="snapshot"):
+            graph.runs.end_worker("inv-1", 1)
+        record = graph.runs.get_worker("inv-1")
+        assert record is not None
+        assert record.ended_at is None
+        assert record.descendants == ((4567, 345.5, 4567), (5678, 456.5, 5678))
+        graph.runs.end_worker("inv-1", 2)
+        assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         graph.close()
