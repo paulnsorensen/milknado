@@ -44,6 +44,9 @@ markers = [
     "browser: Playwright end-to-end tests over a real committed build; excluded from the xdist coverage run",
 ]
 
+[tool.coverage.run]
+patch = ["subprocess", "execv"]
+
 [tool.importlinter]
 root_package = "milknado"
 include_external_packages = true
