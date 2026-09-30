@@ -94,6 +94,14 @@ class ProcessAdapter:
                 start_new_session=True,
                 env=env,
             )
+        try:
+            threading.Thread(
+                target=proc.wait, name="milknado-detached-reaper", daemon=True
+            ).start()
+        except RuntimeError:
+            proc.kill()
+            _ = proc.wait()
+            raise
         return proc.pid
 
     def terminate_group(self, pid: int, timeout: float) -> bool:
