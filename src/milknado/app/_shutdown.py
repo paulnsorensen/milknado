@@ -25,6 +25,7 @@ class ShutdownIntent:
     def __init__(self) -> None:
         self.signum: int | None = None
         self.started_at: float | None = None
+        self.cleanup_confirmed: bool | None = None
         self._installed = False
 
     @property
@@ -114,6 +115,7 @@ def supervise(
                         "shutdown cleanup failed after signal %d", signum
                     )
                     confirmed = False
+                intent.cleanup_confirmed = confirmed
                 if not confirmed:
                     logging.getLogger("milknado").warning(
                         "shutdown cleanup remains unresolved after signal %d", signum

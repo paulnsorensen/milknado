@@ -184,7 +184,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             and not self._quit_started
         ):
             self._quit_started = True
-            _ = self._quit_after_force_stop()
+            self.exit()
 
     @work(thread=True, group="controls", exclusive=False)
     def _quit_after_force_stop(self) -> None:
@@ -264,10 +264,21 @@ def run_execution_tui(
     )
     with intent.installed():
         result = app.run()
+        if intent.signum is not None:
+            confirmed = intent.cleanup_confirmed
+            if confirmed is None:
+                try:
+                    confirmed = controller.force_stop_all()
+                except Exception:
+                    _logger.exception("force-stop cleanup failed after signal")
+                    confirmed = False
+            if not confirmed:
+                _ = sys.stderr.write(
+                    "Warning: force-stop cleanup did not finish; worker ownership remains.\n"
+                )
+            raise ShutdownSignal(intent.signum)
     if app._cleanup_confirmed is False:
         _ = sys.stderr.write(
             "Warning: force-stop cleanup did not finish; worker ownership remains.\n"
         )
-    if intent.signum is not None:
-        raise ShutdownSignal(intent.signum)
     return result

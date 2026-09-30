@@ -269,7 +269,10 @@ def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
 
     loop = BlockedLoop(loop_state())
     controller = ExecutionController(
-        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config(),
+        _as_run_loop(loop),
+        _none_config(),
+        _none_limit(),
+        _policy_config(),
         shutdown_intent=intent,
     )
     signaler = Thread(target=lambda: (started.wait(), intent.record(signal.SIGTERM, None)))

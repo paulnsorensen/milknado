@@ -213,7 +213,6 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
         self._loop.request_stop_run(run_id)
         self._publish_state()
 
-
     def run(
         self,
         config: ExecutionConfig,

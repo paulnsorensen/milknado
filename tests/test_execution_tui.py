@@ -20,7 +20,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static, Tree
 from typing_extensions import override
 
-from milknado.app._shutdown import ShutdownIntent
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal
 from milknado.app.run import (
     ActiveRunSnapshot,
     ExecutionController,
@@ -356,7 +356,7 @@ async def test_external_signal_forces_quit_without_confirmation() -> None:
         await asyncio.sleep(0.1)
         await pilot.pause()
 
-    assert controller.force_stop_all_requests == 1
+    assert controller.force_stop_all_requests == 0
     assert controller.stop_requests == 0
 
 
@@ -1119,8 +1119,41 @@ def test_tui_entry_prints_unresolved_cleanup_after_exit(
 
     monkeypatch.setattr(run_tui.ExecutionApp, "run", run)
 
-    assert run_tui.run_execution_tui(_as_execution_controller(FakeController()), feature_branch="feature") is None
+    assert (
+        run_tui.run_execution_tui(
+            _as_execution_controller(FakeController()), feature_branch="feature"
+        )
+        is None
+    )
     assert "force-stop cleanup did not finish" in capsys.readouterr().err
+
+
+def test_tui_signal_finishes_cleanup_after_display_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import milknado.app.run_tui as run_tui
+
+    controller = FakeController(force_stop_all_result=False)
+    calls: list[str] = []
+
+    def run(self: ExecutionApp) -> None:
+        calls.append("display-exit")
+        controller.shutdown_intent.record(signal.SIGHUP, None)
+
+    def force_stop_all(timeout: float = 8.0) -> bool:
+        del timeout
+        calls.append("stop")
+        return False
+
+    monkeypatch.setattr(run_tui.ExecutionApp, "run", run)
+    monkeypatch.setattr(controller, "force_stop_all", force_stop_all)
+    with pytest.raises(ShutdownSignal) as caught:
+        _ = run_tui.run_execution_tui(
+            _as_execution_controller(controller), feature_branch="feature"
+        )
+    assert calls == ["display-exit", "stop"]
+    assert caught.value.signum == signal.SIGHUP
+    assert "worker ownership remains" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio

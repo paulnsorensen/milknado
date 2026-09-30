@@ -134,7 +134,9 @@ def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bo
 def _supervise_node(
     driver: RunLoop, intent: ShutdownIntent, run_node: Callable[[], NodeLoopOutcome]
 ) -> NodeLoopOutcome:
-    return supervise(run_node, intent, lambda deadline: driver.force_stop_active(deadline), "milknado-node")
+    return supervise(
+        run_node, intent, lambda deadline: driver.force_stop_active(deadline), "milknado-node"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

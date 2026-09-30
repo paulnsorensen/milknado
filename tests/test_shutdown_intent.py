@@ -42,3 +42,27 @@ def test_rearm_restores_intent_after_ui_replaces_handler() -> None:
         intent.rearm()
         assert signal.getsignal(signal.SIGINT) == intent.record
     assert signal.getsignal(signal.SIGINT) is prior
+
+
+def test_supervision_records_cleanup_confirmation() -> None:
+    from threading import Event, Thread
+
+    from milknado.app._shutdown import ShutdownSignal, supervise
+
+    started = Event()
+    release = Event()
+    intent = ShutdownIntent()
+
+    def run() -> None:
+        started.set()
+        _ = release.wait(1.0)
+
+    signaler = Thread(target=lambda: (started.wait(), intent.record(signal.SIGTERM, None)))
+    signaler.start()
+    try:
+        with pytest.raises(ShutdownSignal):
+            supervise(run, intent, lambda _deadline: True, "shutdown-test")
+    finally:
+        release.set()
+        signaler.join(1.0)
+    assert intent.cleanup_confirmed is True

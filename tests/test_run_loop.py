@@ -534,7 +534,9 @@ def test_force_stop_active_closes_admission_without_scheduling_lock(
     deadline = monotonic() + 1.0
     _ = lock.acquire()
     try:
-        worker = Thread(target=lambda: (run_loop.force_stop_active(deadline), finished.set()), daemon=True)
+        worker = Thread(
+            target=lambda: (run_loop.force_stop_active(deadline), finished.set()), daemon=True
+        )
         worker.start()
         assert finished.wait(0.5)
         assert fake_loop.stop_active_deadlines == [deadline]
