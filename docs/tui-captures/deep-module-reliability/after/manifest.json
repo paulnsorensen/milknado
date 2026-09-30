@@ -1,7 +1,7 @@
 {
-  "source_revision": "df249ca5b1cf14ddaf2c8ef5ee12cbcdf7e276be",
+  "source_revision": "7e06824b4834be760a558b2dfbf8954738adab8a",
   "presentation_sha256": {
-    "src/milknado/app/run_tui.py": "6f762c740df7080ba500f52f6eeae9c1173f7387a7958f6624e4b0054d03e40c",
+    "src/milknado/app/run_tui.py": "f9acd29698c1dbabf718c0d5958a2ef20ed6a4ce6220ca0377837b47ac1cf9d3",
     "src/milknado/app/run_view.py": "5a4c0b8af2a807ee629a6c40f5676e034741426626a9d8b1492f31f4407131e1",
     "src/milknado/app/run_view_app.py": "6b53d834158bb258f945887b877b0be411c8188f784027b4ce7d410a9556a56b",
     "src/milknado/app/watch_tui.py": "f96377bcf8123eaae0e96bbfcb570fe988b4b188b98d008cf698c74ca35a32f8",

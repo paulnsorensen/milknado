@@ -1,10 +1,9 @@
 # Deep-module reliability TUI evidence
 
-These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with integration `df249ca5b1cf14ddaf2c8ef5ee12cbcdf7e276be`.
-The integrated source includes the TUI change from `966c3df`, signal rearm from `605059e`, and signal exit from `275d38c`.
-The final signal exit change alters `run_tui.py` but not these captured states.
-All ten after PNGs remain byte-identical to the previous capture.
+These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with final source `7e06824b4834be760a558b2dfbf8954738adab8a`.
+The after captures use the complete P0–P3 implementation and the pinned-worktree correction.
 The [after manifest](./after/manifest.json) records SHA-256 hashes for seven presentation inputs.
+The final capture includes both post-exit warning states.
 
 ## Reproduce
 
@@ -18,7 +17,7 @@ work=$(mktemp -d)
 before="$work/before"
 after="$work/after"
 git worktree add --detach "$before" 37e942cc9102f63d9bf93c4c21c94fdcaf8716c8
-git worktree add --detach "$after" df249ca5b1cf14ddaf2c8ef5ee12cbcdf7e276be
+git worktree add --detach "$after" 7e06824b4834be760a558b2dfbf8954738adab8a
 python="${PYTHON:?Set PYTHON to an installed Python environment}"
 script="$evidence/docs/tui-captures/deep-module-reliability/capture.py"
 captures="$evidence/.context/deep-module-reliability"
