@@ -280,11 +280,12 @@ def test_cli_exits_while_worker_popen_is_blocked(
         started = time.monotonic()
         os.kill(proc.pid, signum)
         assert _wait_exit(proc, master) == 128 + signum, _output(proc, master)
-        assert time.monotonic() - started < 8.25
+        elapsed = time.monotonic() - started
         assert not pid_file.exists(), "worker command ran after shutdown intent"
         with sqlite3.connect(db) as conn:
             rows = conn.execute("SELECT status FROM nodes WHERE status = 'running'").fetchall()
         assert rows, "unresolved launch released graph ownership"
+        assert elapsed < 8.25
     finally:
         _owned_cleanup(proc, pid_file, master)
         release.touch()
