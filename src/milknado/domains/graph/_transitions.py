@@ -151,6 +151,16 @@ class ConcurrencyLimitReached(Exception):
         super().__init__(f"execution capacity is full ({running}/{limit})")
 
 
+class HostCapacityFull(ConcurrencyLimitReached):
+    """The host-wide worker pool has no free slot."""
+
+    def __init__(self, running: int, limit: int) -> None:
+        super().__init__(running, limit)
+
+    def __str__(self) -> str:
+        return f"host worker capacity is full ({self.running}/{self.limit})"
+
+
 def claim_node(
     conn: sqlite3.Connection,
     node_id: int,

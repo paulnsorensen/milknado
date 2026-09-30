@@ -151,6 +151,22 @@ class RunHandle(Protocol):
     def state(self) -> RunStateView: ...
 
 
+class SlotLease(Protocol):
+    """A held claim on one host worker slot."""
+
+    def release(self) -> None:
+        """Free the slot. Calling it again is a no-op."""
+        ...
+
+
+class HostCapacityPort(Protocol):
+    """Host-wide cap on concurrent task workers, shared by every project database."""
+
+    def acquire(self, run_id: str, node_id: int, project_root: Path) -> SlotLease:
+        """Take a free slot or raise ``HostCapacityFull``."""
+        ...
+
+
 class LoopPort(Protocol):
     def create_run(
         self,

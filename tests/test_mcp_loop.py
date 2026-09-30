@@ -662,6 +662,7 @@ def test_runner_writes_done_on_successful_outcome(
         agent_family: str = "claude"
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
+        host_worker_limit: int = 6
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
@@ -713,7 +714,15 @@ def test_runner_writes_done_on_successful_outcome(
 
     monkeypatch.setattr(adapters, "LoopAdapter", loop_adapter_stub)
     monkeypatch.setattr(adapters, "CrgAdapter", object_stub)
-    monkeypatch.setattr(execution, "Executor", object_stub)
+
+    class _HostCapacityAcceptor:
+        def use_host_capacity(self, port: object) -> None:
+            _ = port
+
+    def executor_object_stub(*_args: object, **_kwargs: object) -> _HostCapacityAcceptor:
+        return _HostCapacityAcceptor()
+
+    monkeypatch.setattr(execution, "Executor", executor_object_stub)
     monkeypatch.setattr(execution, "ExecutionConfig", object_stub)
 
     class _StubRunLoop:
@@ -770,6 +779,7 @@ def test_runner_calls_force_stop_on_timeout(
         agent_family: str = "claude"
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
+        host_worker_limit: int = 6
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
@@ -821,6 +831,9 @@ def test_runner_calls_force_stop_on_timeout(
             return []
 
     class _StubExecutor:
+        def use_host_capacity(self, port: object) -> None:
+            _ = port
+
         def dispatch(
             self,
             node_id: int,

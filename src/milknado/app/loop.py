@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.adapters import FlockSlotPool, GitAdapter, ProcessAdapter, TmuxAdapter
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
@@ -27,10 +27,12 @@ from milknado.domains.common import (
     RunResult,
     UnlandedWorkError,
 )
+from milknado.domains.common.protocols import SlotLease
 from milknado.domains.dispatch import (
     ProcessPort,
     RunWindow,
     build_worker_env,
+    claim_with_host_slot,
     ensure_tmux_ready,
     exit_code_path,
     fail_stale_running_runs,
@@ -63,6 +65,7 @@ class LoopStartRequest:
     timeout_seconds: int
     use_tmux: bool
     root: Path
+    host_worker_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,7 @@ class LoopClaim:
     target_branch: str
     base_oid: str
     stale_worktree: Path | None
+    lease: SlotLease | None = None
 
 
 def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) -> LoopClaim:
@@ -102,13 +106,15 @@ def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) 
     target_branch = git.current_branch()
     base_oid = git.resolve_ref(f"refs/heads/{target_branch}")
     run_id = make_run_id(request.node_id)
-    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    pool = FlockSlotPool(request.host_worker_limit) if request.host_worker_limit else None
+    lease = claim_with_host_slot(graph, pool, (request.node_id, run_id), request.root)
     return LoopClaim(
         run_id=run_id,
         node_id=request.node_id,
         target_branch=target_branch,
         base_oid=base_oid,
         stale_worktree=stale_worktree,
+        lease=lease,
     )
 
 
@@ -261,6 +267,9 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
     except Exception as exc:
         _record_start_failure(graph, claim, exc, run_started=run_started)
         raise
+    finally:
+        if claim.lease is not None:
+            claim.lease.release()
     graph.runs.set_pid(claim.run_id, pid)
     graph.set_pid(request.node_id, claim.run_id, pid)
     _logger.info(

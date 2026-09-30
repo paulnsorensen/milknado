@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import msgspec
 import pytest
 
+from milknado.adapters import FlockSlotPool
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters.loop import (
     LoopAdapter,
@@ -48,7 +49,7 @@ from milknado.domains.execution._models import CompletionResult, DispatchResult
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
 from milknado.domains.execution.run_loop._completion import handle_completion
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop._events import (
     Event,
     EventData,
@@ -1281,3 +1282,27 @@ def test_invalid_review_blocks_without_worker_revision(
     rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"
+
+
+def _host_slot_is_free() -> bool:
+    try:
+        FlockSlotPool(1).acquire("probe", 0, Path("/probe")).release()
+    except HostCapacityFull:
+        return False
+    return True
+
+
+def test_review_redispatch_keeps_the_host_slot_until_the_final_verdict(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
+    executor.use_host_capacity(FlockSlotPool(1))
+    _ = graph.add_node("reviewed change")
+
+    _ = executor.dispatch(1, _config(tmp_path))
+    assert not _host_slot_is_free()
+    assert executor.complete(1, "main").redispatch is not None
+    assert not _host_slot_is_free()
+    assert executor.complete(1, "main").rebased is True
+    assert _host_slot_is_free()

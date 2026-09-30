@@ -76,7 +76,7 @@ def milknado_run_loop_start(
     "deferred" with running, limit, and detail. Wait for a slot, then retry.
     """
     root = resolve_project_root(project_root or None)
-    graph, _cfg = open_graph(root)
+    graph, cfg = open_graph(root)
     try:
         request = LoopStartRequest(
             node_id=node_id,
@@ -84,6 +84,7 @@ def milknado_run_loop_start(
             timeout_seconds=timeout_seconds,
             use_tmux=use_tmux,
             root=root,
+            host_worker_limit=cfg.host_worker_limit,
         )
         return build_run_dict(cast(object, start_loop_run(graph, request)))
     finally:

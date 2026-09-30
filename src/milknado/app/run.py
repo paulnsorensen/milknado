@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, cast, final
 
 from typing_extensions import override
 
-from milknado.adapters import ProcessAdapter, TmuxAdapter
+from milknado.adapters import FlockSlotPool, ProcessAdapter, TmuxAdapter
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -385,6 +385,7 @@ def build_execution_controller(
         loop=loop_adapter,
         crg=CrgAdapter(project_root),
     )
+    executor.use_host_capacity(FlockSlotPool(config.host_worker_limit))
     loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
     return ExecutionController(
         loop,
@@ -415,6 +416,7 @@ def run_execution_loop(
     loop_adapter = LoopAdapter(graph=graph)
     crg = CrgAdapter(project_root)
     executor = Executor(graph=graph, git=git, loop=loop_adapter, crg=crg)
+    executor.use_host_capacity(FlockSlotPool(config.host_worker_limit))
     loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
     return loop.run(
         config=build_exec_config(config, project_root),
@@ -538,6 +540,7 @@ def run_inline(
             worktree_mode=request.worktree,
             merge_back=request.merge_back,
             worktree_pattern=cfg.worktree_pattern,
+            host_capacity=FlockSlotPool(cfg.host_worker_limit),
         ),
     )
     return state
@@ -559,9 +562,9 @@ def run_inline_start(
     from milknado.domains.dispatch import (
         AsyncRunRequest,
         GraphSessionPort,
+        claim_with_host_slot,
         ensure_tmux_ready,
         make_run_id,
-        now_iso,
         reclaim_stale_node,
         render_brief,
         start_headless_async,
@@ -589,7 +592,9 @@ def run_inline_start(
         prepend=profile.brief_prepend,
         project_root=root,
     )
-    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    lease = claim_with_host_slot(
+        graph, FlockSlotPool(cfg.host_worker_limit), (request.node_id, run_id), root
+    )
     isolated_worktree: Path | None = None
     try:
         worker_cwd, merge_ctx = prepare_isolation(
@@ -615,6 +620,7 @@ def run_inline_start(
                 default_cmd=profile.execution_agent,
                 cwd=worker_cwd,
                 merge_ctx=merge_ctx,
+                lease=lease,
             ),
             _GraphSessions(),
             git,
@@ -622,6 +628,8 @@ def run_inline_start(
             tmux,
         )
     except Exception as exc:
+        if lease is not None:
+            lease.release()
         cleanup_error: Exception | None = None
         if isolated_worktree is not None:
             try:
