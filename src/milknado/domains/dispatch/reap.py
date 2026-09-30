@@ -44,12 +44,18 @@ def _prepare_worker(
     if record.observation_owner is not None:
         _logger.error(
             "worker recovery unresolved: invocation_id=%s interrupted observation=%s sequence=%s",
-            record.invocation_id, record.observation_owner, record.observation_seq,
+            record.invocation_id,
+            record.observation_owner,
+            record.observation_seq,
         )
         return None
     key = ObservationKey(
-        record.invocation_id, "supervisor", record.snapshot_seq + 1,
-        -1, record.pid, record.start_token,
+        record.invocation_id,
+        "supervisor",
+        record.snapshot_seq + 1,
+        -1,
+        record.pid,
+        record.start_token,
     )
     try:
         evidence.begin(key)
@@ -61,7 +67,11 @@ def _prepare_worker(
             "worker recovery observation unresolved: invocation_id=%s", record.invocation_id
         )
         return None
-    if refreshed is None or refreshed.observation_owner is not None or refreshed.ended_at is not None:
+    if (
+        refreshed is None
+        or refreshed.observation_owner is not None
+        or refreshed.ended_at is not None
+    ):
         _logger.error("worker recovery evidence changed: invocation_id=%s", record.invocation_id)
         return None
     return refreshed
@@ -103,6 +113,7 @@ def _stop_workers(
         completed[invocation_id] = result
     return completed
 
+
 def reap_orphaned_workers(
     graph: WorkerRecoveryPort, process: ProcessTerminationPort, request: ReapRequest
 ) -> bool:
@@ -125,7 +136,9 @@ def reap_orphaned_workers(
                         complete = False
                         _logger.error(
                             "worker owner unresolved: invocation_id=%s supervisor_pid=%s state=%s",
-                            record.invocation_id, record.supervisor_pid, state,
+                            record.invocation_id,
+                            record.supervisor_pid,
+                            state,
                         )
                         continue
                 recoverable.append(record)
@@ -139,18 +152,26 @@ def reap_orphaned_workers(
             if not prepared:
                 return complete
             if time.monotonic() >= deadline:
-                _logger.error("worker recovery deadline expired before cleanup: selection=%s", request.selection)
+                _logger.error(
+                    "worker recovery deadline expired before cleanup: selection=%s",
+                    request.selection,
+                )
                 return False
             outcomes = _stop_workers(process, prepared, deadline)
             for record in prepared:
-                result = outcomes.get(record.invocation_id, WorkerCleanupResult(
-                    False, ("worker recovery deadline expired",)
-                ))
+                result = outcomes.get(
+                    record.invocation_id,
+                    WorkerCleanupResult(False, ("worker recovery deadline expired",)),
+                )
                 if not result.covered_exited or time.monotonic() >= deadline:
                     complete = False
                     _logger.error(
-                        "worker recovery unresolved: invocation_id=%s graph_run_id=%s node_id=%s identities=%s",
-                        record.invocation_id, record.graph_run_id, record.node_id, result.unresolved,
+                        "worker recovery unresolved: invocation_id=%s graph_run_id=%s "
+                        "node_id=%s identities=%s",
+                        record.invocation_id,
+                        record.graph_run_id,
+                        record.node_id,
+                        result.unresolved,
                     )
                     continue
                 try:
@@ -158,7 +179,8 @@ def reap_orphaned_workers(
                 except Exception:
                     complete = False
                     _logger.exception(
-                        "worker recovery closure unresolved: invocation_id=%s", record.invocation_id
+                        "worker recovery closure unresolved: invocation_id=%s",
+                        record.invocation_id,
                     )
             return complete
     except Exception:

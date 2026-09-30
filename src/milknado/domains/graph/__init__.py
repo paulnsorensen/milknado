@@ -65,6 +65,7 @@ from milknado.domains.graph.worker_evidence import (
     UnassociatedWorkers,
     WorkerEvidenceStore,
     default_worker_db_path,
+    existing_standalone_worker_db,
     open_standalone_worker_evidence,
 )
 
@@ -109,6 +110,7 @@ __all__ = [
     "RunWorkers",
     "UnassociatedWorkers",
     "default_worker_db_path",
+    "existing_standalone_worker_db",
     "open_standalone_worker_evidence",
     "ReapFailure",
     "ReapOutcome",

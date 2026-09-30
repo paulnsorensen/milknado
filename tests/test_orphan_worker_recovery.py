@@ -27,7 +27,8 @@ from milknado.domains.graph import MikadoGraph, NodeWorkers, RunWorkers
 def worker() -> Iterator[int]:
     launcher = subprocess.Popen(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c',"
             "'import time; time.sleep(60)'],start_new_session=True,"
             "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid,flush=True)",
@@ -62,7 +63,9 @@ def test_reap_confirms_worker_exit_before_record_closure(tmp_path: Path, worker:
     try:
         node = graph.get_all_nodes()[0]
         assert reap_orphaned_workers(
-            graph, ProcessAdapter(), ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 3)
+            graph,
+            ProcessAdapter(),
+            ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 3),
         )
         assert graph.runs.live_workers(node_id=node.id) == ()
         assert not psutil.pid_exists(worker)
@@ -76,7 +79,9 @@ def test_reap_refuses_mismatched_leader_without_signal(tmp_path: Path, worker: i
     try:
         node = graph.get_all_nodes()[0]
         assert not reap_orphaned_workers(
-            graph, ProcessAdapter(), ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 0.3)
+            graph,
+            ProcessAdapter(),
+            ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 0.3),
         )
         assert psutil.pid_exists(worker)
         assert graph.runs.live_workers(node_id=node.id)
@@ -90,7 +95,8 @@ def test_reap_refuses_mismatched_leader_without_signal(tmp_path: Path, worker: i
 def _orphan_descendant(separate_session: bool) -> Iterator[tuple[int, float, int, float, int]]:
     leader = subprocess.Popen(
         [
-            sys.executable, "-c",
+            sys.executable,
+            "-c",
             "import subprocess,sys; sys.stdin.readline(); "
             "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
             "start_new_session=bool(int(sys.argv[1])),stdout=subprocess.DEVNULL); "
@@ -123,7 +129,9 @@ def test_dead_leader_does_not_authorize_historical_group_signal(tmp_path: Path) 
         try:
             node = graph.get_all_nodes()[0]
             assert not reap_orphaned_workers(
-                graph, ProcessAdapter(), ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 0.2)
+                graph,
+                ProcessAdapter(),
+                ReapRequest(NodeWorkers(node.id), deadline=time.monotonic() + 0.2),
             )
             assert psutil.pid_exists(child)
             assert graph.runs.live_workers(node_id=node.id)
@@ -144,7 +152,9 @@ def test_reap_uses_retained_reparented_setsid_identity(tmp_path: Path) -> None:
                 ((child, child_token, child_group),),
             )
             assert reap_orphaned_workers(
-                graph, ProcessAdapter(), ReapRequest(RunWorkers("run-1"), deadline=time.monotonic() + 3)
+                graph,
+                ProcessAdapter(),
+                ReapRequest(RunWorkers("run-1"), deadline=time.monotonic() + 3),
             )
             assert not psutil.pid_exists(child)
             assert graph.runs.live_workers(run_id="run-1") == ()

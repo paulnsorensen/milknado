@@ -12,7 +12,6 @@ import logging
 import os
 import shlex
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
@@ -44,12 +44,7 @@ from milknado.domains.dispatch import (
     runs_dir,
 )
 from milknado.domains.dispatch.reap import ReapRequest
-from milknado.domains.graph import (
-    ConcurrencyLimitReached,
-    NodeWorkers,
-    UnassociatedWorkers,
-    default_worker_db_path,
-)
+from milknado.domains.graph import ConcurrencyLimitReached, NodeWorkers
 
 _logger = logging.getLogger(__name__)
 
@@ -94,8 +89,12 @@ def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) 
     stale_worktree = Path(node.worktree_path) if node.worktree_path else None
     if node.status == NodeStatus.RUNNING:
         process = ProcessAdapter()
-        if node.pid is not None and not pid_alive(node.pid) and not reap_orphaned_workers(
-            graph, process, ReapRequest(NodeWorkers(request.node_id))
+        if (
+            node.pid is not None
+            and not pid_alive(node.pid)
+            and not reap_orphaned_workers(
+                graph, process, ReapRequest(NodeWorkers(request.node_id))
+            )
         ):
             raise RuntimeError(
                 f"node {request.node_id} worker recovery unresolved; claim and worktree preserved"
@@ -226,18 +225,6 @@ def _record_start_failure(
         )
         _logger.error("%s run_id=%s node_id=%d", detail, claim.run_id, claim.node_id)
         raise RuntimeError(detail) from persistence_error
-
-
-def reconcile_loop_workers(graph: MikadoGraph) -> None:
-    """Recover unassociated workers from known evidence stores only."""
-    deadline = time.monotonic() + 8.0
-    default_path = default_worker_db_path()
-    for path in dict.fromkeys((graph.db_path, default_path)):
-        if path != graph.db_path and not path.exists():
-            continue
-        request = ReapRequest(UnassociatedWorkers(), deadline=deadline, db_path=path)
-        if not reap_orphaned_workers(graph, ProcessAdapter(), request):
-            _logger.error("unassociated worker recovery unresolved: db_path=%s", path)
 
 
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:

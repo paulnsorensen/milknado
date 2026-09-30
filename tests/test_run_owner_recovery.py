@@ -14,7 +14,7 @@ import psutil
 import pytest
 
 from milknado.adapters.process import ProcessAdapter
-from milknado.app.loop import reconcile_loop_workers
+from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import NodeStatus, RunResult, WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch import reconcile
 from milknado.domains.graph import (
@@ -137,9 +137,7 @@ def test_reconcile_orphaned_runs_ignores_graphs_without_node_enumeration() -> No
 def test_dead_owner_recovery_rejects_lost_terminal_fence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    graph = _RecoveryGraph(
-        pid=424242, db_path=tmp_path / "evidence.db", finish_succeeds=False
-    )
+    graph = _RecoveryGraph(pid=424242, db_path=tmp_path / "evidence.db", finish_succeeds=False)
     monkeypatch.setattr(reconcile, "pid_alive", _pid_dead)
 
     with pytest.raises(RunFenceLostError, match="running-row fence"):
@@ -158,15 +156,22 @@ from milknado.domains.graph import MikadoGraph, NodeWorkers
 class Blocked(ProcessAdapter):
     def terminate_worker(self, worker, retained, deadline):
         time.sleep(30)
-proc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)
+proc = subprocess.Popen(
+    [sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True
+)
 graph = MikadoGraph(Path(sys.argv[1]) / 'graph.db')
 try:
     node = graph.add_node('bounded')
     graph.claim_node(node.id, 'run-1', now='2026-01-01T00:00:00+00:00', pid=999999)
     graph.runs.start('run-1', node.id, 'worker.log', '2026-01-01T00:00:00+00:00', None)
-    graph.runs.record_worker(WorkerOwner('run-1', 999999, 123.5, 'run-1', node.id), WorkerIdentity('inv-1', proc.pid, proc.pid, psutil.Process(proc.pid).create_time()))
+    graph.runs.record_worker(
+        WorkerOwner('run-1', 999999, 123.5, 'run-1', node.id),
+        WorkerIdentity('inv-1', proc.pid, proc.pid, psutil.Process(proc.pid).create_time()),
+    )
     start = time.monotonic()
-    assert not reap_orphaned_workers(graph, Blocked(), ReapRequest(NodeWorkers(node.id), deadline=start + .2))
+    assert not reap_orphaned_workers(
+        graph, Blocked(), ReapRequest(NodeWorkers(node.id), deadline=start + .2)
+    )
     assert time.monotonic() - start < 1 and graph.runs.live_workers(node_id=node.id)
 finally:
     os.killpg(proc.pid, signal.SIGKILL)
@@ -235,6 +240,26 @@ def test_app_preflight_skips_live_supervisor(tmp_path: Path) -> None:
         reconcile_loop_workers(graph)
         with WorkerEvidenceStore(graph.db_path) as store:
             assert len(store.live_workers(UnassociatedWorkers())) == 1
+        assert psutil.pid_exists(pid)
+    finally:
+        with suppress(ProcessLookupError, PermissionError):
+            os.killpg(pid, signal.SIGKILL)
+        graph.close()
+
+
+def test_app_preflight_retains_mismatched_supervisor(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    pid = _detached_worker()
+    try:
+        with WorkerEvidenceStore(graph.db_path) as store:
+            store.record_worker(
+                WorkerOwner("runtime-1", os.getpid(), psutil.Process().create_time() + 100),
+                WorkerIdentity("inv-1", pid, pid, psutil.Process(pid).create_time()),
+            )
+        reconcile_loop_workers(graph)
+        with WorkerEvidenceStore(graph.db_path) as store:
+            record = store.get("inv-1")
+            assert record is not None and record.ended_at is None
         assert psutil.pid_exists(pid)
     finally:
         with suppress(ProcessLookupError, PermissionError):

@@ -14,6 +14,7 @@ from milknado.domains.graph import (
     RunWorkers,
     UnassociatedWorkers,
     WorkerEvidenceStore,
+    existing_standalone_worker_db,
     open_standalone_worker_evidence,
 )
 
@@ -201,7 +202,6 @@ def test_unassociated_worker_uses_same_durable_store(tmp_path: Path) -> None:
         assert records[0].supervisor_pid == 999999
 
 
-
 def test_concurrent_first_open_uses_complete_current_schema(tmp_path: Path) -> None:
     path = tmp_path / "workers.db"
 
@@ -214,7 +214,9 @@ def test_concurrent_first_open_uses_complete_current_schema(tmp_path: Path) -> N
         for future in futures:
             future.result()
     with sqlite3.connect(path) as conn:
-        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
         assert {"run_workers", "runs", "nodes"} <= tables
 
 
@@ -244,3 +246,22 @@ def test_graph_worker_admission_rechecks_run_after_writer_lock(tmp_path: Path) -
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         graph.close()
+
+
+def test_missing_standalone_store_is_not_created(tmp_path: Path) -> None:
+    path = tmp_path / "workers.db"
+    assert existing_standalone_worker_db(path) is False
+    assert not path.exists()
+
+
+def test_existing_standalone_store_rejects_symlink_and_corruption(tmp_path: Path) -> None:
+    path = tmp_path / "workers.db"
+    path.write_bytes(b"not sqlite")
+    path.chmod(0o600)
+    with pytest.raises(sqlite3.DatabaseError):
+        open_standalone_worker_evidence(path)
+    assert path.read_bytes() == b"not sqlite"
+    link = tmp_path / "link.db"
+    link.symlink_to(path)
+    with pytest.raises(RuntimeError, match="symlink"):
+        existing_standalone_worker_db(link)

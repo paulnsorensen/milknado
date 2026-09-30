@@ -94,12 +94,19 @@ def record_worker(conn: sqlite3.Connection, owner: WorkerOwner, worker: WorkerId
         "invocation_id, pid, pgid, start_token, started_at) "
     )
     values = (
-        owner.runtime_run_id, owner.supervisor_pid, owner.supervisor_start_token,
-        worker.invocation_id, worker.pid, worker.pgid, worker.start_token, now,
+        owner.runtime_run_id,
+        owner.supervisor_pid,
+        owner.supervisor_start_token,
+        worker.invocation_id,
+        worker.pid,
+        worker.pgid,
+        worker.start_token,
+        now,
     )
     if owner.graph_run_id is None:
         cur = conn.execute(
-            columns + "VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)", values,
+            columns + "VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)",
+            values,
         )
     else:
         cur = conn.execute(
@@ -113,8 +120,11 @@ def record_worker(conn: sqlite3.Connection, owner: WorkerOwner, worker: WorkerId
 
 
 def live_workers(
-    conn: sqlite3.Connection, *, node_id: int | None = None,
-    run_id: str | None = None, unassociated: bool = False,
+    conn: sqlite3.Connection,
+    *,
+    node_id: int | None = None,
+    run_id: str | None = None,
+    unassociated: bool = False,
 ) -> tuple[WorkerRecord, ...]:
     rows = fetchall(
         conn,
@@ -161,9 +171,17 @@ def begin_observation(conn: sqlite3.Connection, key: ObservationKey) -> None:
         "(? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
         "AND helper_start_token = ?))",
         (
-            key.owner, key.sequence, key.generation, key.pid, key.start_token,
-            key.invocation_id, key.sequence, key.owner, key.generation,
-            key.pid, key.start_token,
+            key.owner,
+            key.sequence,
+            key.generation,
+            key.pid,
+            key.start_token,
+            key.invocation_id,
+            key.sequence,
+            key.owner,
+            key.generation,
+            key.pid,
+            key.start_token,
         ),
     )
     conn.commit()
@@ -182,8 +200,16 @@ def commit_observation(
         "AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
         "AND helper_start_token = ?))",
         (
-            key.invocation_id, key.owner, key.sequence, key.generation,
-            key.pid, key.start_token, key.owner, key.generation, key.pid, key.start_token,
+            key.invocation_id,
+            key.owner,
+            key.sequence,
+            key.generation,
+            key.pid,
+            key.start_token,
+            key.owner,
+            key.generation,
+            key.pid,
+            key.start_token,
         ),
     )
     if row is None:
@@ -199,9 +225,18 @@ def commit_observation(
         "AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
         "AND helper_start_token = ?))",
         (
-            msgspec.json.encode(merged).decode(), key.sequence, key.invocation_id,
-            key.owner, key.sequence, key.generation, key.pid, key.start_token,
-            key.owner, key.generation, key.pid, key.start_token,
+            msgspec.json.encode(merged).decode(),
+            key.sequence,
+            key.invocation_id,
+            key.owner,
+            key.sequence,
+            key.generation,
+            key.pid,
+            key.start_token,
+            key.owner,
+            key.generation,
+            key.pid,
+            key.start_token,
         ),
     )
     conn.commit()
@@ -216,8 +251,12 @@ def ready_helper(conn: sqlite3.Connection, helper: HelperIdentity, sequence: int
         "AND helper_generation = ? AND helper_pid = ? AND helper_start_token = ? "
         "AND snapshot_seq = ? AND observation_owner IS NULL",
         (
-            helper.generation, helper.invocation_id, helper.generation,
-            helper.pid, helper.start_token, sequence,
+            helper.generation,
+            helper.invocation_id,
+            helper.generation,
+            helper.pid,
+            helper.start_token,
+            sequence,
         ),
     )
     conn.commit()
@@ -225,15 +264,22 @@ def ready_helper(conn: sqlite3.Connection, helper: HelperIdentity, sequence: int
 
 
 def end_worker(
-    conn: sqlite3.Connection, invocation_id: str, snapshot_seq: int,
+    conn: sqlite3.Connection,
+    invocation_id: str,
+    snapshot_seq: int,
     helper_generation: int | None = None,
 ) -> None:
     cur = conn.execute(
         "UPDATE run_workers SET ended_at = ? WHERE invocation_id = ? "
         "AND snapshot_seq = ? AND ended_at IS NULL AND observation_owner IS NULL "
         "AND (? IS NULL OR helper_generation = ?)",
-        (datetime.now(UTC).isoformat(), invocation_id, snapshot_seq,
-         helper_generation, helper_generation),
+        (
+            datetime.now(UTC).isoformat(),
+            invocation_id,
+            snapshot_seq,
+            helper_generation,
+            helper_generation,
+        ),
     )
     conn.commit()
     if cur.rowcount != 1:

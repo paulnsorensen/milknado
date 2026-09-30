@@ -222,7 +222,9 @@ def _maybe_merge_back(
 
 
 def reclaim_stale_node(
-    graph: MikadoGraph, node_id: int, fence_run_id: str | None,
+    graph: MikadoGraph,
+    node_id: int,
+    fence_run_id: str | None,
     process: ProcessTerminationPort,
 ) -> None:
     """Reconcile a running node before a new async dispatch.

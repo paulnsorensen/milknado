@@ -44,14 +44,13 @@ def fail_stale_running_runs(
         if not isinstance(run_id, str):
             continue
         worker_pid = state.get("pid")
-        owner_pid = worker_pid if isinstance(worker_pid, int) else None
-        if (
-            owner_pid is None
-            and node is not None
-            and node.run_id == run_id
-            and node.pid is not None
-        ):
-            owner_pid = node.pid
+        owner_pid = (
+            worker_pid
+            if isinstance(worker_pid, int)
+            else node.pid
+            if node is not None and node.run_id == run_id
+            else None
+        )
         if owner_pid is not None:
             if pid_alive(owner_pid):
                 continue
@@ -123,9 +122,7 @@ def fail_stale_running_runs(
     return flipped
 
 
-def reconcile_orphaned_runs(
-    graph: object, process: ProcessTerminationPort
-) -> list[RunRecord]:
+def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> list[RunRecord]:
     """Finalize and release orphaned nodes before a new coordinator dispatches."""
     get_all_nodes = getattr(graph, "get_all_nodes", None)
     if not callable(get_all_nodes):

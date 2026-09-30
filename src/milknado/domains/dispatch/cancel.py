@@ -90,7 +90,7 @@ def _reconcile_cancel(
         if worktree.exists():
             try:
                 git.remove_worktree(worktree)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - retain worktree on any git failure
                 _logger.warning(
                     "cancel preserving worktree: run_id=%s worktree=%s: %s",
                     run_id,
@@ -146,11 +146,16 @@ def _adopt_pre_finalized_run(graph: MikadoGraph, git: GitPort, run_id: str) -> d
 
 
 def _recover_dead_owner(
-    graph: MikadoGraph, node: MikadoNode, node_id: int, run_id: str,
+    graph: MikadoGraph,
+    node: MikadoNode,
+    node_id: int,
+    run_id: str,
     process: ProcessTerminationPort,
 ) -> dict[str, object]:
     if not reap_orphaned_workers(graph, process, ReapRequest(NodeWorkers(node_id))):
-        raise RuntimeError(f"run {run_id!r} worker recovery unresolved; state and worktree preserved")
+        raise RuntimeError(
+            f"run {run_id!r} worker recovery unresolved; state and worktree preserved"
+        )
     _ = fail_stale_running_runs(graph, node_id, process)
     record = graph.runs.get(run_id)
     if record is None or record.get("status") == "running":
@@ -179,7 +184,9 @@ def _cancel_pid_run(
     selection = NodeWorkers(node_id) if node_id is not None else RunWorkers(run_id)
     request = ReapRequest(selection, deadline=deadline)
     if not reap_orphaned_workers(typed_graph, process, request):
-        raise RuntimeError(f"run {run_id!r} worker recovery unresolved; state and worktree preserved")
+        raise RuntimeError(
+            f"run {run_id!r} worker recovery unresolved; state and worktree preserved"
+        )
     final = _finalize_cancelled(typed_graph, run_id)
     preserved = _reconcile_cancel(typed_graph, git, cast(int | None, state.get("node_id")), run_id)
     final["worktree_preserved"] = str(preserved) if preserved is not None else None

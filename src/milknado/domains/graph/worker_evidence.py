@@ -37,8 +37,8 @@ WorkerSelection = NodeWorkers | RunWorkers | UnassociatedWorkers
 
 
 def default_worker_db_path() -> Path:
-    state = os.environ.get("XDG_STATE_HOME")
-    root = Path(state) if state is not None else Path.home() / ".local" / "state"
+    state = os.environ.get("XDG_STATE_HOME", "").strip()
+    root = Path(state) if state else Path.home() / ".local" / "state"
     if not root.is_absolute():
         raise ValueError("XDG_STATE_HOME must be absolute")
     return root / "milknado" / "loop-workers.sqlite3"
@@ -58,8 +58,22 @@ def _check_private(path: Path, *, directory: bool) -> None:
         raise RuntimeError(f"worker evidence path is not a file: {path}")
 
 
+def existing_standalone_worker_db(path: Path) -> bool:
+    """Validate an existing standalone store without creating one."""
+    if not path.is_absolute():
+        raise ValueError("worker evidence path must be absolute")
+    try:
+        _check_private(path, directory=False)
+    except FileNotFoundError:
+        return False
+    _check_private(path.parent, directory=True)
+    return True
+
+
 def open_standalone_worker_evidence(
-    db_path: Path | None = None, *, deadline: float | None = None,
+    db_path: Path | None = None,
+    *,
+    deadline: float | None = None,
 ) -> WorkerEvidenceStore:
     path = default_worker_db_path() if db_path is None else db_path
     if not path.is_absolute():
@@ -180,6 +194,4 @@ class WorkerEvidenceStore:
         self, invocation_id: str, snapshot_seq: int, helper_generation: int | None = None
     ) -> None:
         self._limit_wait()
-        _worker_persistence.end_worker(
-            self._conn, invocation_id, snapshot_seq, helper_generation
-        )
+        _worker_persistence.end_worker(self._conn, invocation_id, snapshot_seq, helper_generation)
