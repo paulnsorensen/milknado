@@ -359,6 +359,10 @@ class FakeLoop:
         self.stop_active_deadlines.append(deadline)
         return True
 
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = (graph_run_id, deadline)
+        return True
+
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = (run_id, timeout)
         return True
