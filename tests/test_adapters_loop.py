@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from milknado.adapters._loop_local_runs import _parse_verify_output  # pyright: ignore[reportPrivateUsage]
 from milknado.adapters.loop import (
     MAX_CONSECUTIVE_AGENT_FAILURES,
     MILKNADO_COMPLETION_SIGNAL,
     LoopAdapter,
     _build_loop_content,  # pyright: ignore[reportPrivateUsage]
     _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
-    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.common import RunResult, SessionView
 from milknado.domains.common.config import Gate
@@ -597,7 +597,7 @@ class TestVerifySpec:
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
-        with patch("milknado.adapters.loop.time") as mock_time:
+        with patch("milknado.adapters._loop_local_runs.time") as mock_time:
             # deadline = monotonic() + 120; the next reading is past it, so
             # remaining <= 0 trips before any blocking queue.get().
             mock_time.monotonic.side_effect = [0.0, 200.0]  # pyright: ignore[reportAny]

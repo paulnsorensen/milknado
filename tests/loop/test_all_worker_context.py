@@ -6,11 +6,13 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
 from milknado.adapters.loop import LoopAdapter
+from milknado.domains.execution import PreservedWorkerRun
 from milknado.domains.graph import (
     MikadoGraph, NodeWorkers, WorkerEvidenceStore, default_worker_db_path,
 )
@@ -135,4 +137,48 @@ def test_graph_reviewer_uses_real_node_association(
         assert record.graph_run_id == "graph-worker" and record.node_id == node.id
         assert record.runtime_run_id != record.graph_run_id
     finally:
+        graph.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_unconfirmed_reviewer_retains_real_node_owner_and_unrelated_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)
+    graph = MikadoGraph(tmp_path / "graph.db")
+    owner = graph.add_node("review owner")
+    other = graph.add_node("unrelated worker")
+    for run_id, node in (("owner-run", owner), ("other-run", other)):
+        graph.runs.start(run_id, node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    script = tmp_path / "reviewer.py"
+    script.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    adapter = LoopAdapter(graph=graph)
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr("milknado.loop.manager.RunManager.stop_and_join", lambda *_a, **_k: False)
+            with pytest.raises(PreservedWorkerRun) as failure:
+                adapter.run_node_review(
+                    f"{sys.executable} {script}", "review", tmp_path, tmp_path,
+                    timeout_seconds=1, graph_run_id="owner-run",
+                )
+        assert failure.value.run_id == "owner-run"
+        records = graph.runs.live_workers(node_id=owner.id)
+        assert len(records) == 1 and records[0].graph_run_id == "owner-run"
+        assert records[0].ended_at is None
+        run = graph.runs.get("owner-run")
+        assert run is not None and run["status"] == "running"
+        worker = adapter._launch_worker(
+            SpawnOptions(
+                (sys.executable, "-c", "import time; time.sleep(30)"),
+                tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            ),
+            "other-local", "other-run",
+        )
+        try:
+            assert adapter.stop_run_workers("owner-run", time.monotonic() + 4)
+            assert worker.process.poll() is None
+        finally:
+            assert worker.shutdown(time.monotonic() + 4)
+    finally:
+        _ = adapter.stop_active_workers(time.monotonic() + 4)
         graph.close()

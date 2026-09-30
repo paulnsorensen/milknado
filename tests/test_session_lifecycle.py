@@ -15,6 +15,7 @@ from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentRunSpec, OutputLineCallback
+from milknado.loop._events import OutputStream
 from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
 from milknado.loop.sessions import _runtime as session_runtime

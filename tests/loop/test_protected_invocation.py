@@ -48,6 +48,42 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_owned_worker_exit_during_observation_commits_current_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    worker = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        ),
+        _context(graph, node.id),
+    )
+    sample = observation.observe_descendants
+
+    def exit_after_sample(identity):
+        descendants = sample(identity)
+        worker.process.kill()
+        assert worker.process.wait(timeout=2) != 0
+        return descendants
+
+    monkeypatch.setattr(observation, "observe_descendants", exit_after_sample)
+    try:
+        sequence = observation.snapshot(worker.worker, _context(graph, node.id).evidence)
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.snapshot_seq == sequence
+        assert record.observation_owner is None
+        assert worker.finish(timeout=5)
+    finally:
+        if worker.process.poll() is None:
+            worker.process.kill()
+            _ = worker.process.wait(timeout=2)
+        graph.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_shared_owner_stops_worker_and_drains_its_pipes(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
@@ -59,14 +95,15 @@ def test_shared_owner_stops_worker_and_drains_its_pipes(tmp_path: Path) -> None:
         ),
         _context(graph, node.id),
     )
-    assert worker.process.stdout is not None
+    stdout = worker.process.stdout
+    assert stdout is not None
     output: list[str] = []
-    reader = threading.Thread(target=lambda: output.append(worker.process.stdout.read()))
+    reader = threading.Thread(target=lambda: output.append(stdout.read()))
     reader.start()
     try:
         assert worker.cleanup((reader,), deadline=time.monotonic() + 4)
         assert not reader.is_alive()
-        assert worker.process.stdout.closed
+        assert stdout.closed
         assert worker.process.stderr is not None and worker.process.stderr.closed
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:

@@ -5,7 +5,6 @@ import sys
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
 
@@ -40,6 +39,29 @@ from tests.loop.helpers import (
 )
 
 
+class _CompletedWorker(ProtectedWorker):
+    def __init__(self, process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
+        self.process = process
+
+    def cleanup(  # pyright: ignore[reportImplicitOverride]
+        self,
+        threads: tuple[threading.Thread | None, ...] = (),
+        *,
+        stop: threading.Event | None = None,
+        deadline: float | None = None,
+    ) -> bool:
+        _ = deadline
+        if stop is not None:
+            stop.set()
+        for thread in threads:
+            if thread is not None:
+                thread.join(timeout=1)
+        for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if pipe is not None:
+                pipe.close()
+        return all(thread is None or not thread.is_alive() for thread in threads)
+
+
 def _contextual(config: RunConfig) -> RunConfig:
     def spawn(options: SpawnOptions) -> ProtectedWorker:
         process = subprocess.Popen(
@@ -47,7 +69,7 @@ def _contextual(config: RunConfig) -> RunConfig:
             stderr=options.stderr, cwd=options.cwd, env=options.env,
             text=options.text,
         )
-        return cast(ProtectedWorker, SimpleNamespace(process=process, finish=lambda: True))
+        return _CompletedWorker(process)
 
     config.spawn_worker = spawn
     return config

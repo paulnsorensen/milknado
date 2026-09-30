@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import threading
-import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -63,6 +62,11 @@ from milknado.domains.execution._review import (
     build_review_prompt,
     persist_review_findings,
 )
+from milknado.domains.execution._stop import (
+    _LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    force_stop_graph_run,
+    stop_graph_run,
+)
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import RunStatus
 
@@ -81,7 +85,6 @@ _logger = logging.getLogger(__name__)
 # Cancel-watcher cadence for pid-less in-process loop runs: poll the on-disk
 # sentinel often enough that cancel_run's 8s confirm bound is comfortably met.
 _LOOP_CANCEL_POLL_SECS = 0.25
-_LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
 # Ceiling for the watcher's retry backoff on consecutive force-stop failures:
 # a permanently wedged loop stays loud (first failure logs immediately) but
 # the retry cadence caps at one error line per minute (~1.4k lines/day) instead
@@ -1148,32 +1151,11 @@ class Executor:
         )
         return True
 
-    def _stop_with_bookkeeping(self, run_id: str, timeout: float | None, *, force: bool) -> bool:
-        self._unconfirmed_stop_run_ids.add(run_id)
-        stopper = self._loop.force_stop_run if force else self._loop.stop_run
-        stopped = stopper(run_id, timeout=timeout)
-        if stopped:
-            self._unconfirmed_stop_run_ids.discard(run_id)
-        return stopped
-
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=False)
+        return stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Force-stop the graph run and its associated reviewer workers."""
-        deadline = time.monotonic() + (
-            timeout if timeout is not None else _LOOP_CANCEL_STOP_TIMEOUT_SECS
-        )
-        try:
-            stopped = self._stop_with_bookkeeping(
-                run_id, max(0, deadline - time.monotonic()), force=True
-            )
-        finally:
-            reviewers_stopped = self._loop.stop_run_workers(run_id, deadline)
-        if not reviewers_stopped:
-            self._unconfirmed_stop_run_ids.add(run_id)
-        return stopped and reviewers_stopped
+        return force_stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
         target_branch = self._target_branch_by_node.get(node_id)

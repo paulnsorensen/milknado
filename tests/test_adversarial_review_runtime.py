@@ -13,12 +13,12 @@ import msgspec
 import pytest
 
 from milknado.adapters import FlockSlotPool
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters.loop import (
-    LoopAdapter,
+from milknado.adapters._loop_local_runs import (
     _drain_review_run,  # pyright: ignore[reportPrivateUsage]
     _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.adapters._loop_types import ReviewVerdict
+from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     Gate,
     GitPort,
@@ -207,6 +207,10 @@ class _ReviewLoop:
         _ = run_id, timeout
         return True
 
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
     def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
         _ = graph_run_id, deadline
         return True
@@ -266,7 +270,7 @@ class _ReviewLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
-        graph_run_id: str,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
         _ = project_root, graph_run_id
         self.timeout_seconds_seen.append(timeout_seconds)
@@ -839,7 +843,8 @@ def test_unconfirmed_reviewer_preserves_node_run_and_worktree(
     node = graph.get_node(1)
     assert node is not None and node.status.value == "running"
     assert dispatched.worktree.exists()
-    assert graph.runs.get(dispatched.run_id)["status"] == "running"
+    run = graph.runs.get(dispatched.run_id)
+    assert run is not None and run["status"] == "running"
 
 
 def test_review_findings_write_failure_still_audits_and_blocks(
@@ -886,7 +891,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _advance_clock() -> float:
         return next(clock)
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _advance_clock)
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _advance_clock)
     timed_out = _drain_review_run(
         timeout_manager,
         "timeout",
@@ -909,7 +914,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _zero_clock() -> float:
         return 0.0
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _zero_clock)
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _zero_clock)
     empty = _drain_review_run(
         empty_manager,
         "empty",

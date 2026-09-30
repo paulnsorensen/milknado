@@ -1183,32 +1183,7 @@ def _prepare_agent_run(
 
 
 def execute_agent(spec: AgentRunSpec) -> AgentResult:
-    """Run the agent subprocess, auto-selecting streaming or blocking mode.
-
-    ``spec.adapter`` (or :func:`select_adapter` when omitted) decides which
-    execution path runs: adapters whose ``supports_streaming`` flag is True
-    take the line-streaming path that drives ``on_activity`` callbacks; all
-    others take the blocking path with concurrent stdout/stderr drain.
-    ``adapter.build_command(spec.cmd)`` is applied before spawning, so the
-    CLI receives any flags the adapter requires (e.g. Claude's
-    ``--output-format stream-json --verbose`` or Codex's ``--json``).
-
-    When ``spec.max_turns`` is set, the streaming path counts adapter-reported
-    tool-use events and terminates the subprocess once the cap is reached.
-    The blocking path cannot preempt but records the post-hoc count.
-    ``spec.max_turns_grace`` enables a soft wind-down: if the adapter supports
-    it, a per-iteration tempdir is set up with a counter file and environment
-    variables pointing the agent at ``_wind_down_shim`` so it can warn the
-    agent when the cap is ``grace`` tool-uses away.
-
-    This is the single entry point the engine should use — callers don't need
-    to know which execution mode is selected.
-
-    ``spec.cwd`` is the working directory the spawned agent process runs in.
-    When ``None`` (the default), the child inherits the parent's cwd —
-    preserving behaviour for direct engine callers. Pass the worktree path so
-    a worker agent edits its own node's repo rather than the orchestrator's.
-    """
+    """Run one agent with its selected adapter and worker context."""
     adapter = spec.adapter if spec.adapter is not None else select_adapter(spec.cmd)
     cmd = adapter.build_command(spec.cmd)
     # Let the adapter decide where the prompt goes: stdin adapters return

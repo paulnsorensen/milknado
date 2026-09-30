@@ -17,17 +17,28 @@ from milknado.loop._process_identity import terminate_verified_result as termina
 _log = logging.getLogger(__name__)
 
 class WorkerEvidence(Protocol):
-    invocation_id: str
-    pid: int
-    pgid: int
-    start_token: float
-    helper_pid: int | None
-    helper_start_token: float | None
-    helper_generation: int
-    snapshot_seq: int
-    observation_owner: str | None
-    descendants: tuple[Descendant, ...]
-    ended_at: str | None
+    @property
+    def invocation_id(self) -> str: ...
+    @property
+    def pid(self) -> int: ...
+    @property
+    def pgid(self) -> int: ...
+    @property
+    def start_token(self) -> float: ...
+    @property
+    def helper_pid(self) -> int | None: ...
+    @property
+    def helper_start_token(self) -> float | None: ...
+    @property
+    def helper_generation(self) -> int: ...
+    @property
+    def snapshot_seq(self) -> int: ...
+    @property
+    def observation_owner(self) -> str | None: ...
+    @property
+    def descendants(self) -> tuple[Descendant, ...]: ...
+    @property
+    def ended_at(self) -> str | None: ...
 
 
 class EvidenceStore(Protocol):

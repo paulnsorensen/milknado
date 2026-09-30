@@ -19,6 +19,7 @@ from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._factory import create_protocol
+from milknado.loop.sessions._outcome import SessionOutcome, publish_events as _publish_events
 from milknado.loop.sessions._process import (
     POLL_INTERVAL,
     READER_QUEUE_LIMIT,
@@ -38,27 +39,6 @@ from milknado.loop.sessions._process import (
 from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
 from milknado.loop.sessions._stream import StreamContext, consume, drain
 
-
-@dataclass(slots=True)
-class _SessionOutcome:
-    done: bool = False
-    failed: bool = False
-    interrupted: bool = False
-    result_text: str | None = None
-    session_id: str | None = None
-    tool_count: int = 0
-    capped: bool = False
-    timed_out: bool = False
-    force_stopped: bool = False
-    interrupt_requested: bool = False
-    tool_ids: set[str] = field(default_factory=set)
-    reader_failed: bool = False
-
-
-def _publish_events(channel: SessionChannel, events: tuple[SessionEvent, ...]) -> None:
-    _ = tuple(map(channel.publish, events))
-
-
 @dataclass(slots=True)
 class _SessionExecution:
     spec: AgentRunSpec
@@ -66,7 +46,7 @@ class _SessionExecution:
     protocol: SessionProtocol
     process_invocation_id: str
     start_step: ProtocolStep
-    outcome: _SessionOutcome
+    outcome: SessionOutcome
     started_at: float
     lines: queue.Queue[Line]
     log_file: Path | None = None
@@ -293,7 +273,7 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         protocol=protocol,
         process_invocation_id=process_invocation_id,
         start_step=start_step,
-        outcome=_SessionOutcome(),
+        outcome=SessionOutcome(),
         started_at=started_at,
         lines=queue.Queue(maxsize=READER_QUEUE_LIMIT),
     )

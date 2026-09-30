@@ -1,9 +1,4 @@
-"""Data types for run configuration and state.
-
-These are the core types shared across the engine, CLI, manager, and UI
-modules.  They are intentionally separate from ``engine.py`` so modules
-that only need the types don't pull in the engine's execution logic.
-"""
+"""Shared run configuration and state types."""
 
 from __future__ import annotations
 

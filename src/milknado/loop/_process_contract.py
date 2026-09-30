@@ -12,15 +12,24 @@ from milknado.loop._process_registry import WorkerRegistry
 
 
 class WorkerRecordView(Protocol):
-    invocation_id: str
-    snapshot_seq: int
-    ready_generation: int
-    helper_generation: int
-    helper_pid: int | None
-    helper_start_token: float | None
-    observation_owner: str | None
-    descendants: tuple[Descendant, ...]
-    ended_at: str | None
+    @property
+    def invocation_id(self) -> str: ...
+    @property
+    def snapshot_seq(self) -> int: ...
+    @property
+    def ready_generation(self) -> int: ...
+    @property
+    def helper_generation(self) -> int: ...
+    @property
+    def helper_pid(self) -> int | None: ...
+    @property
+    def helper_start_token(self) -> float | None: ...
+    @property
+    def observation_owner(self) -> str | None: ...
+    @property
+    def descendants(self) -> tuple[Descendant, ...]: ...
+    @property
+    def ended_at(self) -> str | None: ...
 
 
 class WorkerEvidence(Protocol):
