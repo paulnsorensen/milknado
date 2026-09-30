@@ -105,6 +105,9 @@ class ProtectedWorker:
 
     def _replace_helper(self) -> bool:
         self.close_lifeline()
+        if self.process.poll() is not None:
+            self._normal_exit()
+            return False
         deadline = time.monotonic() + 8
         evidence = self._context.evidence.with_deadline(deadline)
         while self._replacements < 3 and time.monotonic() < deadline and not self._stop.is_set():
@@ -147,13 +150,27 @@ class ProtectedWorker:
         self._abort_replacement()
         return False
 
+    def _normal_exit(self) -> None:
+        self._stop.set()
+        with self._state_lock:
+            deadline = time.monotonic() + 3
+            if self._stop_deadline is not None:
+                deadline = min(deadline, self._stop_deadline)
+        if not self._cleanup_lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            return
+        try:
+            _ = self._shutdown_owned(deadline)
+        finally:
+            self._cleanup_lock.release()
+
     def _monitor(self) -> None:
         while not self._stop.wait(0.2):
+            if self.process.poll() is not None:
+                self._normal_exit()
+                return
             if self._helper.poll() is not None:
                 if not self._replace_helper():
                     return
-                continue
-            if self.process.poll() is not None:
                 continue
             try:
                 _ = _snapshot(self.worker, self._context.evidence)
@@ -174,6 +191,11 @@ class ProtectedWorker:
         if not self._monitor_started.wait(timeout=max(0, deadline - time.monotonic())):
             self.close_lifeline()
             return False
+        if self._watch is not None:
+            self._watch.join(timeout=max(0, deadline - time.monotonic()))
+            if self._watch.is_alive():
+                self.close_lifeline()
+                return False
         if not self._cleanup_lock.acquire(timeout=max(0, deadline - time.monotonic())):
             return False
         try:
@@ -182,11 +204,6 @@ class ProtectedWorker:
             self._cleanup_lock.release()
 
     def _shutdown_owned(self, deadline: float) -> bool:
-        if self._watch is not None:
-            self._watch.join(timeout=max(0, deadline - time.monotonic()))
-            if self._watch.is_alive():
-                self.close_lifeline()
-                return False
         evidence = self._context.evidence.with_deadline(deadline)
         try:
             record = evidence.get_worker(self.identity.invocation_id)
@@ -222,7 +239,6 @@ class ProtectedWorker:
             self.close_lifeline()
 
     def complete(self, *, graceful: bool) -> bool:
-        """Give a finished native session one bounded stdin-close grace period."""
         deadline = time.monotonic() + 3
         if graceful:
             if self.process.stdin is not None:
