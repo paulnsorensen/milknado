@@ -22,6 +22,8 @@ from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig
 from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX worker lifecycle evidence required")
+
 _WORKER = """\
 import json
 import os
