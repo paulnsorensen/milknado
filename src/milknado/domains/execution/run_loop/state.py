@@ -1,43 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass
 
-from milknado.domains.common import ProgressEvent, SessionView
+from milknado.domains.common import SessionView
 from milknado.loop import RunStatus
 
 _US_PREFIX_RE = re.compile(r"^US-\d+:\s*")
-
-
-def average_duration(durations: Sequence[float]) -> float | None:
-    values = list(durations)
-    return sum(values) / len(values) if len(values) >= 3 else None
-
-
-def action_reasons(
-    status: RunStatus, stop_requested: bool, force_stop_requested: bool
-) -> tuple[str | None, str | None, str | None]:
-    terminal_reason = {
-        RunStatus.COMPLETED: "run has completed",
-        RunStatus.FAILED: "run has failed",
-        RunStatus.STOPPED: "run has stopped",
-    }.get(status)
-    cancel_reason = guidance_reason = force_stop_reason = terminal_reason
-    if terminal_reason is None and stop_requested:
-        cancel_reason = "stop already requested"
-        guidance_reason = "run is stopping"
-    if terminal_reason is None and force_stop_requested:
-        force_stop_reason = "force stop already requested"
-    return cancel_reason, guidance_reason, force_stop_reason
-
-
-def progress_state(event: ProgressEvent | None) -> tuple[str | None, float | None]:
-    if event is None:
-        return None, None
-    progress = event.message or f"{event.work}/{event.total}"
-    progress_pct = event.work / event.total * 100 if event.total > 0 else None
-    return progress, progress_pct
 
 
 def summarize_description(description: str, max_chars: int = 80) -> str:
@@ -100,3 +69,38 @@ class RunLoopState:
     event_lines: tuple[str, ...]
     execution_agent: str = "(unknown)"
     log_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActiveRunFacts:
+    run_id: str
+    node_id: int
+    description: str
+    status: RunStatus
+    stop_requested: bool
+    force_stop_requested: bool
+    output: tuple[str, ...]
+    pending_guidance: tuple[str, ...]
+    dispatched_at: float | None
+    prior_attempts: int
+    progress_message: str = ""
+    progress_work: int | None = None
+    progress_total: int | None = None
+    session: SessionView = SessionView()
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectionFacts:
+    goal: str
+    active_runs: tuple[ActiveRunFacts, ...]
+    terminal_runs: tuple[TerminalRunState, ...]
+    completed: int
+    failed: int
+    stopped: int
+    available: int
+    event_lines: tuple[str, ...]
+    execution_agent: str
+    log_path: str | None
+    completion_durations: tuple[float, ...]
+    stall_threshold_seconds: float
+    max_attempts: int

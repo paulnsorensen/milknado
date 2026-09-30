@@ -580,157 +580,33 @@ def test_state_is_bounded_and_published(
     assert active.pending_guidance == ("use domain barrels",)
 
 
-class TestActiveStateProjectedFields:
-    """`_active_state` computes elapsed/progress/eta/attempt/stalled — pin these to
-    the real producer so mutating the formulas fails the suite."""
+def test_state_collects_configured_projection_facts(
+    graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
+) -> None:
+    run_loop = RunLoop(
+        executor=executor,
+        graph=graph,
+        loop=fake_loop,
+        config=MilknadoConfig(dispatch_max_retries=4, stall_threshold_seconds=300),
+    )
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    graph.mark_running(leaf.id)
+    _active(run_loop)["run-1"] = leaf.id
+    _attempts(run_loop)[leaf.id] = 1
+    _dispatched_at(run_loop)["run-1"] = 100.0
+    _completion_durations(run_loop).extend([10.0, 20.0, 30.0])
+    _progress_by_run(run_loop)["run-1"] = ProgressEvent(run_id="run-1", work=3, total=4)
 
-    def _seed_active(self, run_loop: RunLoop, graph: MikadoGraph) -> tuple[int, str]:
-        root = graph.add_node("ship controller")
-        leaf = graph.add_node("build snapshots", parent_id=root.id)
-        graph.mark_running(leaf.id)
-        _active(run_loop)["run-1"] = leaf.id
-        return leaf.id, "run-1"
+    with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=105.0):
+        snapshot = run_loop.state().active_runs[0]
 
-    def test_elapsed_seconds_from_known_dispatch_time(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        _, run_id = self._seed_active(run_loop, graph)
-        _dispatched_at(run_loop)[run_id] = 100.0
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=150.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].elapsed_seconds == 50.0
-
-    def test_elapsed_seconds_defaults_to_zero_without_dispatch_time(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        _ = self._seed_active(run_loop, graph)
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=200.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].elapsed_seconds == 0.0
-
-    def test_progress_pct_from_work_and_total(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
-        _, run_id = self._seed_active(run_loop, graph)
-        _progress_by_run(run_loop)[run_id] = ProgressEvent(
-            run_id=run_id, work=3, total=4, message="x"
-        )
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].progress_pct == 75.0
-
-    def test_progress_pct_is_none_when_total_is_zero(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        _, run_id = self._seed_active(run_loop, graph)
-        _progress_by_run(run_loop)[run_id] = ProgressEvent(
-            run_id=run_id, work=0, total=0, message="x"
-        )
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].progress_pct is None
-
-    def test_eta_seconds_is_none_with_fewer_than_three_samples(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        _ = self._seed_active(run_loop, graph)
-        _completion_durations(run_loop).extend([10.0, 20.0])
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].eta_seconds is None
-
-    def test_eta_seconds_is_mean_minus_elapsed_with_three_or_more_samples(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        _, run_id = self._seed_active(run_loop, graph)
-        _completion_durations(run_loop).extend([10.0, 20.0, 30.0])
-        _dispatched_at(run_loop)[run_id] = 100.0
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=105.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].eta_seconds == 15.0
-
-    def test_eta_seconds_floors_at_zero(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
-        _, run_id = self._seed_active(run_loop, graph)
-        _completion_durations(run_loop).extend([1.0, 2.0, 3.0])
-        _dispatched_at(run_loop)[run_id] = 100.0
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=200.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].eta_seconds == 0.0
-
-    def test_attempt_is_one_on_first_try(self, run_loop: RunLoop, graph: MikadoGraph) -> None:
-        _ = self._seed_active(run_loop, graph)
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].attempt == 1
-
-    def test_attempt_increments_after_recorded_failure(
-        self, run_loop: RunLoop, graph: MikadoGraph
-    ) -> None:
-        node_id, _ = self._seed_active(run_loop, graph)
-        _attempts(run_loop)[node_id] = 1
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].attempt == 2
-
-    def test_max_attempts_from_config_dispatch_max_retries(
-        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
-    ) -> None:
-        run_loop = RunLoop(
-            executor=executor,
-            graph=graph,
-            loop=fake_loop,
-            config=MilknadoConfig(dispatch_max_retries=4),
-        )
-        _ = self._seed_active(run_loop, graph)
-
-        state = run_loop.state()
-
-        assert state.active_runs[0].max_attempts == 5
-
-    def test_stalled_false_below_threshold(
-        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
-    ) -> None:
-        run_loop = RunLoop(
-            executor=executor,
-            graph=graph,
-            loop=fake_loop,
-            config=MilknadoConfig(stall_threshold_seconds=300),
-        )
-        _, run_id = self._seed_active(run_loop, graph)
-        _dispatched_at(run_loop)[run_id] = 0.0
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=299.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].stalled is False
-
-    def test_stalled_true_at_or_above_threshold(
-        self, graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
-    ) -> None:
-        run_loop = RunLoop(
-            executor=executor,
-            graph=graph,
-            loop=fake_loop,
-            config=MilknadoConfig(stall_threshold_seconds=300),
-        )
-        _, run_id = self._seed_active(run_loop, graph)
-        _dispatched_at(run_loop)[run_id] = 0.0
-
-        with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=300.0):
-            state = run_loop.state()
-
-        assert state.active_runs[0].stalled is True
+    assert snapshot.elapsed_seconds == 5.0
+    assert snapshot.eta_seconds == 15.0
+    assert snapshot.progress_pct == 75.0
+    assert snapshot.attempt == 2
+    assert snapshot.max_attempts == 5
+    assert snapshot.stalled is False
 
 
 def test_terminal_run_duration_seconds_from_stopped_completion(

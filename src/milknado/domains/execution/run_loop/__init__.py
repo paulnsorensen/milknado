@@ -32,6 +32,7 @@ from milknado.domains.execution.run_loop._logging import (
     ts,
 )
 from milknado.domains.execution.run_loop._node import IDLE_RESCAN_SECONDS, NodeDriverMixin
+from milknado.domains.execution.run_loop._projection import project_state
 from milknado.domains.execution.run_loop._result import (
     NodeLoopOutcome,
     RunLoopResult,
@@ -45,13 +46,10 @@ from milknado.domains.execution.run_loop.input import (
     stop_input_thread,
 )
 from milknado.domains.execution.run_loop.state import (
-    ActiveRunState,
-    RunActionState,
+    ActiveRunFacts,
+    ProjectionFacts,
     RunLoopState,
     TerminalRunState,
-    action_reasons,
-    average_duration,
-    progress_state,
     summarize_description,
 )
 from milknado.domains.graph import ConcurrencyLimitReached
@@ -130,10 +128,11 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
             [node_id for _, node_id in active_items],
             self._stopped_nodes,
         )
-        return RunLoopState(
+        cfg = self._milknado_config
+        facts = ProjectionFacts(
             goal=goal,
             active_runs=tuple(
-                self._active_state(run_id, node_id, descriptions.get(node_id, str(node_id)))
+                self._active_facts(run_id, node_id, descriptions.get(node_id, str(node_id)))
                 for run_id, node_id in active_items
             ),
             terminal_runs=tuple(self._terminal_runs),
@@ -146,44 +145,32 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
                 self._exec_config.execution_agent if self._exec_config else "(unknown)"
             ),
             log_path=self._log_path,
+            completion_durations=tuple(self._completion_durations),
+            stall_threshold_seconds=(
+                cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
+            ),
+            max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
         )
+        return project_state(facts, time.monotonic())
 
-    def _active_state(self, run_id: str, node_id: int, description: str) -> ActiveRunState:
+    def _active_facts(self, run_id: str, node_id: int, description: str) -> ActiveRunFacts:
         run = self._loop.get_run(run_id)
         state = run.state if run is not None else None
-        status = getattr(state, "status", RunStatus.RUNNING)
-        stop_requested = bool(getattr(state, "stop_requested", False))
-        cancel_reason, guidance_reason, force_stop_reason = action_reasons(
-            status, stop_requested, bool(getattr(state, "force_stop_requested", False))
-        )
-        progress, progress_pct = progress_state(self._progress_by_run.get(run_id))
-        elapsed_seconds = (now := time.monotonic()) - self._dispatched_at.get(run_id, now)
-        avg_dur = average_duration(self._completion_durations)
-        eta_seconds = max(0.0, avg_dur - elapsed_seconds) if avg_dur is not None else None
-        cfg = self._milknado_config
-        stalled = progress_pct is None and elapsed_seconds >= (
-            cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
-        )
-        return ActiveRunState(
+        progress = self._progress_by_run.get(run_id)
+        return ActiveRunFacts(
             run_id=run_id,
             node_id=node_id,
             description=description,
-            status=status,
-            progress=progress,
-            stop_requested=stop_requested,
-            actions=RunActionState(
-                cancel_reason=cancel_reason,
-                guidance_reason=guidance_reason,
-                force_stop_reason=force_stop_reason,
-            ),
+            status=getattr(state, "status", RunStatus.RUNNING),
+            stop_requested=bool(getattr(state, "stop_requested", False)),
+            force_stop_requested=bool(getattr(state, "force_stop_requested", False)),
             output=tuple(self._loop.get_run_output_tail(run_id, 30)),
             pending_guidance=tuple(self._loop.get_run_guidance(run_id)),
-            elapsed_seconds=elapsed_seconds,
-            progress_pct=progress_pct,
-            eta_seconds=eta_seconds,
-            attempt=self._attempts.get(node_id, 0) + 1,
-            max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
-            stalled=stalled,
+            dispatched_at=self._dispatched_at.get(run_id),
+            prior_attempts=self._attempts.get(node_id, 0),
+            progress_message=progress.message if progress else "",
+            progress_work=progress.work if progress else None,
+            progress_total=progress.total if progress else None,
             session=self._loop.get_run_session(run_id),
         )
 
