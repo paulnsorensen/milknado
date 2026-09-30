@@ -100,11 +100,10 @@ def _start(
     )
     if injection is not None:
         env["PYTHONPATH"] = str(injection) + os.pathsep + env["PYTHONPATH"]
-    bootstrap = "from milknado.cli import app; app()"
     argv = [
         sys.executable,
         "-c",
-        bootstrap,
+        "from milknado.cli import app; app()",
         "run",
         "--project-root",
         str(repo),
