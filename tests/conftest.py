@@ -64,5 +64,5 @@ def mock_crg() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_ralph() -> MagicMock:
+def mock_loop() -> MagicMock:
     return MagicMock(spec=LoopPort)

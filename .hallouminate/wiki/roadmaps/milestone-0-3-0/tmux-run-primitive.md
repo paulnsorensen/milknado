@@ -9,14 +9,14 @@ prereqs: []
 
 ## Intent
 
-Detached ralph runs are currently opaque subprocesses
+Detached loop runs are currently opaque subprocesses
 (`start_new_session=True`): the only windows into a running agent are log
 tails and poll tools. Firstmate runs every crew agent in a named tmux window
 (`fm-<id>`), which buys three things at once: live visibility (watch the agent
 work), an attach point (inspect a struggling run without killing it), and pane
 liveness as a supervision signal.
 
-Milknado should offer tmux as a dispatch substrate for ralph runs: a run
+Milknado should offer tmux as a dispatch substrate for loop runs: a run
 started with tmux enabled gets a named window/session tied to its `run_id`,
 and `milknado attach <run>` (CLI) drops the user into it. The existing
 detached-subprocess path remains the default for headless/CI environments —
@@ -38,7 +38,7 @@ Open questions to resolve during design (not silently):
 
 ## Acceptance
 
-- A ralph run can be dispatched into a named tmux window keyed to its
+- A loop run can be dispatched into a named tmux window keyed to its
   `run_id`, opt-in via config or dispatch parameter; the default detached
   path is unchanged.
 - `milknado attach <run>` (or equivalent) attaches to a running run's window;

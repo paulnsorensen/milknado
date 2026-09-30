@@ -187,7 +187,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
                 "message": {
                     "role": "assistant",
                     "content": [
-                        {"type": "text", "text": "<promise>RALPH_PROMISE_COMPLETE</promise>"}
+                        {"type": "text", "text": "<promise>LOOP_PROMISE_COMPLETE</promise>"}
                     ],
                     "stopReason": "stop",
                 },
@@ -203,7 +203,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
                     {
                         "role": "assistant",
                         "content": [
-                            {"type": "text", "text": "<promise>RALPH_PROMISE_COMPLETE</promise>"}
+                            {"type": "text", "text": "<promise>LOOP_PROMISE_COMPLETE</promise>"}
                         ],
                     }
                 ],
@@ -212,7 +212,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
     )
     assert finished.done is True
     assert finished.failed is False
-    assert finished.result_text == "<promise>RALPH_PROMISE_COMPLETE</promise>"
+    assert finished.result_text == "<promise>LOOP_PROMISE_COMPLETE</promise>"
     assert session.actions == ()
 
 

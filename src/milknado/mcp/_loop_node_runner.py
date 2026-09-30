@@ -1,7 +1,7 @@
-"""Detached headless single-node ralph runner.
+"""Detached headless single-node loop runner.
 
 Spawned as its own process by `milknado_run_loop_start` so a worktree-isolated
-ralph loop survives the MCP server restarting (hot-reload). Node status, worktree
+loop survives the MCP server restarting (hot-reload). Node status, worktree
 path, and run state all persist in SQLite so a retried run can reconcile state
 from an earlier process. The MCP tool inserted the `running` run row before
 spawning; this process runs the node to completion and writes the terminal run
@@ -48,7 +48,7 @@ def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bo
         detail = f"{type(exc).__name__}: {exc}"
     else:
         return True
-    _logger.error("ralph terminal persistence failed: run_id=%s detail=%s", run_id, detail)
+    _logger.error("loop terminal persistence failed: run_id=%s detail=%s", run_id, detail)
     try:
         _ = (
             runs_dir(root)
@@ -59,12 +59,12 @@ def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bo
             )
         )
     except OSError:
-        _logger.exception("ralph terminal error sidecar write failed: run_id=%s", run_id)
+        _logger.exception("loop terminal error sidecar write failed: run_id=%s", run_id)
     return False
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="milknado.mcp._ralph_node_runner")
+    parser = argparse.ArgumentParser(prog="milknado.mcp._loop_node_runner")
     _ = parser.add_argument("--node-id", type=int, required=True)
     _ = parser.add_argument("--project-root", required=True)
     _ = parser.add_argument("--run-id", required=True)
@@ -78,13 +78,14 @@ def main(argv: list[str] | None = None) -> int:
     from milknado.domains.execution import (
         ExecutionConfig,
         Executor,
-        run_node_to_completion,
+        NodeLoopOutcome,
+        RunLoop,
     )
 
     root = Path(args.project_root)
 
     _logger.info(
-        "ralph runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
+        "loop runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
         args.run_id,
         args.node_id,
         args.target_branch,
@@ -94,12 +95,13 @@ def main(argv: list[str] | None = None) -> int:
     pid = os.getpid()
     graph.runs.set_pid(args.run_id, pid)
     graph.set_pid(args.node_id, args.run_id, pid)
+    driver: RunLoop | None = None
     try:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
         git = GitAdapter(root)
-        ralph = LoopAdapter(graph=graph)
-        executor = Executor(graph=graph, git=git, ralph=ralph, crg=CrgAdapter(root))
+        loop = LoopAdapter(graph=graph)
+        executor = Executor(graph=graph, git=git, loop=loop, crg=CrgAdapter(root))
         exec_config = ExecutionConfig(
             execution_agent=profile.execution_agent,
             quality_gates=profile.quality_gates,
@@ -119,9 +121,8 @@ def main(argv: list[str] | None = None) -> int:
             attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
             max_iterations=profile.max_iterations,
         )
-        outcome = run_node_to_completion(
-            executor,
-            ralph,
+        driver = RunLoop(executor=executor, graph=graph, loop=loop, config=cfg)
+        outcome = driver.run_node(
             args.node_id,
             exec_config,
             args.target_branch,
@@ -129,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             base_oid=args.base_oid,
             parent_run_id=args.run_id,
         )
+        outcome = driver.confirm_preserved_stop(outcome)
         terminal_written = _finish_run(
             graph,
             root,
@@ -145,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         if not terminal_written:
             return 2
         _logger.info(
-            "ralph runner terminal: run_id=%s node_id=%d success=%s detail=%s",
+            "loop runner terminal: run_id=%s node_id=%d success=%s detail=%s",
             args.run_id,
             args.node_id,
             outcome.success,
@@ -154,10 +156,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if outcome.success else 1
     except Exception as exc:
         _logger.exception(
-            "ralph runner failed: run_id=%s node_id=%d",
+            "loop runner failed: run_id=%s node_id=%d",
             args.run_id,
             args.node_id,
         )
+        if driver is not None:
+            _ = driver.confirm_preserved_stop(
+                NodeLoopOutcome(args.node_id, False, ownership_preserved=True)
+            )
         _ = _finish_run(
             graph,
             root,

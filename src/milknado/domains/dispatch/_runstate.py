@@ -1,6 +1,6 @@
 """Shared run-id, log-tail, and cancel-sentinel helpers for `.milknado/runs/` —
 used by both the headless worker path (`runner.py`) and the worktree-isolated
-ralph path (`mcp/ralph.py` + `_ralph_node_runner.py`). Run ids share one namespace
+loop path (`mcp/loop.py` + `_loop_node_runner.py`). Run ids share one namespace
 and format so reconciliation is uniform regardless of which path spawned the run.
 Run *state* lives in the SQLite `runs` table; only log files and cancel sentinels
 remain on the filesystem here.
@@ -47,9 +47,9 @@ def tail(path: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
 
 
 def tail_latest_iteration_log(log_dir: Path, max_bytes: int = SUMMARY_TAIL_BYTES) -> str:
-    """Tail the most recent per-iteration file in a `.ralph-logs` directory.
+    """Tail the most recent per-iteration file in a `.loop-logs` directory.
 
-    In-process (executor-owned) ralph runs write one file per iteration
+    In-process (executor-owned) loop runs write one file per iteration
     under ``log_dir`` (see ``loop/_agent.py``'s ``_new_output_sink``) rather
     than a single flat log a detached (subprocess) run's stdout redirects
     to — there is nothing at the conventional ``<run_id>.log`` path for

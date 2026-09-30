@@ -303,7 +303,7 @@ class TestRunLoop:
         assert state.status is RunStatus.COMPLETED
 
     @patch(MOCK_SUBPROCESS)
-    def test_prompt_read_from_ralph_file(self, mock_run: MagicMock, tmp_path: Path):
+    def test_prompt_read_from_loop_file(self, mock_run: MagicMock, tmp_path: Path):
         mock_run.return_value = ok_proc()
         config = make_config(tmp_path, "my prompt text", max_iterations=1)
         state = make_state()
@@ -373,7 +373,7 @@ class TestPromiseCompletionSignals:
         mock_run_session.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
-            result_text="<promise>RALPH_PROMISE_COMPLETE</promise>",
+            result_text="<promise>LOOP_PROMISE_COMPLETE</promise>",
             completion_detected=True,
         )
 
@@ -395,7 +395,7 @@ class TestPromiseCompletionSignals:
         mock_execute_agent.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
-            captured_stdout="<promise>RALPH_PROMISE_COMPLETE</promise>\n",
+            captured_stdout="<promise>LOOP_PROMISE_COMPLETE</promise>\n",
         )
 
         run_loop(config, state, emitter)
@@ -493,7 +493,7 @@ class TestPromiseCompletionSignals:
         mock_execute_agent.return_value = AgentResult(
             returncode=0,
             elapsed=0.01,
-            result_text="done RALPH_PROMISE_COMPLETE without promise tags",
+            result_text="done LOOP_PROMISE_COMPLETE without promise tags",
         )
 
         run_loop(config, state, NullEmitter())
@@ -548,7 +548,7 @@ class TestPromiseCompletionSignals:
             returncode=0,
             elapsed=0.01,
             result_text="done without promise tag",
-            captured_stdout='{"type":"status","message":"<promise>RALPH_PROMISE_COMPLETE</promise>"}\n',
+            captured_stdout='{"type":"status","message":"<promise>LOOP_PROMISE_COMPLETE</promise>"}\n',
         )
 
         run_loop(config, state, NullEmitter())
@@ -592,7 +592,7 @@ class TestCompletionVerifier:
         return AgentResult(
             returncode=0,
             elapsed=0.01,
-            captured_stdout="<promise>RALPH_PROMISE_COMPLETE</promise>\n",
+            captured_stdout="<promise>LOOP_PROMISE_COMPLETE</promise>\n",
         )
 
     @patch("milknado.loop.engine.execute_agent")
@@ -945,7 +945,7 @@ class TestRunStateControls:
         assert stop_event.data["reason"] == "user_requested"
 
 
-class TestRalphArgs:
+class TestLoopArgs:
     @patch(MOCK_SUBPROCESS)
     def test_args_resolved_in_prompt(self, mock_run: MagicMock, tmp_path: Path):
         mock_run.return_value = ok_proc()
@@ -1038,13 +1038,13 @@ class TestCommandExecution:
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)
-    def test_dotslash_command_uses_ralph_dir_as_cwd(
+    def test_dotslash_command_uses_loop_dir_as_cwd(
         self,
         mock_run_cmd: MagicMock,
         mock_agent: MagicMock,  # pyright: ignore[reportUnusedParameter]
         tmp_path: Path,
     ):
-        """Commands starting with ./ run relative to the ralph directory."""
+        """Commands starting with ./ run relative to the loop directory."""
         mock_run_cmd.return_value = ok_run_result(output="ok")
 
         config = make_config(
@@ -1058,7 +1058,7 @@ class TestCommandExecution:
         run_loop(config, state, NullEmitter())
 
         passed_cwd = mock_run_cmd.call_args.kwargs["cwd"]  # pyright: ignore[reportAny]
-        assert passed_cwd == config.ralph_dir
+        assert passed_cwd == config.loop_dir
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     @patch(MOCK_RUN_COMMAND)
@@ -1368,7 +1368,7 @@ class TestRunCommands:
         commands = [Command(name="tests", run="pytest")]
 
         result = _run_commands(
-            commands, ralph_dir=tmp_path / "ralph", project_root=tmp_path, user_args={}
+            commands, loop_dir=tmp_path / "loop", project_root=tmp_path, user_args={}
         )
 
         assert result == {"tests": "test output"}
@@ -1389,7 +1389,7 @@ class TestRunCommands:
         ]
 
         result = _run_commands(
-            commands, ralph_dir=tmp_path / "ralph", project_root=tmp_path, user_args={}
+            commands, loop_dir=tmp_path / "loop", project_root=tmp_path, user_args={}
         )
 
         assert len(result) == 2
@@ -1397,22 +1397,22 @@ class TestRunCommands:
         assert result["b"] == "out-2"
 
     @patch(MOCK_RUN_COMMAND)
-    def test_dotslash_uses_ralph_dir(self, mock_run_cmd: MagicMock, tmp_path: Path):
+    def test_dotslash_uses_loop_dir(self, mock_run_cmd: MagicMock, tmp_path: Path):
         mock_run_cmd.return_value = ok_run_result(output="ok")
-        ralph_dir = tmp_path / "my-ralph"
+        loop_dir = tmp_path / "my-loop"
         commands = [Command(name="local", run="./check.sh")]
 
-        _ = _run_commands(commands, ralph_dir=ralph_dir, project_root=tmp_path, user_args={})
+        _ = _run_commands(commands, loop_dir=loop_dir, project_root=tmp_path, user_args={})
 
-        assert mock_run_cmd.call_args.kwargs["cwd"] == ralph_dir
+        assert mock_run_cmd.call_args.kwargs["cwd"] == loop_dir
 
     @patch(MOCK_RUN_COMMAND)
     def test_regular_command_uses_project_root(self, mock_run_cmd: MagicMock, tmp_path: Path):
         mock_run_cmd.return_value = ok_run_result(output="ok")
-        ralph_dir = tmp_path / "my-ralph"
+        loop_dir = tmp_path / "my-loop"
         commands = [Command(name="tests", run="pytest")]
 
-        _ = _run_commands(commands, ralph_dir=ralph_dir, project_root=tmp_path, user_args={})
+        _ = _run_commands(commands, loop_dir=loop_dir, project_root=tmp_path, user_args={})
 
         assert mock_run_cmd.call_args.kwargs["cwd"] == tmp_path
 
@@ -1421,12 +1421,12 @@ class TestRunCommands:
         mock_run_cmd.return_value = ok_run_result(output="ok")
         commands = [Command(name="slow", run="sleep 1", timeout=300)]
 
-        _ = _run_commands(commands, ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+        _ = _run_commands(commands, loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
         assert mock_run_cmd.call_args.kwargs["timeout"] == 300
 
     def test_empty_commands_returns_empty_dict(self, tmp_path: Path):
-        result = _run_commands([], ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+        result = _run_commands([], loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
         assert result == {}
 
@@ -1437,7 +1437,7 @@ class TestRunCommands:
 
         _ = _run_commands(
             commands,
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             project_root=tmp_path,
             user_args={"issue": "42"},
         )
@@ -1449,17 +1449,17 @@ class TestRunCommands:
         self, mock_run_cmd: MagicMock, tmp_path: Path
     ):
         mock_run_cmd.return_value = ok_run_result(output="ok")
-        ralph_dir = tmp_path / "my-ralph"
+        loop_dir = tmp_path / "my-loop"
         commands = [Command(name="check", run="./{{ args.script }}")]
 
         _ = _run_commands(
             commands,
-            ralph_dir=ralph_dir,
+            loop_dir=loop_dir,
             project_root=tmp_path,
             user_args={"script": "check.sh"},
         )
 
-        assert mock_run_cmd.call_args.kwargs["cwd"] == ralph_dir
+        assert mock_run_cmd.call_args.kwargs["cwd"] == loop_dir
         assert mock_run_cmd.call_args.kwargs["command"] == "./check.sh"
 
     @patch(MOCK_RUN_COMMAND)
@@ -1473,7 +1473,7 @@ class TestRunCommands:
 
         _ = _run_commands(
             commands,
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             project_root=tmp_path,
             user_args={"pattern": "hello world"},
         )
@@ -1492,12 +1492,12 @@ class TestRunCommands:
         """When an optional arg placeholder before ./ resolves to empty,
         the leading whitespace must not prevent ./  detection for cwd."""
         mock_run_cmd.return_value = ok_run_result(output="ok")
-        ralph_dir = tmp_path / "my-ralph"
+        loop_dir = tmp_path / "my-loop"
         commands = [Command(name="check", run="{{ args.flag }} ./check.sh")]
 
-        _ = _run_commands(commands, ralph_dir=ralph_dir, project_root=tmp_path, user_args={})
+        _ = _run_commands(commands, loop_dir=loop_dir, project_root=tmp_path, user_args={})
 
-        assert mock_run_cmd.call_args.kwargs["cwd"] == ralph_dir
+        assert mock_run_cmd.call_args.kwargs["cwd"] == loop_dir
 
     @patch(MOCK_RUN_COMMAND)
     def test_timed_out_command_output_includes_notice(
@@ -1512,7 +1512,7 @@ class TestRunCommands:
         )
         commands = [Command(name="slow", run="sleep 100", timeout=5)]
 
-        result = _run_commands(commands, ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+        result = _run_commands(commands, loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
         assert "partial output" in result["slow"]
         assert "timed out" in result["slow"].lower()
@@ -1531,7 +1531,7 @@ class TestRunCommands:
         )
         commands = [Command(name="slow", run="sleep 200", timeout=120)]
 
-        result = _run_commands(commands, ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+        result = _run_commands(commands, loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
         assert "2m 0s" in result["slow"]
 
@@ -1540,7 +1540,7 @@ class TestRunCommands:
         commands = [Command(name="missing", run="no-such-binary --flag")]
 
         with pytest.raises(FileNotFoundError, match="Command 'missing' binary not found"):
-            _ = _run_commands(commands, ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+            _ = _run_commands(commands, loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
     @patch(MOCK_RUN_COMMAND, side_effect=ValueError("No closing quotation"))
     def test_command_invalid_syntax_raises_with_context(
@@ -1553,13 +1553,13 @@ class TestRunCommands:
         commands = [Command(name="broken", run="echo 'unterminated")]
 
         with pytest.raises(ValueError, match="Command 'broken' has invalid syntax"):
-            _ = _run_commands(commands, ralph_dir=tmp_path, project_root=tmp_path, user_args={})
+            _ = _run_commands(commands, loop_dir=tmp_path, project_root=tmp_path, user_args={})
 
 
 class TestAssemblePrompt:
     """Unit tests for _assemble_prompt — reading and resolving the prompt template."""
 
-    def test_reads_prompt_from_ralph_file(self, tmp_path: Path):
+    def test_reads_prompt_from_loop_file(self, tmp_path: Path):
         config = make_config(tmp_path, "simple prompt", max_iterations=1)
         state = make_state()
         state.iteration = 1
@@ -1663,10 +1663,10 @@ class TestAssemblePrompt:
         assert "Filter: {{ commands.tests }}" in result
         assert "Tests: 5 passed" in result
 
-    def test_resolves_ralph_placeholders(self, tmp_path: Path):
+    def test_resolves_loop_placeholders(self, tmp_path: Path):
         config = make_config(
             tmp_path,
-            "Name: {{ ralph.name }}, Iter: {{ ralph.iteration }}, Max: {{ ralph.max_iterations }}",
+            "Name: {{ loop.name }}, Iter: {{ loop.iteration }}, Max: {{ loop.max_iterations }}",
             max_iterations=5,
         )
         state = make_state()
@@ -1674,12 +1674,12 @@ class TestAssemblePrompt:
 
         result = _assemble_prompt(config, state, {})
 
-        assert result == "Name: my-ralph, Iter: 3, Max: 5"
+        assert result == "Name: my-loop, Iter: 3, Max: 5"
 
-    def test_ralph_max_iterations_empty_when_unlimited(self, tmp_path: Path):
+    def test_loop_max_iterations_empty_when_unlimited(self, tmp_path: Path):
         config = make_config(
             tmp_path,
-            "Max: {{ ralph.max_iterations }}",
+            "Max: {{ loop.max_iterations }}",
             max_iterations=None,
         )
         state = make_state()
@@ -1689,10 +1689,10 @@ class TestAssemblePrompt:
 
         assert result == "Max: "
 
-    def test_ralph_name_is_ralph_dir_name(self, tmp_path: Path):
+    def test_loop_name_is_loop_dir_name(self, tmp_path: Path):
         config = make_config(
             tmp_path,
-            "Name: {{ ralph.name }}",
+            "Name: {{ loop.name }}",
             max_iterations=1,
         )
         state = make_state()
@@ -1700,7 +1700,7 @@ class TestAssemblePrompt:
 
         result = _assemble_prompt(config, state, {})
 
-        assert result == "Name: my-ralph"
+        assert result == "Name: my-loop"
 
 
 class TestInMemoryPrompt:
@@ -1709,7 +1709,7 @@ class TestInMemoryPrompt:
     def test_assemble_uses_prompt_body_without_reading_file(self, tmp_path: Path):
         config = RunConfig(
             agent="cursor-agent",
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             prompt="Search {{ args.dir }} now",
             args={"dir": "./src"},
             max_iterations=1,
@@ -1728,7 +1728,7 @@ class TestInMemoryPrompt:
         body = "---\nnot: parsed\n---\nreal prompt"
         config = RunConfig(
             agent="cursor-agent",
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             prompt=body,
             max_iterations=1,
         )
@@ -1741,7 +1741,7 @@ class TestInMemoryPrompt:
     def test_run_loop_with_in_memory_prompt(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         config = RunConfig(
             agent="cursor-agent",
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             prompt="do work",
             max_iterations=1,
         )
@@ -1797,7 +1797,7 @@ def _write_opencode_stub(tmp_path: Path) -> Path:
         'print(\'{"type": "step_start", "part": {}}\', flush=True)\n'
         'print(\'{"type": "tool_use", "part": {"name": "Edit"}}\', flush=True)\n'
         'print(\'{"type": "step_finish", "part": {"tokens": 10}}\', flush=True)\n'
-        "print('<promise>RALPH_PROMISE_COMPLETE</promise>', flush=True)\n"
+        "print('<promise>LOOP_PROMISE_COMPLETE</promise>', flush=True)\n"
     )
     script.chmod(0o755)
     return script

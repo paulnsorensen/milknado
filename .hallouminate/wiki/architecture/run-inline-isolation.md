@@ -44,7 +44,7 @@ status to retry).
 ## Worker process boundaries
 
 Worker command resolution is fail-closed at every subprocess boundary:
-dispatch, planning, and the ralph loop share the same exact-token validator.
+dispatch, planning, and the loop share the same exact-token validator.
 The first argv token must be a known bare worker executable; absolute paths,
 relative paths, and prefix spoofs are rejected rather than normalized to a
 basename. This keeps the command that passes validation identical to the

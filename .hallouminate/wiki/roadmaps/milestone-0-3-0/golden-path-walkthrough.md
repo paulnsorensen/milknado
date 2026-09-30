@@ -18,10 +18,10 @@ milknado's config tables.
 
 This goal writes milknado's story: a single worked walkthrough from zero to
 harvested outcome — install, `milknado init`, author or import a wiki
-roadmap, `plan` a goal into tasks, `run` the parallel ralph loops, watch
+roadmap, `plan` a goal into tasks, `run` the parallel loops, watch
 them (attach, once [[tmux-run-primitive]] lands — the walkthrough should be
 written to absorb that when available, not blocked on it), and harvest the
-outcome back into the wiki. The framing is the golden-path pitch: ralph
+outcome back into the wiki. The framing is the golden-path pitch: loop
 trees, casual sub-agent supervision, and full higher-level roadmaps — the
 things firstmate cannot offer — presented in firstmate's approachable
 register.

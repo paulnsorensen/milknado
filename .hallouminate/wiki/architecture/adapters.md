@@ -22,7 +22,7 @@ manifest and uses CRG only for graph topology.[^code-intelligence-boundary]
 
 Wraps the `git` CLI via `subprocess` for worktree lifecycle (create/remove/prune),
 branch query, commit, squash-and-commit, and rebase. Worker isolation runs each
-ralph in its own worktree+branch, so this is the boundary for that.
+loop in its own worktree+branch, so this is the boundary for that.
 
 The interesting part is `rebase`: on conflict it parses conflicted paths out of git
 output (`_CONFLICT_FILE_RE`), then attempts `mergiraf solve` per file
@@ -38,7 +38,7 @@ is now in an unknown state. `squash_and_commit` swallows a `merge-base` failure
 ## loop.py — LoopPort
 
 The largest adapter (~272 lines). Wraps the vendored `milknado.loop` engine, which
-spawns coding-agent subprocesses ("ralph loops") that iterate until a completion
+spawns coding-agent subprocesses ("loops") that iterate until a completion
 signal. This is where Milknado's parallel execution actually happens.
 
 - **Run lifecycle**: `create_run` builds a `RunConfig` keyed on the constant
@@ -62,10 +62,10 @@ signal. This is where Milknado's parallel execution actually happens.
   it completes the root for `done`, replans only `gaps`, and keeps the root pending
   without replanning for `unavailable`. Timeouts, unparseable output, and agent failures
   remain explanatory `gaps`.[^verification-outcomes]
-- **`generate_ralph_md`**: writes the per-node `ralph.md` prompt (description,
+- **`generate_loop_md`**: writes the per-node `loop.md` prompt (description,
   context, quality gates, the Mikado "register follow-ups rather than widen scope"
   instruction, and the completion-signal contract). An `OSError` becomes
-  `RalphMarkdownWriteError` — fail-loud on a write the loop depends on.
+  `LoopMarkdownWriteError` — fail-loud on a write the loop depends on.
 
 ## crg.py — CrgPort
 
@@ -79,7 +79,7 @@ operations shell out to the `code-review-graph` CLI via `_run_crg`.
 - **`ensure_graph`** is the freshness gate: builds if the db is absent, runs `update`
   if `_is_stale` (any source file mtime newer than the db). Staleness walks the tree
   via `_walk_sources`, filtered by `_SOURCE_EXTENSIONS` and skipping `_SKIP_DIRS`
-  (vcs, caches, build dirs, `ralphs`).
+  (vcs, caches, build dirs, `loops`).
 - **Failure mode**: `_run_crg` runs `check=True` and re-raises `CalledProcessError`
   as a `RuntimeError` carrying exit code + stderr (finding #79) so callers can
   surface *why* the build failed rather than a bare non-zero.

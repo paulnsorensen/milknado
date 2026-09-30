@@ -109,7 +109,7 @@ fast). Detection is domain-owned *by construction*; reaction stays per-entrypoin
 
 Keep this distinct from `Batch.oversized` / `oversized_count` — that is a **token-budget**
 signal (`DUMB_ZONE_BUDGET`), not a change count. The two must not be folded.
-`MEGA_BATCH_THRESHOLD` is an uncalibrated heuristic ("one batch = one ralph loop = one
+`MEGA_BATCH_THRESHOLD` is an uncalibrated heuristic ("one batch = one loop = one
 review unit"); tune it in `change.py` if calibration data appears.
 
 **History.** This replaced a caller-shadowed guard: `check_mega_batch` lived in `planner.py`,

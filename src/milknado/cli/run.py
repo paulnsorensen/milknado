@@ -176,7 +176,7 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
     port: RunPortOption = 8000,
     no_open: NoOpenOption = False,
 ) -> None:
-    """Execute ready leaf nodes as parallel ralph loops."""
+    """Execute ready leaf nodes as parallel loops."""
     _run(RunCommandOptions(project_root, strict, allow_protected, web, port, no_open))
 
 

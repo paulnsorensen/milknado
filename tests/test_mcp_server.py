@@ -951,7 +951,7 @@ class TestTodoAsyncRun:
         self, root: Path, run_id: str, node_id: int, *, pid: int | None
     ) -> None:
         """Seed a 'running' run aged well past its timeout. `pid=None` models the
-        async-worker path (no pid recorded); an int models the detached-ralph
+        async-worker path (no pid recorded); an int models the detached-loop
         path, which records its process pid."""
         from datetime import UTC, datetime, timedelta
 
@@ -966,7 +966,7 @@ class TestTodoAsyncRun:
         )
 
     def test_fail_stale_does_not_flip_live_detached_run(self, tmp_path: Path) -> None:
-        """#54: a detached-ralph run still 'running' past timeout+grace but whose
+        """#54: a detached-loop run still 'running' past timeout+grace but whose
         recorded pid is ALIVE (slow, e.g. wedged in `git rebase`) must NOT be
         force-failed — that thrashes a run about to write 'done'."""
         import os
@@ -1021,9 +1021,9 @@ class TestTodoAsyncRun:
             graph.close()
 
     def test_fail_stale_mixed_kinds_flips_only_the_dead_one(self, tmp_path: Path) -> None:
-        """#54 cross-namespace guard: BOTH a detached-ralph run (records a pid) and
+        """#54 cross-namespace guard: BOTH a detached-loop run (records a pid) and
         a pid-less async run exist for the same node. The sweep must flip only the
-        genuinely-dead one — a live ralph run for the node must survive, not be
+        genuinely-dead one — a live loop run for the node must survive, not be
         cross-failed."""
         import os
 
@@ -2609,7 +2609,7 @@ def test_main_imports_all_tool_modules() -> None:
     from milknado.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.main)
-    for module in ("ralph", "run", "todo", "todo_mutate", "wiki"):
+    for module in ("loop", "run", "todo", "todo_mutate", "wiki"):
         assert re.search(rf"\b{module}\b", src), (
             f"main() no longer imports {module}; its tools won't register on server startup"
         )
@@ -2636,8 +2636,8 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     from milknado.mcp import (
         github,
         goal_review,
+        loop,
         node,
-        ralph,
         rebalance,
         run,
         todo,
@@ -2646,7 +2646,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     )
     from milknado.mcp._core import mcp
 
-    _ = (github, goal_review, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (github, goal_review, node, loop, rebalance, run, todo, todo_mutate, wiki)
 
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
@@ -2697,15 +2697,15 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
 
 def test_mcp_metadata_stays_succinct_and_accurate() -> None:
     """MCP listings should advertise tool families without implementation mechanics."""
-    from milknado.mcp import node, ralph, run, todo, todo_mutate, wiki
+    from milknado.mcp import loop, node, run, todo, todo_mutate, wiki
 
-    _ = (node, ralph, run, todo, todo_mutate, wiki)
+    _ = (node, loop, run, todo, todo_mutate, wiki)
 
     families = (
         "graph CRUD",
         "batch planning",
         "worker dispatch",
-        "detached ralph runs",
+        "detached loop runs",
         "run polling/cancel",
         "roadmap import/export",
     )

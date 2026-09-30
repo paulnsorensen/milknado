@@ -138,28 +138,61 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
 
 
 # --- Atomic optimistic claim / reclaim / fence ---------------------------------
-# These bypass assert_transition deliberately: the SQL WHERE clause IS the guard,
-# evaluated atomically by SQLite (a single conditional UPDATE serialized by the
-# write lock), which makes it correct across processes — unlike an in-process
-# mutex. `cursor.rowcount == 1` tells the caller whether it won.
+# Claims hold SQLite's writer lock across the capacity count and guarded UPDATE.
+# Other fenced transitions rely on their conditional UPDATE for cross-process safety.
 
 _CLAIMABLE = ("pending", "failed", "blocked")
 
 
+class ConcurrencyLimitReached(Exception):
+    def __init__(self, running: int, limit: int) -> None:
+        self.running: int = running
+        self.limit: int = limit
+        super().__init__(f"execution capacity is full ({running}/{limit})")
+
+
 def claim_node(
-    conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
+    conn: sqlite3.Connection,
+    node_id: int,
+    run_id: str,
+    now: str,
+    concurrency_limit: int,
+    *,
+    pid: int | None = None,
 ) -> bool:
-    """Atomically claim a claimable node, including its dispatch PID fence."""
-    _ = conn.execute(
-        READY_NODE_ADMISSION_CTE
-        + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
-        + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
-        + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
-        (run_id, now, pid, node_id),
-    )
-    row = cast(tuple[int] | None, conn.execute("SELECT changes()").fetchone())
-    conn.commit()
-    return row is not None and row[0] == 1
+    """Claim a task under SQLite's writer lock, with its dispatch PID fence."""
+    _ = conn.execute("BEGIN IMMEDIATE")
+    try:
+        node = fetchone(
+            conn,
+            READY_NODE_ADMISSION_CTE
+            + "SELECT n.status, n.kind FROM nodes AS n WHERE n.id = ? AND "
+            + READY_NODE_ADMISSION_FILTER,
+            (node_id,),
+        )
+        if node is not None and node["kind"] == "task" and node["status"] in _CLAIMABLE:
+            running = cast(
+                int,
+                conn.execute(
+                    "SELECT COUNT(*) FROM nodes "
+                    + "WHERE status = 'running' AND kind = 'task' AND run_id IS NOT NULL"
+                ).fetchone()[0],
+            )
+            if running >= concurrency_limit:
+                raise ConcurrencyLimitReached(running, concurrency_limit)
+        _ = conn.execute(
+            READY_NODE_ADMISSION_CTE
+            + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
+            + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
+            + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
+            (run_id, now, pid, node_id),
+        )
+        changed = cast(int, conn.execute("SELECT changes()").fetchone()[0])
+        conn.commit()
+        return changed == 1
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:

@@ -1,7 +1,7 @@
 """Execute shell commands with timeout and output capture.
 
 Used by the engine to run configured commands.  The working directory
-is set by the caller — typically the project root or the ralph directory
+is set by the caller — typically the project root or the loop directory
 for ``./`` commands.
 """
 

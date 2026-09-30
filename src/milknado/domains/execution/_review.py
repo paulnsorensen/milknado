@@ -20,7 +20,7 @@ def build_review_prompt(
     diff: str,
 ) -> str:
     try:
-        brief = (worktree / "RALPH.md").read_text(encoding="utf-8")
+        brief = (worktree / "LOOP.md").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         brief = node.description
     spec_path = node.artifact_path

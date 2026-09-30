@@ -1,8 +1,8 @@
 {
   "name": "milknado",
   "version": "0.1.0",
-  "description": "Mikado graph planning and parallel ralph execution via the milknado CLI",
-  "keywords": ["mikado", "ralph", "milknado", "agents"],
+  "description": "Mikado graph planning and parallel loop execution via the milknado CLI",
+  "keywords": ["mikado", "loop", "milknado", "agents"],
   "license": "MIT",
   "mcpServers": "mcp.json"
 }

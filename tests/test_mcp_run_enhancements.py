@@ -24,7 +24,7 @@ from milknado.domains.dispatch import (
 )
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import RunDict
-from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
+from milknado.mcp.loop import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.run import (
     milknado_deposit_result,
     milknado_run_cancel,
@@ -444,7 +444,7 @@ class TestProtectedDispatch:
         _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
-            milknado_todo_add, description="schema-ralph-start", kind="task", project_root=root
+            milknado_todo_add, description="schema-loop-start", kind="task", project_root=root
         )
         result = _call(
             milknado_run_loop_start,
@@ -464,7 +464,7 @@ class TestProtectedDispatch:
         _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
-            milknado_todo_add, description="schema-ralph-poll", kind="task", project_root=root
+            milknado_todo_add, description="schema-loop-poll", kind="task", project_root=root
         )
         started = _call(
             milknado_run_loop_start,
@@ -1337,7 +1337,7 @@ class TestAsyncCancel:
 
 
 class TestPidCancelReconcile:
-    """The pid (detached-ralph) cancel branch. The cooked change routes its node
+    """The pid (detached-loop) cancel branch. The cooked change routes its node
     reconcile through the run_id-fenced `_reconcile_cancel` — the deliberate
     deviation from the spec's "keep the pid path unchanged". These lock both the
     positive reconcile and the fence that the deviation exists to preserve."""
@@ -1361,7 +1361,7 @@ class TestPidCancelReconcile:
     def test_pid_cancel_reconciles_node_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A detached-ralph run (has pid) cancels: SIGTERM the group, write the
+        """A detached-loop run (has pid) cancels: SIGTERM the group, write the
         terminal state, and reconcile the node to failed through the run_id fence.
         Previously only the async branch's reconcile had a real-node test."""
         import signal as sig_mod
@@ -1428,7 +1428,7 @@ class TestPidCancelReconcile:
     def test_pid_cancel_tolerates_already_gone_process(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A detached-ralph run whose process group is already gone (killpg raises
+        """A detached-loop run whose process group is already gone (killpg raises
         ProcessLookupError) must still finalize cleanly: write the terminal state
         and reconcile the node, not propagate the signal error."""
         run_id = "node-1-20260101T000000Z-cccc"
@@ -1786,13 +1786,13 @@ class TestDepositResult:
     def test_run_loop_poll_falls_back_to_latest_iteration_log_for_executor_runs(
         self, tmp_path: Path
     ) -> None:
-        """Medium: executor-owned (in-process) ralph runs never write the
+        """Medium: executor-owned (in-process) loop runs never write the
         detached path's flat <run_id>.log — they write one file per
-        iteration under a `.ralph-logs` directory instead. Poll must fall
+        iteration under a `.loop-logs` directory instead. Poll must fall
         back to tailing the newest iteration file rather than silently
         returning an empty summary forever."""
         run_id = "node-1-20260101T000000Z-1234"
-        log_dir = tmp_path / "milknado-1-task" / ".ralph-logs"
+        log_dir = tmp_path / "milknado-1-task" / ".loop-logs"
         log_dir.mkdir(parents=True)
         _ = (log_dir / "0001_20260101T000000Z.log").write_text(
             "iteration 1 output", encoding="utf-8"
@@ -1818,7 +1818,7 @@ class TestDepositResult:
         """The directory fallback must stay inside the project root — a
         tampered runs.log_path pointing at a directory elsewhere on disk
         must not be tailed, mirroring the flat-file derivation's guard."""
-        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-ralph-logs"
+        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-loop-logs"
         outside_dir.mkdir(exist_ok=True)
         _ = (outside_dir / "0001_x.log").write_text("SECRET-ITERATION-OUTPUT", encoding="utf-8")
         try:

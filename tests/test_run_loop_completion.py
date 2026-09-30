@@ -11,11 +11,8 @@ from milknado.domains.common import SessionView
 from milknado.domains.common.protocols import LoopPort, ProgressEvent
 from milknado.domains.common.types import MikadoNode, NodeStatus
 from milknado.domains.execution import RunLoop
-from milknado.domains.execution.executor import (
-    CompletionResult,
-    Executor,
-    RebaseConflict,
-)
+from milknado.domains.execution._models import CompletionResult, RebaseConflict
+from milknado.domains.execution.executor import Executor
 from milknado.domains.execution.run_loop._completion import handle_completion
 from milknado.domains.execution.run_loop.input import InputState
 from milknado.domains.execution.run_loop.state import TerminalRunState
@@ -38,7 +35,7 @@ class _FakeExecutor:
         self.failed_ids: list[int] = []
         self.fail_details: list[str | None] = []
         self.complete_result: CompletionResult = CompletionResult(
-            node_id=0, rebased=False, newly_ready=[]
+            node_id=0, rebased=True, newly_ready=[]
         )
 
     def complete(self, _node_id: int, _feature_branch: str) -> CompletionResult:
@@ -56,7 +53,7 @@ def _make_node(node_id: int, desc: str = "task") -> MikadoNode:
     return MikadoNode(id=node_id, description=desc, status=NodeStatus.RUNNING)
 
 
-class _FakeRalph:
+class _FakeLoopAdapter:
     def __init__(self) -> None:
         self.failure_detail: str | None = None
 
@@ -82,7 +79,7 @@ class _FakeLoop:
     _logs: deque[str]
     _executor: Executor
     _completion_durations: deque[float]
-    _ralph: LoopPort
+    _loop: LoopPort
     _attempts: dict[int, int]
     _strict: bool
     _failure_triggered: bool
@@ -101,7 +98,7 @@ class _FakeLoop:
         self._completion_durations = deque()
         self._dispatched_at = {}
         self._logs = deque()
-        self._ralph = cast(LoopPort, cast(object, _FakeRalph()))
+        self._loop = cast(LoopPort, cast(object, _FakeLoopAdapter()))
         self._attempts = {}
         self._strict = False
         self._failure_triggered = False
@@ -150,6 +147,18 @@ class TestHandleCompletionSuccess:
 
         assert loop._input.overlay_state is None  # pyright: ignore[reportPrivateUsage]
 
+    def test_unrebased_terminal_result_is_not_success(self) -> None:
+        executor = _FakeExecutor()
+        executor.complete_result = CompletionResult(node_id=1, rebased=False, newly_ready=[])
+        loop = _make_loop(1, "run-1", executor)
+        loop._strict = True  # pyright: ignore[reportPrivateUsage]
+
+        completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+
+        assert (completed, failed, conflicts) == (0, 1, [])
+        assert loop._failure_triggered is True  # pyright: ignore[reportPrivateUsage]
+        assert executor.failed_ids == []
+
 
 class TestHandleCompletionFailure:
     def test_returns_zero_completed_one_failed(self) -> None:
@@ -194,8 +203,8 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         cast(
-            _FakeRalph,
-            cast(object, loop._ralph),  # pyright: ignore[reportPrivateUsage]
+            _FakeLoopAdapter,
+            cast(object, loop._loop),  # pyright: ignore[reportPrivateUsage]
         ).failure_detail = "Error: unknown flag: --mcp-config"
         caplog.set_level("WARNING", logger="milknado")
 
@@ -209,7 +218,7 @@ class TestHandleCompletionFailure:
     def test_failure_log_bare_when_no_detail(self, caplog: pytest.LogCaptureFixture) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        cast(_FakeRalph, cast(object, loop._ralph)).failure_detail = None  # pyright: ignore[reportPrivateUsage]
+        cast(_FakeLoopAdapter, cast(object, loop._loop)).failure_detail = None  # pyright: ignore[reportPrivateUsage]
         caplog.set_level("WARNING", logger="milknado")
 
         _ = handle_completion(loop, "run-1", "failed", "main")

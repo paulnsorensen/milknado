@@ -160,7 +160,7 @@ class TestDepositReview:
         finally:
             graph.close()
 
-    def test_review_deposit_stops_actual_ralph_run_after_one_iteration(
+    def test_review_deposit_stops_actual_loop_run_after_one_iteration(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         run_id = "node-1-20260101T000000Z-abcd"
@@ -180,13 +180,13 @@ class TestDepositReview:
             "milknado.loop.engine.execute_agent",
             cast(Callable[..., AgentResult], deposit_then_succeed),
         )
-        ralph_file = tmp_path / "RALPH.md"
-        _ = ralph_file.write_text("review", encoding="utf-8")
+        loop_file = tmp_path / "LOOP.md"
+        _ = loop_file.write_text("review", encoding="utf-8")
         adapter = LoopAdapter()
         _ = adapter.create_run(
             agent="cursor-agent",
-            ralph_dir=tmp_path,
-            ralph_file=ralph_file,
+            loop_dir=tmp_path,
+            loop_file=loop_file,
             quality_gates=(),
             project_root=tmp_path,
             run_id=run_id,

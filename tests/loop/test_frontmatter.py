@@ -3,15 +3,15 @@
 import pytest
 
 from milknado.loop._frontmatter import (
-    RALPH_MARKER,
+    LOOP_MARKER,
     _extract_frontmatter_block,  # pyright: ignore[reportPrivateUsage]
     parse_frontmatter,
 )
 
 
-class TestRalphMarker:
+class TestLoopMarker:
     def test_marker_value(self):
-        assert RALPH_MARKER == "RALPH.md"
+        assert LOOP_MARKER == "LOOP.md"
 
 
 class TestExtractFrontmatterBlock:

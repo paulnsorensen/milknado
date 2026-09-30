@@ -53,7 +53,7 @@ _SKIP_DIRS = frozenset(
         "dist",
         "build",
         ".eggs",
-        "ralphs",
+        "loops",
     }
 )
 

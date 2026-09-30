@@ -1,7 +1,7 @@
 # Milknado Wiki
 
 Cross-session knowledge for **milknado** — a Mikado execution engine that
-decomposes goals into dependency graphs and runs them as parallel ralph loops.
+decomposes goals into dependency graphs and runs them as parallel loops.
 
 This wiki is the canonical home for durable knowledge that does not belong in
 code comments: architecture, conventions, and the lessons behind past decisions.

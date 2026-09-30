@@ -31,7 +31,7 @@ from milknado.loop._events import (
     RunStoppedData,
     TurnCappedData,
 )
-from milknado.loop._frontmatter import RALPH_MARKER
+from milknado.loop._frontmatter import LOOP_MARKER
 from milknado.loop._run_types import (
     DEFAULT_COMPLETION_SIGNAL,
     Command,
@@ -62,32 +62,32 @@ MOCK_WAIT_FOR_STOP = "milknado.loop._run_types.RunState.wait_for_stop"
 # ── Factory helpers ───────────────────────────────────────────────────
 
 
-def make_ralph(
+def make_loop(
     tmp_path: Path,
     prompt: str = "go",
     agent: str = "claude -p --dangerously-skip-permissions",
     commands: list[dict[str, object]] | None = None,
     args: list[str] | None = None,
 ) -> Path:
-    """Create a ralph directory with a proper RALPH.md for CLI-level tests.
+    """Create a loop directory with a proper LOOP.md for CLI-level tests.
 
-    Returns the ralph directory path with valid YAML frontmatter.
+    Returns the loop directory path with valid YAML frontmatter.
     """
-    ralph_dir = tmp_path / "my-ralph"
-    ralph_dir.mkdir(exist_ok=True)
+    loop_dir = tmp_path / "my-loop"
+    loop_dir.mkdir(exist_ok=True)
     frontmatter: dict[str, object] = {"agent": agent}
     if commands:
         frontmatter["commands"] = commands
     if args:
         frontmatter["args"] = args
     content = f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n{prompt}"
-    _ = (ralph_dir / RALPH_MARKER).write_text(content, encoding="utf-8")
-    return ralph_dir
+    _ = (loop_dir / LOOP_MARKER).write_text(content, encoding="utf-8")
+    return loop_dir
 
 
 def make_config(
     tmp_path: Path,
-    ralph_content: str = "test prompt",
+    loop_content: str = "test prompt",
     *,
     agent: str = "cursor-agent",
     commands: list[Command] | None = None,
@@ -106,21 +106,21 @@ def make_config(
     completion_verifier: Callable[[], CompletionVerdict] | None = None,
     completion_probe: Callable[[], bool] | None = None,
 ) -> RunConfig:
-    """Create a RunConfig pointing at a temp ralph directory.
+    """Create a RunConfig pointing at a temp loop directory.
 
-    *ralph_content* is written to the ``RALPH.md`` file every time, so
+    *loop_content* is written to the ``LOOP.md`` file every time, so
     tests can supply custom frontmatter + body without manually creating
-    the ralph directory first.
+    the loop directory first.
     """
-    ralph_dir = tmp_path / "my-ralph"
-    ralph_dir.mkdir(exist_ok=True)
-    ralph_file = ralph_dir / RALPH_MARKER
-    _ = ralph_file.write_text(ralph_content, encoding="utf-8")
+    loop_dir = tmp_path / "my-loop"
+    loop_dir.mkdir(exist_ok=True)
+    loop_file = loop_dir / LOOP_MARKER
+    _ = loop_file.write_text(loop_content, encoding="utf-8")
 
     return RunConfig(
         agent=agent,
-        ralph_dir=ralph_dir,
-        ralph_file=ralph_file,
+        loop_dir=loop_dir,
+        loop_file=loop_file,
         commands=commands or [],
         args=args or {},
         max_iterations=max_iterations,

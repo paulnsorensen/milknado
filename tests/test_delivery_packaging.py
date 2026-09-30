@@ -22,7 +22,7 @@ _SRC = _ROOT / "src" / "milknado"
 _PYPROJECT = _ROOT / "pyproject.toml"
 
 _FLAT_DELIVERY_PREFIXES = ("cli_", "mcp_", "_cli_", "_mcp_")
-_FLAT_DELIVERY_STEMS = {"_ralph_node_runner", "mcp_ralph"}
+_FLAT_DELIVERY_STEMS = {"_loop_node_runner", "mcp_loop"}
 
 
 def test_no_flat_delivery_modules_at_package_root() -> None:

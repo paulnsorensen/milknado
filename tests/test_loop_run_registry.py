@@ -1,4 +1,4 @@
-"""Curd A (#296): ralph-dispatched runs are first-class in the runs registry."""
+"""Curd A (#296): loop-dispatched runs are first-class in the runs registry."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.execution import ExecutionConfig, Executor
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import open_graph
-from milknado.mcp.ralph import milknado_run_loop_poll
+from milknado.mcp.loop import milknado_run_loop_poll
 from milknado.mcp.run import milknado_run_cancel, milknado_run_list
-from tests.test_execution import FakeCrg, FakeGit, FakeRalph
+from tests.test_execution import FakeCrg, FakeGit, FakeLoop
 
 
 class _DispatchGitFixture(Protocol):
@@ -36,8 +36,8 @@ class _DispatchLoopFixture(Protocol):
     def create_run(  # noqa: PLR0913
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -67,7 +67,7 @@ def _executor(graph: MikadoGraph) -> Executor:
     return Executor(
         graph=graph,
         git=_as_git_port(FakeGit()),
-        ralph=_as_loop_port(FakeRalph()),
+        loop=_as_loop_port(FakeLoop()),
         crg=FakeCrg(),
     )
 
@@ -82,34 +82,34 @@ def _as_git_port(git: _DispatchGitFixture) -> GitPort:
     return cast(GitPort, git)
 
 
-def _as_loop_port(ralph: _DispatchLoopFixture) -> LoopPort:
-    return cast(LoopPort, ralph)
+def _as_loop_port(loop: _DispatchLoopFixture) -> LoopPort:
+    return cast(LoopPort, loop)
 
 
-def _executor_with_ralph(graph: MikadoGraph, ralph: FakeRalph | None = None) -> Executor:
+def _executor_with_loop(graph: MikadoGraph, loop: FakeLoop | None = None) -> Executor:
     return Executor(
         graph=graph,
         git=_as_git_port(FakeGit()),
-        ralph=_as_loop_port(ralph or FakeRalph()),
+        loop=_as_loop_port(loop or FakeLoop()),
         crg=FakeCrg(),
     )
 
 
 def test_dispatch_inserts_runs_row(graph: MikadoGraph, tmp_path: Path) -> None:
-    _ = graph.add_node("registered ralph run")
+    _ = graph.add_node("registered loop run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
 
     row = graph.runs.get(result.run_id)
-    assert row is not None, "ralph dispatch must insert a runs row"
+    assert row is not None, "loop dispatch must insert a runs row"
     assert row["node_id"] == 1
     assert row["status"] == "running"
-    assert row["log_path"].endswith(".ralph-logs")
+    assert row["log_path"].endswith(".loop-logs")
     assert (Path(row["log_path"]) / "0000-dispatch.log").is_file()
 
 
 def test_dispatch_forwards_flavor_iteration_bound(graph: MikadoGraph, tmp_path: Path) -> None:
     _ = graph.add_node("bounded worker")
-    ralph = FakeRalph()
+    loop = FakeLoop()
     config = ExecutionConfig(
         execution_agent="claude",
         quality_gates=(Gate(command="true"),),
@@ -118,9 +118,9 @@ def test_dispatch_forwards_flavor_iteration_bound(graph: MikadoGraph, tmp_path: 
         max_iterations=3,
         attempt_timeout_seconds=12.5,
     )
-    _ = _executor_with_ralph(graph, ralph).dispatch(1, config)
-    assert ralph.max_iterations_seen == [3]
-    assert ralph.timeouts_seen == [12.5]
+    _ = _executor_with_loop(graph, loop).dispatch(1, config)
+    assert loop.max_iterations_seen == [3]
+    assert loop.timeouts_seen == [12.5]
 
 
 def test_verdict_message_deposit_no_longer_fk_fails(graph: MikadoGraph, tmp_path: Path) -> None:
@@ -137,18 +137,18 @@ def test_verdict_message_deposit_no_longer_fk_fails(graph: MikadoGraph, tmp_path
     assert graph.runs.latest_message(result.run_id, "node_review") == '{"verdict":"reject"}'
 
 
-def test_run_list_includes_ralph_runs(graph: MikadoGraph, tmp_path: Path) -> None:
-    _ = graph.add_node("listed ralph run")
+def test_run_list_includes_loop_runs(graph: MikadoGraph, tmp_path: Path) -> None:
+    _ = graph.add_node("listed loop run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
 
     listed = graph.runs.recent(50)
     assert result.run_id in {r["run_id"] for r in listed}
 
 
-def test_cancel_marks_ralph_run_row_cancelled(graph: MikadoGraph, tmp_path: Path) -> None:
-    """A ralph run with a recorded pid cancels through the pid path; its runs
+def test_cancel_marks_loop_run_row_cancelled(graph: MikadoGraph, tmp_path: Path) -> None:
+    """A loop run with a recorded pid cancels through the pid path; its runs
     row is finalized with the cancelled marker."""
-    _ = graph.add_node("cancellable ralph run")
+    _ = graph.add_node("cancellable loop run")
     result = _executor(graph).dispatch(1, _config(tmp_path))
     graph.runs.set_pid(result.run_id, 424242)
     graph.set_pid(1, result.run_id, 424242)
@@ -177,8 +177,8 @@ def test_cancel_pidless_coordinator_refuses_without_writing_marker(
 ) -> None:
     """A live coordinator-owned run lacks a worker pid, so cancellation must
     refuse without leaving a marker for the coordinator to observe later."""
-    _ = graph.add_node("cancellable pid-less ralph run")
-    executor = _executor_with_ralph(graph, FakeRalph(live=True))
+    _ = graph.add_node("cancellable pid-less loop run")
+    executor = _executor_with_loop(graph, FakeLoop(live=True))
     result = executor.dispatch(1, _config(tmp_path))
     assert _run_record(graph, result.run_id)["pid"] is None
 
@@ -193,14 +193,14 @@ def test_watcher_exits_when_run_thread_is_dead(graph: MikadoGraph, tmp_path: Pat
     """Dead-thread exit branch: a run whose thread has finished makes the
     cancel watcher return on its own — the completion path owns the finalize,
     and no polling daemon thread leaks past the dispatch."""
-    _ = graph.add_node("finished ralph run")
-    ralph = FakeRalph(id_prefix="watchdead")
-    executor = _executor_with_ralph(graph, ralph)
+    _ = graph.add_node("finished loop run")
+    loop = FakeLoop(id_prefix="watchdead")
+    executor = _executor_with_loop(graph, loop)
     result = executor.dispatch(1, _config(tmp_path))
-    assert not ralph.runs[result.run_id].thread.is_alive()
+    assert not loop.runs[result.run_id].thread.is_alive()
 
     watcher = next(
-        (t for t in threading.enumerate() if t.name == f"ralph-cancel-watch-{result.run_id}"),
+        (t for t in threading.enumerate() if t.name == f"loop-cancel-watch-{result.run_id}"),
         None,
     )
     if watcher is not None:  # None: it already exited — the same proof
@@ -211,8 +211,8 @@ def test_watcher_exits_when_run_thread_is_dead(graph: MikadoGraph, tmp_path: Pat
 
 
 def test_cancel_refusal_creates_no_marker(graph: MikadoGraph, tmp_path: Path) -> None:
-    _ = graph.add_node("wedged ralph run")
-    executor = _executor_with_ralph(graph, FakeRalph(live=True, id_prefix="wedged"))
+    _ = graph.add_node("wedged loop run")
+    executor = _executor_with_loop(graph, FakeLoop(live=True, id_prefix="wedged"))
     result = executor.dispatch(1, _config(tmp_path))
 
     with pytest.raises(RuntimeError, match="no confirmed worker exit"):
@@ -231,10 +231,10 @@ def test_watcher_retry_backoff_doubles_and_caps(
     retry-until-stopped semantics are preserved: once the stop can confirm,
     the watcher still finalizes the row cancelled."""
     _ = graph.add_node("wedged retry backoff")
-    ralph = FakeRalph(live=True, id_prefix="backoff")
-    executor = _executor_with_ralph(graph, ralph)
+    loop = FakeLoop(live=True, id_prefix="backoff")
+    executor = _executor_with_loop(graph, loop)
     result = executor.dispatch(1, _config(tmp_path))
-    ralph.force_stop_result = False
+    loop.force_stop_result = False
 
     real_sleep = time.sleep
     sleeps: list[float] = []
@@ -246,13 +246,13 @@ def test_watcher_retry_backoff_doubles_and_caps(
     monkeypatch.setattr(time, "sleep", _recording_sleep)
     request_cancel(runs_dir(tmp_path), result.run_id)
     deadline = time.monotonic() + 10
-    while time.monotonic() < deadline and len(ralph.force_stopped) < 10:
+    while time.monotonic() < deadline and len(loop.force_stopped) < 10:
         real_sleep(0.01)
-    assert len(ralph.force_stopped) >= 10, "watcher must keep retrying the stop"
+    assert len(loop.force_stopped) >= 10, "watcher must keep retrying the stop"
 
     # The transient failure clears: retry-until-stopped is intact — the
     # watcher stops the loop and finalizes cancelled.
-    ralph.force_stop_result = True
+    loop.force_stop_result = True
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         row = graph.runs.get(result.run_id)
@@ -262,22 +262,22 @@ def test_watcher_retry_backoff_doubles_and_caps(
     row = graph.runs.get(result.run_id)
     assert row is not None and row["error"] == "cancelled"
 
-    # Poll-cadence sleeps are exactly _RALPH_CANCEL_POLL_SECS; only backoff
+    # Poll-cadence sleeps are exactly _LOOP_CANCEL_POLL_SECS; only backoff
     # sleeps exceed it. They must double from the poll cadence up to the
     # ceiling and then hold there.
-    poll = executor_module._RALPH_CANCEL_POLL_SECS  # pyright: ignore[reportPrivateUsage]
-    cap = executor_module._RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS  # pyright: ignore[reportPrivateUsage]
+    poll = executor_module._LOOP_CANCEL_POLL_SECS  # pyright: ignore[reportPrivateUsage]
+    cap = executor_module._LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS  # pyright: ignore[reportPrivateUsage]
     backoff_sleeps = [s for s in sleeps if s > poll]
     assert backoff_sleeps[:7] == [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
     assert backoff_sleeps[7:], "backoff must reach the ceiling"
     assert all(s == cap for s in backoff_sleeps[7:])
 
 
-def test_completed_ralph_run_row_is_finalized(graph: MikadoGraph, tmp_path: Path) -> None:
-    """Executor ralph rows must not zombie as 'running': completing the node
+def test_completed_loop_run_row_is_finalized(graph: MikadoGraph, tmp_path: Path) -> None:
+    """Executor loop rows must not zombie as 'running': completing the node
     finalizes the runs row done, so run_list stays truthful and cancel of a
     finished run early-returns instead of stalling."""
-    _ = graph.add_node("finalized ralph run")
+    _ = graph.add_node("finalized loop run")
     executor = _executor(graph)
     result = executor.dispatch(1, _config(tmp_path))
 
@@ -304,21 +304,21 @@ def test_dispatch_registers_row_before_starting_loop_with_recovery_metadata(
 
     monkeypatch.setattr(graph.runs, "start", spy_graph_start_run)
 
-    ralph = FakeRalph()
-    orig_ralph_start_run = ralph.start_run
+    loop = FakeLoop()
+    orig_loop_start_run = loop.start_run
 
-    def spy_ralph_start_run(*a: object, **kw: object) -> object:
-        call_order.append("ralph")
-        return cast(Callable[..., object], orig_ralph_start_run)(*a, **kw)
+    def spy_loop_start_run(*a: object, **kw: object) -> object:
+        call_order.append("loop")
+        return cast(Callable[..., object], orig_loop_start_run)(*a, **kw)
 
-    monkeypatch.setattr(ralph, "start_run", spy_ralph_start_run)
+    monkeypatch.setattr(loop, "start_run", spy_loop_start_run)
 
     _ = graph.add_node("ordered dispatch")
-    executor = _executor_with_ralph(graph, ralph)
+    executor = _executor_with_loop(graph, loop)
     config = _config(tmp_path, completion_timeout_seconds=900)
     result = executor.dispatch(1, config)
 
-    assert call_order == ["graph", "ralph"], "the DB insert must land before the loop starts"
+    assert call_order == ["graph", "loop"], "the DB insert must land before the loop starts"
     row = graph.runs.get(result.run_id)
     assert row is not None
     assert row["timeout_seconds"] == 900
@@ -329,15 +329,15 @@ def test_runs_row_insert_failure_fails_closed_and_never_starts_loop(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """H1: an unregistered run is worse than a failed dispatch. A failed
-    registry write must propagate (not be swallowed) and the ralph loop must
+    registry write must propagate (not be swallowed) and the loop must
     never start on a failed registration."""
     _ = graph.add_node("fail-closed dispatch")
-    ralph = FakeRalph()
+    loop = FakeLoop()
     monkeypatch.setattr(graph.runs, "start", MagicMock(side_effect=RuntimeError("db down")))
 
     with pytest.raises(RuntimeError, match="db down"):
-        _ = _executor_with_ralph(graph, ralph).dispatch(1, _config(tmp_path))
-    assert ralph.runs_started == [], "the loop must not start when registration fails"
+        _ = _executor_with_loop(graph, loop).dispatch(1, _config(tmp_path))
+    assert loop.runs_started == [], "the loop must not start when registration fails"
 
 
 def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
@@ -418,7 +418,7 @@ def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
     mcp_graph, _cfg = open_graph(tmp_path)
     try:
         _ = mcp_graph.add_node("mcp-format run_id")
-        executor = _executor_with_ralph(mcp_graph, FakeRalph(live=True))
+        executor = _executor_with_loop(mcp_graph, FakeLoop(live=True))
         result = executor.dispatch(1, _config(tmp_path))
 
         listed = milknado_run_list(project_root=root)
@@ -449,7 +449,7 @@ def test_cancel_stale_adopted_round_run_id_is_a_noop(tmp_path: Path) -> None:
         _ = mcp_graph.add_node("adopted round cancel")
         parent_fence = "parent-fence-1"
         assert mcp_graph.claim_node(1, parent_fence, now=now_iso())
-        executor = _executor_with_ralph(mcp_graph, FakeRalph(live=True))
+        executor = _executor_with_loop(mcp_graph, FakeLoop(live=True))
 
         result = executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
         before_node = mcp_graph.get_node(1)

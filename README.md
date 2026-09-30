@@ -1,6 +1,6 @@
 # milknado
 
-Mikado execution engine — decomposes goals into dependency graphs and executes them as parallel ralph loops.
+Mikado execution engine — decomposes goals into dependency graphs and executes them as parallel loops.
 
 ## Installation
 

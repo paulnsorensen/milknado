@@ -15,12 +15,12 @@ commands:
 
   - id: milknado-run
     title: milknado run
-    cursor_description: Run milknado parallel leaf execution (ralph loops)
+    cursor_description: Run milknado parallel leaf execution (loops)
     cursor_command: uv run milknado run --project-root .
     cursor_body_intro: From the project root.
     cursor_note: Confirm `agent_family` / `execution_agent` in `milknado.toml` match the installed headless CLI (claude, cursor-agent, gemini, codex).
     gemini_file: milknado_run.toml
-    gemini_description: Run milknado parallel leaf execution (ralph loops).
+    gemini_description: Run milknado parallel leaf execution (loops).
     gemini_heading: Milknado run
     gemini_prompt_body: |
       Shell output from `milknado run` in the workspace:

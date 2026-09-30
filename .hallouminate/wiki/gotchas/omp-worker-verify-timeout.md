@@ -35,4 +35,4 @@ The worker also fell back to reading `.milknado/milknado.db` directly to find ou
   (`run_loop/__init__.py`) copied the review settings but dropped `max_iterations`,
   `attempt_timeout_seconds`, and the derived completion timeout. `milknado run`
   attempts had no 1800 s cap and ran for 3 to 5 hours; `runs.timeout_seconds` was NULL.
-  The MCP node runner (`_ralph_node_runner.py`) always set all three.
+  The MCP node runner (`_loop_node_runner.py`) always set all three.

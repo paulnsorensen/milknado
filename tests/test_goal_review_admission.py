@@ -171,11 +171,14 @@ def test_review_wins_direct_claim_race_across_connections(
         run_id: str,
         *,
         now: str,
+        concurrency_limit: int,
         pid: int | None = None,
     ) -> bool:
         entered.set()
         assert release.wait(5)
-        return original(pipeline, conn, node_id, run_id, now=now, pid=pid)
+        return original(
+            pipeline, conn, node_id, run_id, now=now, concurrency_limit=concurrency_limit, pid=pid
+        )
 
     monkeypatch.setattr(status, "claim_node", delayed)
     worker = Thread(

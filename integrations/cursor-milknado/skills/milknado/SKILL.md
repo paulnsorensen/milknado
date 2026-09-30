@@ -1,7 +1,7 @@
 ---
 name: milknado
 description: >
-  Mikado-method execution with milknado: dependency graphs, parallel ralph
+  Mikado-method execution with milknado: dependency graphs, parallel loop
   loops in worktrees, and code-review-graph context. Use when planning goals,
   running autonomous loops, or inspecting graph state.
 ---
@@ -17,7 +17,7 @@ description: >
 ## Configuration
 
 - `milknado.toml`: `agent_family` (`claude` | `cursor` | `gemini` | `codex`), plus optional `planning_agent` / `execution_agent` overrides.
-- Built-in family defaults use stdin for planning prompts and ralphify-compatible print-mode binaries for execution.
+- Built-in family defaults use stdin for planning prompts and non-interactive print-mode binaries for execution.
 
 ## MCP
 

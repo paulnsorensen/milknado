@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import time
@@ -9,10 +10,11 @@ from typing import NoReturn, TypedDict, cast
 
 import pytest
 
-from milknado.domains.common import RunResult
+from milknado.domains.common import NodeStatus, RunResult
+from milknado.domains.dispatch import now_iso
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import NodeSummary
-from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
+from milknado.mcp.loop import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo import milknado_todo_tree
 from milknado.mcp.todo_mutate import milknado_todo_add
@@ -38,9 +40,9 @@ def _initialize_git_repository(tmp_path: Path) -> None:  # pyright: ignore[repor
     )
 
 
-# A stub runner standing in for `python -m milknado.mcp._ralph_node_runner`: it honors
+# A stub runner standing in for `python -m milknado.mcp._loop_node_runner`: it honors
 # the same argv the MCP tool appends and writes the requested terminal state,
-# letting us exercise the start->spawn->poll plumbing without a real ralph loop.
+# letting us exercise the start->spawn->poll plumbing without a real loop.
 _STUB_RUNNER = """
 import argparse
 from pathlib import Path
@@ -105,7 +107,7 @@ finally:
 """
 
 
-class _RalphResponse(TypedDict):
+class _LoopResponse(TypedDict):
     id: int
     kind: str
     status: str
@@ -122,10 +124,12 @@ class _RalphResponse(TypedDict):
     worktree_preserved: str | None
     error: str | None
     detail: str | None
+    running: int | None
+    limit: int | None
 
 
-def _call(tool: object, **kwargs: object) -> _RalphResponse:
-    fn = cast(Callable[..., _RalphResponse], getattr(tool, "fn", tool))
+def _call(tool: object, **kwargs: object) -> _LoopResponse:
+    fn = cast(Callable[..., _LoopResponse], getattr(tool, "fn", tool))
     return fn(**kwargs)
 
 
@@ -207,7 +211,7 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool, detail: str 
     return f"{sys.executable} {script}"
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> _RalphResponse:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> _LoopResponse:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -220,7 +224,7 @@ def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> _RalphRe
 
 def test_start_returns_run_id_and_writes_running_state(tmp_path: Path) -> None:
     root = str(tmp_path)
-    task = _call(milknado_todo_add, description="ralph-node", kind="task", project_root=root)
+    task = _call(milknado_todo_add, description="loop-node", kind="task", project_root=root)
     # A do-nothing runner so the state stays "running" right after start.
     noop = f"{sys.executable} -c pass"
     started = _call(
@@ -252,7 +256,7 @@ def test_start_records_pid_in_running_state(tmp_path: Path) -> None:
 
 
 def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
-    """The detached ralph runner must spawn with MILKNADO_NODE_ID set so
+    """The detached loop runner must spawn with MILKNADO_NODE_ID set so
     milknado_track_follow_up parents follow-ups as siblings of the executing
     node (under its parent) instead of at the graph root (mirrors the headless
     dispatch path). The stub runner echoes its inherited MILKNADO_NODE_ID into
@@ -275,7 +279,7 @@ def test_detached_runner_receives_node_id_in_env(tmp_path: Path) -> None:
 
 def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:
     root = str(tmp_path)
-    task = _call(milknado_todo_add, description="ralph-done", kind="task", project_root=root)
+    task = _call(milknado_todo_add, description="loop-done", kind="task", project_root=root)
     started = _call(
         milknado_run_loop_start,
         node_id=task["id"],
@@ -289,7 +293,7 @@ def test_poll_reads_done_after_runner_finishes(tmp_path: Path) -> None:
 
 def test_poll_reads_failed_with_detail(tmp_path: Path) -> None:
     root = str(tmp_path)
-    task = _call(milknado_todo_add, description="ralph-fail", kind="task", project_root=root)
+    task = _call(milknado_todo_add, description="loop-fail", kind="task", project_root=root)
     started = _call(
         milknado_run_loop_start,
         node_id=task["id"],
@@ -322,7 +326,7 @@ def test_start_refuses_when_node_already_running(tmp_path: Path) -> None:
 def test_spawn_failure_accepts_already_finalized_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from milknado.app import ralph as ralph_app
+    from milknado.app import loop as loop_app
     from milknado.domains.common import NodeStatus
     from milknado.domains.graph import RunFenceLostError
 
@@ -335,7 +339,7 @@ def test_spawn_failure_accepts_already_finalized_run(
         claim_graph.claim_node_for_dispatch(task["id"], run_id, now="2026-01-01T00:00:00+00:00")
     finally:
         claim_graph.close()
-    claim = ralph_app.RalphClaim(
+    claim = loop_app.LoopClaim(
         run_id=run_id,
         node_id=task["id"],
         target_branch="main",
@@ -350,8 +354,8 @@ def test_spawn_failure_accepts_already_finalized_run(
 
     monkeypatch.setattr(graph.runs, "finish", fence_lost)
     try:
-        ralph_app._record_spawn_failure(  # pyright: ignore[reportPrivateUsage]
-            graph, claim, OSError("spawn failed")
+        loop_app._record_start_failure(  # pyright: ignore[reportPrivateUsage]
+            graph, claim, OSError("spawn failed"), run_started=True
         )
         node = graph.get_node(task["id"])
         assert node is not None
@@ -426,7 +430,7 @@ def test_start_marks_run_failed_when_spawn_raises(tmp_path: Path) -> None:
     assert state["rebased"] is False
     assert state["ended_at"] is not None
     assert state["detail"] is not None
-    assert "spawn failed" in state["detail"]
+    assert "start failed" in state["detail"]
     # The node is claimed RUNNING in the parent BEFORE the spawn attempt, so the
     # spawn-failure path must release that claim (fenced mark_terminal FAILED) —
     # otherwise the node is stranded RUNNING forever and no retry can re-claim it.
@@ -448,7 +452,7 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
     import logging
 
     from milknado.adapters import GitAdapter
-    from milknado.mcp.ralph import RalphClaim, _remove_reclaimed_worktree
+    from milknado.mcp.loop import LoopClaim, _remove_reclaimed_worktree
 
     worktree = tmp_path / "orphan"
     worktree.mkdir()
@@ -457,7 +461,7 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
         def remove_worktree(self, _path: Path) -> None:
             raise RuntimeError("adapter unavailable")
 
-    claim = RalphClaim(
+    claim = LoopClaim(
         run_id="node-5-20260101T000000Z-orph",
         node_id=5,
         target_branch="main",
@@ -475,7 +479,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
 ) -> None:
 
     from milknado.domains.common import NodeStatus
-    from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
+    from milknado.mcp.loop import LoopClaim, _record_start_failure
 
     class Graph:
         def __init__(self) -> None:
@@ -488,7 +492,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
             self.terminal = (node_id, run_id, status)
 
-    claim = RalphClaim(
+    claim = LoopClaim(
         run_id="node-6-20260101T000000Z-spwn",
         node_id=6,
         target_branch="main",
@@ -496,16 +500,19 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         stale_worktree=None,
     )
     graph = Graph()
-    with pytest.raises(RuntimeError, match="spawn failure persistence failed"):
-        _record_spawn_failure(
-            cast(MikadoGraph, cast(object, graph)), claim, OSError("missing runner")
+    with pytest.raises(RuntimeError, match="start failure persistence failed"):
+        _record_start_failure(
+            cast(MikadoGraph, cast(object, graph)),
+            claim,
+            OSError("missing runner"),
+            run_started=True,
         )
     assert graph.terminal == (6, claim.run_id, NodeStatus.FAILED)
-    assert "spawn failure persistence failed" in caplog.text
+    assert "start failure persistence failed" in caplog.text
 
 
 def test_spawn_failure_preserves_node_persistence_exception() -> None:
-    from milknado.mcp.ralph import RalphClaim, _record_spawn_failure
+    from milknado.mcp.loop import LoopClaim, _record_start_failure
 
     class Graph:
         def __init__(self) -> None:
@@ -517,16 +524,19 @@ def test_spawn_failure_preserves_node_persistence_exception() -> None:
         def mark_terminal(self, _node_id: int, _run_id: str, _status: object) -> bool:
             raise RuntimeError("node database unavailable")
 
-    claim = RalphClaim(
+    claim = LoopClaim(
         run_id="node-7-20260101T000000Z-spwn",
         node_id=7,
         target_branch="main",
         base_oid="abc123",
         stale_worktree=None,
     )
-    with pytest.raises(RuntimeError, match="spawn failure persistence failed") as error:
-        _record_spawn_failure(
-            cast(MikadoGraph, cast(object, Graph())), claim, OSError("missing runner")
+    with pytest.raises(RuntimeError, match="start failure persistence failed") as error:
+        _record_start_failure(
+            cast(MikadoGraph, cast(object, Graph())),
+            claim,
+            OSError("missing runner"),
+            run_started=True,
         )
     assert isinstance(error.value.__cause__, RuntimeError)
 
@@ -565,7 +575,7 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     """When the detached runner crashes mid-execution it must finalize the run row
     'failed' with the error under the documented 'detail' field."""
     import milknado.adapters as adapters
-    from milknado.mcp import _ralph_node_runner
+    from milknado.mcp import _loop_node_runner
 
     def _boom(*_args: object, **_kwargs: object) -> NoReturn:
         raise RuntimeError("boom")
@@ -580,7 +590,7 @@ def test_runner_crash_writes_detail_and_keeps_schema(
     monkeypatch.setattr(adapters, "GitAdapter", _boom)
     run_id = "node-1-20260101T000000Z-abcd"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
-    rc = _ralph_node_runner.main(
+    rc = _loop_node_runner.main(
         [
             "--node-id",
             "1",
@@ -606,12 +616,12 @@ def test_runner_crash_writes_detail_and_keeps_schema(
 def test_runner_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
     """When quality_gates is absent, dispatch fails closed and records the error."""
     from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
-    from milknado.mcp import _ralph_node_runner
+    from milknado.mcp import _loop_node_runner
 
     # No milknado.toml → quality_gates=None; Executor.dispatch fails closed.
     run_id = "node-1-20260101T000000Z-pref"
     _seed_run(tmp_path, run_id=run_id, node_id=1, status="running")
-    rc = _ralph_node_runner.main(
+    rc = _loop_node_runner.main(
         [
             "--node-id",
             "1",
@@ -640,8 +650,8 @@ def test_runner_writes_done_on_successful_outcome(
     import milknado.adapters as adapters
     import milknado.app.project as project
     import milknado.domains.execution as execution
-    from milknado.domains.execution.headless import HeadlessOutcome
-    from milknado.mcp import _ralph_node_runner
+    from milknado.domains.execution import NodeLoopOutcome
+    from milknado.mcp import _loop_node_runner
 
     class _Cfg:
         execution_agent: str = "claude"
@@ -691,12 +701,12 @@ def test_runner_writes_done_on_successful_outcome(
     monkeypatch.setattr(project, "open_graph", open_graph_stub)
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
-    class _StubRalph:
+    class _StubLoop:
         def poll_progress_events(self) -> list[object]:
             return []
 
-    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubRalph:
-        return _StubRalph()
+    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubLoop:
+        return _StubLoop()
 
     def object_stub(*_args: object, **_kwargs: object) -> object:
         return object()
@@ -706,13 +716,19 @@ def test_runner_writes_done_on_successful_outcome(
     monkeypatch.setattr(execution, "Executor", object_stub)
     monkeypatch.setattr(execution, "ExecutionConfig", object_stub)
 
-    def run_node_stub(*_args: object, **_kwargs: object) -> HeadlessOutcome:
-        return HeadlessOutcome(node_id=1, success=True, detail=None)
+    class _StubRunLoop:
+        def __init__(self, **_kwargs: object) -> None: ...
 
-    monkeypatch.setattr(execution, "run_node_to_completion", run_node_stub)
+        def run_node(self, *_args: object, **_kwargs: object) -> NodeLoopOutcome:
+            return NodeLoopOutcome(node_id=1, success=True)
+
+        def confirm_preserved_stop(self, outcome: NodeLoopOutcome) -> NodeLoopOutcome:
+            return outcome
+
+    monkeypatch.setattr(execution, "RunLoop", _StubRunLoop)
 
     run_id = "node-1-20260101T000000Z-abcd"
-    rc = _ralph_node_runner.main(
+    rc = _loop_node_runner.main(
         [
             "--node-id",
             "1",
@@ -742,8 +758,8 @@ def test_runner_calls_force_stop_on_timeout(
     import milknado.app.project as project
     import milknado.domains.execution as execution
     from milknado.domains.common.errors import CompletionTimeout
-    from milknado.domains.execution.executor import DispatchResult
-    from milknado.mcp import _ralph_node_runner
+    from milknado.domains.execution._models import DispatchResult
+    from milknado.mcp import _loop_node_runner
 
     class _Cfg:
         execution_agent: str = "claude"
@@ -757,6 +773,7 @@ def test_runner_calls_force_stop_on_timeout(
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
+        eta_sample_size: int = 10
 
     class _Graph:
         def __init__(self) -> None:
@@ -785,7 +802,7 @@ def test_runner_calls_force_stop_on_timeout(
         def current_branch(self) -> str:
             return "main"
 
-    class _StubRalph:
+    class _StubLoop:
         def __init__(self) -> None:
             self.stopped: list[str] = []
             self.force_stopped: list[str] = []
@@ -822,15 +839,15 @@ def test_runner_calls_force_stop_on_timeout(
 
         def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
             _ = timeout
-            stub_ralph.stopped.append(run_id)
+            stub_loop.stopped.append(run_id)
             return True
 
         def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
             _ = timeout
-            stub_ralph.force_stopped.append(run_id)
+            stub_loop.force_stopped.append(run_id)
             return True
 
-    stub_ralph = _StubRalph()
+    stub_loop = _StubLoop()
     graph = _Graph()
 
     def open_graph_stub(_root: Path) -> tuple[_Graph, _Cfg]:
@@ -839,8 +856,8 @@ def test_runner_calls_force_stop_on_timeout(
     monkeypatch.setattr(project, "open_graph", open_graph_stub)
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
-    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubRalph:
-        return stub_ralph
+    def loop_adapter_stub(*_args: object, **_kwargs: object) -> _StubLoop:
+        return stub_loop
 
     def object_stub(*_args: object, **_kwargs: object) -> object:
         return object()
@@ -861,7 +878,7 @@ def test_runner_calls_force_stop_on_timeout(
     monkeypatch.setattr(execution, "ExecutionConfig", execution_config_stub)
 
     run_id = "node-1-20260101T000000Z-abcd"
-    rc = _ralph_node_runner.main(
+    rc = _loop_node_runner.main(
         [
             "--node-id",
             "1",
@@ -876,7 +893,7 @@ def test_runner_calls_force_stop_on_timeout(
         ]
     )
     assert rc == 1
-    assert stub_ralph.force_stopped == ["run-1"], "timeout must force-stop the ralph run"
+    assert stub_loop.force_stopped == ["run-1"], "timeout must force-stop the loop run"
     assert graph.finished is not None
     assert graph.finished["timed_out"] is True
     assert graph.finished["status"] == "failed"
@@ -888,15 +905,15 @@ def test_runner_calls_force_stop_on_timeout(
 def test_resolve_runner_cmd_prefers_explicit_then_env_then_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Runner resolution order: explicit arg > MILKNADO_RALPH_RUNNER_CMD > default."""
-    from milknado.mcp.ralph import _DEFAULT_RUNNER, _resolve_runner_cmd
+    """Runner resolution order: explicit arg > MILKNADO_LOOP_RUNNER_CMD > default."""
+    from milknado.mcp.loop import _DEFAULT_RUNNER, _resolve_runner_cmd
 
-    monkeypatch.delenv("MILKNADO_RALPH_RUNNER_CMD", raising=False)
+    monkeypatch.delenv("MILKNADO_LOOP_RUNNER_CMD", raising=False)
     assert _resolve_runner_cmd("/bin/run --flag") == ["/bin/run", "--flag"]
     assert _resolve_runner_cmd("   ") == list(_DEFAULT_RUNNER)  # blank falls through
     assert _resolve_runner_cmd(None) == list(_DEFAULT_RUNNER)
 
-    monkeypatch.setenv("MILKNADO_RALPH_RUNNER_CMD", "envrunner --x")
+    monkeypatch.setenv("MILKNADO_LOOP_RUNNER_CMD", "envrunner --x")
     assert _resolve_runner_cmd(None) == ["envrunner", "--x"]
     assert _resolve_runner_cmd("explicit-wins") == ["explicit-wins"]
 
@@ -1006,19 +1023,19 @@ def test_start_reclaims_dead_pid_without_timeout_wait(tmp_path: Path) -> None:
     assert node.run_id == started["run_id"]
 
 
-def test_concurrent_ralph_run_start_spawns_exactly_one_worker(tmp_path: Path) -> None:
+def test_concurrent_loop_run_start_spawns_exactly_one_worker(tmp_path: Path) -> None:
     """Two concurrent milknado_run_loop_start calls on the same PENDING node must
     spawn exactly one detached worker; the loser raises 'already running'. The
     atomic claim_node UPDATE — not an in-process lock — is the cross-process gate."""
     import threading
 
     root = str(tmp_path)
-    task = _call(milknado_todo_add, description="concurrent-ralph", kind="task", project_root=root)
+    task = _call(milknado_todo_add, description="concurrent-loop", kind="task", project_root=root)
     node_id = task["id"]
     # leave the node RUNNING under two run_ids and we'd see two successes.
     noop = f"{sys.executable} -c pass"
 
-    results: list[_RalphResponse] = []
+    results: list[_LoopResponse] = []
     errors: list[str] = []
     result_lock = threading.Lock()
     barrier = threading.Barrier(2)
@@ -1159,3 +1176,163 @@ def test_dirty_orphan_refusal_keeps_worktree_and_still_dispatches(
         "dirty files" in r.getMessage() and str(orphan_wt) in r.getMessage()
         for r in caplog.records
     ), "refusal must be logged with the worktree path and what is at risk"
+
+
+def _occupy_slot(root: Path, node_id: int, *, pid: int) -> str:
+    """Claim node_id under a running run owned by pid, as a live dispatch does."""
+    run_id = f"node-{node_id}-20260101T000000Z-{node_id:08x}"
+    graph, _cfg = open_graph(root)
+    try:
+        _ = graph.claim_node(node_id, run_id, now=now_iso(), pid=pid)
+        graph.runs.start(
+            run_id,
+            node_id,
+            str(root / ".milknado" / "runs" / f"{run_id}.log"),
+            now_iso(),
+            1800,
+            pid,
+        )
+    finally:
+        graph.close()
+    return run_id
+
+
+def _limited_project(tmp_path: Path, limit: int, *tasks: str) -> tuple[str, list[int]]:
+    """Write concurrency_limit and add one pending task per description."""
+    _ = (tmp_path / "milknado.toml").write_text(
+        f'[milknado]\nagent_family = "claude"\nconcurrency_limit = {limit}\n',
+        encoding="utf-8",
+    )
+    root = str(tmp_path)
+    ids = [
+        _call(milknado_todo_add, description=name, kind="task", project_root=root)["id"]
+        for name in tasks
+    ]
+    return root, ids
+
+
+def _start_noop(root: str, node_id: int) -> _LoopResponse:
+    return _call(
+        milknado_run_loop_start,
+        node_id=node_id,
+        runner_cmd=f"{sys.executable} -c pass",
+        project_root=root,
+    )
+
+
+def test_start_spawns_below_concurrency_limit(tmp_path: Path) -> None:
+    """One live run under a limit of two leaves a slot: the next start spawns."""
+    root, (busy, free) = _limited_project(tmp_path, 2, "busy", "free")
+    _ = _occupy_slot(tmp_path, busy, pid=os.getpid())
+
+    started = _start_noop(root, free)
+
+    assert started["status"] == "running"
+    assert started["run_id"].startswith(f"node-{free}-")
+    assert _read_run(tmp_path, started["run_id"])["status"] == "running"
+
+
+def test_start_defers_at_concurrency_limit_without_claiming(tmp_path: Path) -> None:
+    """At the limit the loop path spawns nothing: it returns a structured deferred
+    result with the counts and leaves the node pending with no run row."""
+    root, (busy_a, busy_b, waiting) = _limited_project(tmp_path, 2, "a", "b", "waiting")
+    _ = _occupy_slot(tmp_path, busy_a, pid=os.getpid())
+    _ = _occupy_slot(tmp_path, busy_b, pid=os.getpid())
+
+    deferred = _start_noop(root, waiting)
+
+    assert deferred["status"] == "deferred"
+    assert deferred["node_id"] == waiting
+    assert (deferred["running"], deferred["limit"]) == (2, 2)
+    assert deferred["run_id"] is None
+    assert "concurrency limit reached" in (deferred["detail"] or "")
+    assert _node_runs(tmp_path, waiting) == []
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(waiting)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
+
+
+def test_finished_run_frees_a_concurrency_slot(tmp_path: Path) -> None:
+    """A terminal write on the run that holds the last slot lets the deferred
+    node spawn on its retry."""
+    root, (busy, waiting) = _limited_project(tmp_path, 1, "busy", "waiting")
+    busy_run = _occupy_slot(tmp_path, busy, pid=os.getpid())
+    assert _start_noop(root, waiting)["status"] == "deferred"
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        graph.runs.finish(
+            busy_run,
+            RunResult(status="done", exit_code=0, timed_out=False, ended_at=now_iso()),
+        )
+    finally:
+        graph.close()
+
+    retried = _start_noop(root, waiting)
+
+    assert retried["status"] == "running"
+    assert retried["run_id"].startswith(f"node-{waiting}-")
+
+
+def test_target_resolution_failure_keeps_task_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from milknado.adapters.git import GitAdapter
+
+    root, (task,) = _limited_project(tmp_path, 1, "task")
+
+    def fail_resolve(_git: object, _ref: str) -> str:
+        raise RuntimeError("cannot resolve target")
+
+    monkeypatch.setattr(GitAdapter, "resolve_ref", fail_resolve)
+    with pytest.raises(RuntimeError, match="cannot resolve target"):
+        _ = _start_noop(root, task)
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(task)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
+    assert node.run_id is None
+    assert _node_runs(tmp_path, task) == []
+
+
+def test_log_setup_failure_releases_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import milknado.app.loop as app_loop
+
+    root, (task,) = _limited_project(tmp_path, 1, "task")
+
+    def fail_runs_dir(_root: Path) -> Path:
+        raise OSError("cannot create run log")
+
+    monkeypatch.setattr(app_loop, "runs_dir", fail_runs_dir)
+    with pytest.raises(OSError, match="cannot create run log"):
+        _ = _start_noop(root, task)
+
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(task)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.FAILED
+    assert node.run_id is None
+    assert _node_runs(tmp_path, task) == []
+
+
+def test_dead_owner_frees_a_concurrency_slot(tmp_path: Path) -> None:
+    """A run whose owner pid is gone, as after a host restart, is swept before the
+    count, so stale rows never block the loop path forever."""
+    root, (dead, waiting) = _limited_project(tmp_path, 1, "dead", "waiting")
+    dead_run = _occupy_slot(tmp_path, dead, pid=2**31 - 1)
+
+    started = _start_noop(root, waiting)
+
+    assert started["status"] == "running"
+    assert _read_run(tmp_path, dead_run)["status"] == "failed"

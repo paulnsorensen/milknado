@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.loop._frontmatter import RALPH_MARKER
+from milknado.loop._frontmatter import LOOP_MARKER
 from milknado.loop._run_types import (
     DEFAULT_COMMAND_TIMEOUT,
     RUN_ID_LENGTH,
@@ -46,16 +46,16 @@ class TestRunConfig:
     def test_default_project_root_is_dot(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / RALPH_MARKER,
+            loop_dir=tmp_path,
+            loop_file=tmp_path / LOOP_MARKER,
         )
         assert config.project_root == Path(".")
 
     def test_defaults(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / RALPH_MARKER,
+            loop_dir=tmp_path,
+            loop_file=tmp_path / LOOP_MARKER,
         )
         assert config.commands == []
         assert config.args == {}
@@ -67,25 +67,25 @@ class TestRunConfig:
         assert config.commit_footer is None
         assert config.prompt is None
 
-    def test_prompt_body_instead_of_ralph_file(self, tmp_path: Path):
+    def test_prompt_body_instead_of_loop_file(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
-            ralph_dir=tmp_path,
+            loop_dir=tmp_path,
             prompt="do work",
         )
         assert config.prompt == "do work"
-        assert config.ralph_file is None
+        assert config.loop_file is None
 
-    def test_requires_prompt_or_ralph_file(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="exactly one of `prompt` or `ralph_file`"):
-            _ = RunConfig(agent="echo", ralph_dir=tmp_path)
+    def test_requires_prompt_or_loop_file(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="exactly one of `prompt` or `loop_file`"):
+            _ = RunConfig(agent="echo", loop_dir=tmp_path)
 
-    def test_rejects_both_prompt_and_ralph_file(self, tmp_path: Path):
-        with pytest.raises(ValueError, match="exactly one of `prompt` or `ralph_file`"):
+    def test_rejects_both_prompt_and_loop_file(self, tmp_path: Path):
+        with pytest.raises(ValueError, match="exactly one of `prompt` or `loop_file`"):
             _ = RunConfig(
                 agent="echo",
-                ralph_dir=tmp_path,
-                ralph_file=tmp_path / RALPH_MARKER,
+                loop_dir=tmp_path,
+                loop_file=tmp_path / LOOP_MARKER,
                 prompt="do work",
             )
 
@@ -109,8 +109,8 @@ class TestCompletionVerdict:
     def test_run_config_defaults_completion_verifier_to_none(self, tmp_path: Path):
         config = RunConfig(
             agent="echo",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / RALPH_MARKER,
+            loop_dir=tmp_path,
+            loop_file=tmp_path / LOOP_MARKER,
         )
         assert config.completion_verifier is None
 

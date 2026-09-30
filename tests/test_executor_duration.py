@@ -107,12 +107,12 @@ class _FakeGit:
         return ()
 
 
-class _FakeRalph:
+class _FakeLoop:
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -126,8 +126,8 @@ class _FakeRalph:
     ) -> _FakeRun:
         _ = (
             agent,
-            ralph_dir,
-            ralph_file,
+            loop_dir,
+            loop_file,
             quality_gates,
             project_root,
             commit_footer,
@@ -221,7 +221,7 @@ class _FakeRalph:
         _ = (spec_text, graph_state)
         return VerifySpecResult(outcome="done")
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,
@@ -286,7 +286,7 @@ def config(tmp_path: Path) -> ExecutionConfig:
 
 @pytest.fixture()
 def executor(graph: MikadoGraph) -> Executor:
-    return Executor(graph=graph, git=_FakeGit(), ralph=_FakeRalph(), crg=_FakeCrg())
+    return Executor(graph=graph, git=_FakeGit(), loop=_FakeLoop(), crg=_FakeCrg())
 
 
 # ---------------------------------------------------------------------------
@@ -374,7 +374,7 @@ class TestCompletionDuration:
     ) -> None:
         fake_git = _FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
-        ex = Executor(graph=graph, git=fake_git, ralph=_FakeRalph(), crg=_FakeCrg())
+        ex = Executor(graph=graph, git=fake_git, loop=_FakeLoop(), crg=_FakeCrg())
         _ = graph.add_node("conflicted task")
         _ = ex.dispatch(1, config)
 

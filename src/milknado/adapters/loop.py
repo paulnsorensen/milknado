@@ -43,8 +43,8 @@ class LoopAdapter(LoopSessionMixin):
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -64,18 +64,18 @@ class LoopAdapter(LoopSessionMixin):
         supports_mcp_flag = Path(shlex.split(agent_cmd)[0]).name == "claude"
         if mcp_config and mcp_config.exists() and supports_mcp_flag:
             agent_cmd = shlex.join([*shlex.split(agent_cmd), "--mcp-config", str(mcp_config)])
-        project_root = project_root or ralph_dir
+        project_root = project_root or loop_dir
         context = self._session_context(agent_cmd, project_root, base_oid)
         config = RunConfig(
             agent=agent_cmd,
-            ralph_dir=ralph_dir,
-            ralph_file=ralph_file,
+            loop_dir=loop_dir,
+            loop_file=loop_file,
             project_root=project_root,
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             completion_required=True,
             stop_on_error=True,
-            log_dir=ralph_dir / ".ralph-logs",
+            log_dir=loop_dir / ".loop-logs",
             commit_footer=commit_footer,
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             max_iterations=max_iterations,
@@ -90,7 +90,7 @@ class LoopAdapter(LoopSessionMixin):
             config.completion_probe = completion_probe
         if completion_probe is None:
             config.completion_verifier = build_completion_verifier(
-                ralph_dir, quality_gates, base_oid=base_oid
+                loop_dir, quality_gates, base_oid=base_oid
             )
         run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
         if context is not None:
@@ -221,16 +221,16 @@ class LoopAdapter(LoopSessionMixin):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir)
-            ralph_file = tmp_path / "ralph.md"
-            _ = ralph_file.write_text(
+            loop_file = tmp_path / "loop.md"
+            _ = loop_file.write_text(
                 _build_verify_prompt(spec_text, graph_state),
                 encoding="utf-8",
             )
             local_manager = RunManager()
             config = RunConfig(
                 agent=self._agent,
-                ralph_dir=tmp_path,
-                ralph_file=ralph_file,
+                loop_dir=tmp_path,
+                loop_file=loop_file,
                 project_root=tmp_path,
                 completion_signal=MILKNADO_COMPLETION_SIGNAL,
                 stop_on_completion_signal=True,
@@ -260,27 +260,27 @@ class LoopAdapter(LoopSessionMixin):
 
         with tempfile.TemporaryDirectory(prefix="milknado-review-") as tmpdir:
             temp_root = Path(tmpdir)
-            ralph_file = temp_root / "review.md"
+            loop_file = temp_root / "review.md"
             local_manager = RunManager()
             local_queue: queue.Queue[Event[EventData]] = queue.Queue()
             local_emitter = QueueEmitter(local_queue)
-            _ = ralph_file.write_text(prompt, encoding="utf-8")
+            _ = loop_file.write_text(prompt, encoding="utf-8")
             config = RunConfig(
                 agent=agent,
-                ralph_dir=temp_root,
-                ralph_file=ralph_file,
+                loop_dir=temp_root,
+                loop_file=loop_file,
                 project_root=worktree,
                 completion_signal="MILKNADO_NODE_REVIEW_COMPLETE",
                 stop_on_completion_signal=True,
                 max_iterations=1,
                 timeout=timeout_seconds,
-                log_dir=worktree / ".ralph-logs" / "review",
+                log_dir=worktree / ".loop-logs" / "review",
             )
             run = local_manager.create_run(config, emitter=local_emitter)
             local_manager.start_run(run.state.run_id)
             return _drain_review_run(local_manager, run.state.run_id, local_queue, timeout_seconds)
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,
@@ -290,7 +290,7 @@ class LoopAdapter(LoopSessionMixin):
     ) -> Path:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            content = _build_ralph_content(
+            content = _build_loop_content(
                 brief,
                 quality_gates,
                 prior_findings=prior_findings,
@@ -298,9 +298,9 @@ class LoopAdapter(LoopSessionMixin):
             )
             _ = output_path.write_text(content, encoding="utf-8")
         except OSError as exc:
-            from milknado.domains.common import RalphMarkdownWriteError
+            from milknado.domains.common import LoopMarkdownWriteError
 
-            raise RalphMarkdownWriteError(path=output_path, cause=exc) from exc
+            raise LoopMarkdownWriteError(path=output_path, cause=exc) from exc
         return output_path
 
 
@@ -402,7 +402,7 @@ def _parse_verify_output(output: str) -> VerifySpecResult:
     return VerifySpecResult(outcome="gaps", goal_delta="verification produced no explicit result")
 
 
-def _build_ralph_content(
+def _build_loop_content(
     brief: str,
     quality_gates: tuple[Gate, ...] | None,
     prior_findings: str = "",

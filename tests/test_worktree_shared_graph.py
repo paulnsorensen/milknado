@@ -254,7 +254,7 @@ class TestDispatchRefusalUnderClaimedGoal:
         _ = graph.claim_or_reclaim_goal(goal_id, "run-A", os.getppid(), now=now_iso())
         graph.close()
 
-        from milknado.mcp.ralph import milknado_run_loop_start
+        from milknado.mcp.loop import milknado_run_loop_start
 
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             _ = milknado_run_loop_start(task_id, project_root=str(root), use_tmux=False)

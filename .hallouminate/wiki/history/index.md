@@ -12,8 +12,8 @@
 - [pr137-loop-vendor-in](./pr137-loop-vendor-in.md) — PR #137 — Loop Vendor-In Execution Record
 - [pr94-refactor-split](./pr94-refactor-split.md) — Decision — PR94 Refactor Split
 - [review-lessons](./review-lessons.md) — Review Lessons — Recurring Findings & Gotchas
-- [run-lifecycle-robustness-001](./run-lifecycle-robustness-001.md) — ADR — Insert runs row at ralph dispatch in Executor (run-lifecycle-robustness-001)
-- [run-lifecycle-robustness-002](./run-lifecycle-robustness-002.md) — ADR — Deliver rejection findings via regenerated RALPH.md (run-lifecycle-robustness-002)
+- [run-lifecycle-robustness-001](./run-lifecycle-robustness-001.md) — ADR — Insert runs row at loop dispatch in Executor (run-lifecycle-robustness-001)
+- [run-lifecycle-robustness-002](./run-lifecycle-robustness-002.md) — ADR — Deliver rejection findings via regenerated LOOP.md (run-lifecycle-robustness-002)
 - [run-lifecycle-robustness-003](./run-lifecycle-robustness-003.md) — ADR — Graph-layer self-heal: reconnect, startup check, automigrate, quarantine (run-lifecycle-robustness-003)
 - [run-lifecycle-robustness-004](./run-lifecycle-robustness-004.md) — ADR — Hybrid verdict durability: node_reviews table plus in-memory handoff (run-lifecycle-robustness-004)
 - [sliced-bread-crust-001](./sliced-bread-crust-001.md) — ADR — Sibling cli/mcp packages (sliced-bread-crust-001)

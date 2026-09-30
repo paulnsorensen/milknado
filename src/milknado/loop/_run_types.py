@@ -23,9 +23,9 @@ if TYPE_CHECKING:
     from milknado.loop.sessions import SessionChannel
 
 DEFAULT_COMMAND_TIMEOUT: float = 60
-"""Default timeout in seconds for commands defined in RALPH.md frontmatter."""
+"""Default timeout in seconds for commands defined in LOOP.md frontmatter."""
 
-DEFAULT_COMPLETION_SIGNAL = "RALPH_PROMISE_COMPLETE"
+DEFAULT_COMPLETION_SIGNAL = "LOOP_PROMISE_COMPLETE"
 """Default inner ``<promise>...</promise>`` text that marks promise completion."""
 
 RUN_ID_LENGTH: int = 12
@@ -75,7 +75,7 @@ _STATUS_REASONS: dict[RunStatus, StopReason] = {
 
 @dataclass(slots=True)
 class Command:
-    """A named command from RALPH.md frontmatter."""
+    """A named command from LOOP.md frontmatter."""
 
     name: str
     run: str
@@ -104,10 +104,10 @@ class RunConfig:
     """
 
     agent: str
-    ralph_dir: Path
-    ralph_file: Path | None = None
+    loop_dir: Path
+    loop_file: Path | None = None
     # In-memory prompt *body* (no frontmatter). Mutually exclusive with
-    # ``ralph_file``: supply exactly one. Placeholders are still resolved.
+    # ``loop_file``: supply exactly one. Placeholders are still resolved.
     prompt: str | None = None
     commands: list[Command] = field(default_factory=list)
     args: dict[str, str] = field(default_factory=dict)
@@ -145,8 +145,8 @@ class RunConfig:
     env: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
-        if (self.prompt is None) == (self.ralph_file is None):
-            raise ValueError("RunConfig requires exactly one of `prompt` or `ralph_file`")
+        if (self.prompt is None) == (self.loop_file is None):
+            raise ValueError("RunConfig requires exactly one of `prompt` or `loop_file`")
 
 
 @dataclass(slots=True)

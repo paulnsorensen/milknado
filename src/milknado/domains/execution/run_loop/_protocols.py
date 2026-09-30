@@ -32,7 +32,7 @@ class RunLoopState(Protocol):
     _input: InputState
     _logs: deque[str]
     _progress_by_run: dict[str, ProgressEvent]
-    _ralph: LoopPort
+    _loop: LoopPort
     _stopped: int
     _stopped_nodes: set[int]
     _strict: bool

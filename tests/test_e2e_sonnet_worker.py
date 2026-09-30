@@ -26,7 +26,7 @@ import pytest
 from milknado.adapters.git import GitAdapter
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common.types import NodeStatus
-from milknado.domains.execution import ExecutionConfig, Executor, run_node_to_completion
+from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
 from milknado.domains.graph import MikadoGraph
 
 # ---------------------------------------------------------------------------
@@ -149,17 +149,12 @@ def test_sonnet_worker_leaf_to_done(tmp_path: Path) -> None:
         executor = Executor(
             graph=graph,
             git=GitAdapter(repo),
-            ralph=loop,
+            loop=loop,
             crg=_StubCrg(),
         )
 
-        outcome = run_node_to_completion(
-            executor=executor,
-            ralph=loop,
-            node_id=leaf_id,
-            exec_config=exec_config,
-            feature_branch=feature_branch,
-            timeout=_TIMEOUT,
+        outcome = RunLoop(executor=executor, graph=graph, loop=loop).run_node(
+            leaf_id, exec_config, feature_branch, _TIMEOUT
         )
 
         assert outcome.success, f"worker run failed: {outcome.detail}"

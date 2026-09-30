@@ -15,9 +15,9 @@ from milknado.project import open_project
 
 
 def _register_tools() -> None:
-    from milknado.mcp import github, node, ralph, rebalance, run, server, todo, todo_mutate, wiki
+    from milknado.mcp import github, loop, node, rebalance, run, server, todo, todo_mutate, wiki
 
-    _ = (github, node, ralph, rebalance, run, server, todo, todo_mutate, wiki)
+    _ = (github, node, loop, rebalance, run, server, todo, todo_mutate, wiki)
 
 
 _register_tools()

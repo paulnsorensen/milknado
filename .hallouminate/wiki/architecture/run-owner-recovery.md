@@ -6,6 +6,6 @@ A NULL `runs.pid` is not evidence that a run died: executor-dispatched work uses
 
 Cancellation first proves an owner can be stopped or is already terminal. A refusal leaves the run and cancellation marker untouched, preventing a delayed cooperative cancellation from mutating a still-running coordinator-owned run.[^3]
 
-[^1]: src/milknado/mcp/run.py; src/milknado/mcp/ralph.py
+[^1]: src/milknado/mcp/run.py; src/milknado/mcp/loop.py
 [^2]: src/milknado/domains/dispatch/reconcile.py
 [^3]: src/milknado/domains/dispatch/cancel.py
