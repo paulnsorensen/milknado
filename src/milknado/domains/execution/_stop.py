@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from milknado.domains.common.protocols import LoopPort
+from milknado.domains.common import LoopPort
 
 _LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
 

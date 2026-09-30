@@ -75,8 +75,12 @@ def start_helper(
     try:
         helper = subprocess.Popen(
             (
-                sys.executable, "-m", "milknado.adapters._loop_lifeline",
-                str(context.db_path), str(read_fd), worker.identity.invocation_id,
+                sys.executable,
+                "-m",
+                "milknado.adapters._loop_lifeline",
+                str(context.db_path),
+                str(read_fd),
+                worker.identity.invocation_id,
                 str(request.generation),
             ),
             pass_fds=(read_fd,),
@@ -106,8 +110,10 @@ def start_helper(
             raise RuntimeError("lifeline READY mismatch")
         record = evidence.get_worker(worker.identity.invocation_id)
         if (
-            record is None or record.ended_at is not None
-            or record.observation_owner is not None or record.snapshot_seq != request.sequence
+            record is None
+            or record.ended_at is not None
+            or record.observation_owner is not None
+            or record.snapshot_seq != request.sequence
             or record.ready_generation != identity.generation
             or record.helper_generation != identity.generation
             or record.helper_pid != identity.pid

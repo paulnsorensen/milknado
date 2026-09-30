@@ -23,6 +23,10 @@ class SessionOutcome:
     tool_ids: set[str] = field(default_factory=set)
     reader_failed: bool = False
 
+    @property
+    def graceful(self) -> bool:
+        return not (self.timed_out or self.force_stopped or not self.done or self.capped)
+
 
 def publish_events(channel: SessionChannel, events: tuple[SessionEvent, ...]) -> None:
     _ = tuple(map(channel.publish, events))

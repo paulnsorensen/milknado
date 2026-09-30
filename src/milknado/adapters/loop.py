@@ -12,17 +12,17 @@ from typing import TYPE_CHECKING, Final, cast
 import psutil
 
 from milknado.adapters._loop_local_runs import (
-    _UnconfirmedReviewStop,
     _drain_review_run,
     _drain_verify_run,
+    _UnconfirmedReviewStop,
 )
 from milknado.adapters._loop_session import LoopSessionMixin
 from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
     build_verify_prompt as _build_verify_prompt_impl,
 )
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
@@ -36,7 +36,12 @@ from milknado.domains.common import (
 from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
 from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
-from milknado.loop._process_lifecycle import ProtectedWorker, ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._process_lifecycle import (
+    ProtectedWorker,
+    ProtectionContext,
+    SpawnOptions,
+    spawn_protected,
+)
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData
@@ -349,7 +354,9 @@ class LoopAdapter(LoopSessionMixin):
                     raise
                 graph_run = self._graph.runs.get(graph_run_id)
                 if graph_run is None:
-                    raise RuntimeError("review owner row vanished before stop confirmation") from exc
+                    raise RuntimeError(
+                        "review owner row vanished before stop confirmation"
+                    ) from exc
                 raise PreservedWorkerRun(graph_run["node_id"], graph_run_id) from exc
 
     def generate_loop_md(
@@ -378,7 +385,6 @@ class LoopAdapter(LoopSessionMixin):
 
 def _build_verify_prompt(spec_text: str, graph_state: object | None) -> str:
     return _build_verify_prompt_impl(spec_text, graph_state, MILKNADO_COMPLETION_SIGNAL)
-
 
 
 def _build_loop_content(

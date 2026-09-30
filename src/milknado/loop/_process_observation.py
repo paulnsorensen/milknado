@@ -16,8 +16,12 @@ def snapshot(worker: WorkerProcess, evidence: WorkerEvidence) -> int:
         raise RuntimeError("worker evidence unavailable")
     parent = psutil.Process()
     key = ObservationKey(
-        worker.identity.invocation_id, "supervisor", record.snapshot_seq + 1,
-        0, parent.pid, parent.create_time(),
+        worker.identity.invocation_id,
+        "supervisor",
+        record.snapshot_seq + 1,
+        0,
+        parent.pid,
+        parent.create_time(),
     )
     state = identity_state(worker.identity.pid, worker.identity.start_token)
     if state == "gone" and worker.process.poll() is not None:

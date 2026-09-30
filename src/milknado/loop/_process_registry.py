@@ -99,7 +99,7 @@ class WorkerRegistry:
         def stop_one(index: int, ticket: LaunchTicket) -> None:
             try:
                 results[index] = ticket.stop(deadline)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 _log.exception("worker shutdown failed")
 
         threads = [

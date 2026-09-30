@@ -19,6 +19,8 @@ from milknado.loop._events import (
     EventType,
     QueueEmitter,
 )
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
 from milknado.loop._run_types import (
     RUN_ID_LENGTH,
     CompletionVerdict,
@@ -27,9 +29,6 @@ from milknado.loop._run_types import (
     RunStatus,
 )
 from milknado.loop.manager import ManagedRun, RunManager
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker, ProtectionContext, SpawnOptions, spawn_protected,
-)
 from tests.loop.helpers import (
     MOCK_SUBPROCESS,
     drain_events,
@@ -39,11 +38,11 @@ from tests.loop.helpers import (
 )
 
 
-class _CompletedWorker(ProtectedWorker):
+class _CompletedWorker:
     def __init__(self, process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
         self.process = process
 
-    def cleanup(  # pyright: ignore[reportImplicitOverride]
+    def cleanup(
         self,
         threads: tuple[threading.Thread | None, ...] = (),
         *,
@@ -61,18 +60,27 @@ class _CompletedWorker(ProtectedWorker):
                 pipe.close()
         return all(thread is None or not thread.is_alive() for thread in threads)
 
+    def complete(self, *, graceful: bool) -> bool:
+        _ = graceful
+        return self.cleanup()
+
 
 def _contextual(config: RunConfig) -> RunConfig:
-    def spawn(options: SpawnOptions) -> ProtectedWorker:
+    def spawn(options: SpawnOptions) -> WorkerHandle:
         process = subprocess.Popen(
-            options.command, stdin=options.stdin, stdout=options.stdout,
-            stderr=options.stderr, cwd=options.cwd, env=options.env,
+            options.command,
+            stdin=options.stdin,
+            stdout=options.stdout,
+            stderr=options.stderr,
+            cwd=options.cwd,
+            env=options.env,
             text=options.text,
         )
         return _CompletedWorker(process)
 
     config.spawn_worker = spawn
     return config
+
 
 class TestRunManagerCreateRun:
     def test_create_run_returns_managed_run(self, tmp_path: Path):
@@ -204,7 +212,9 @@ class TestRunManagerStopRun:
     ):
         verifier = MagicMock()
         manager = RunManager()
-        managed = manager.create_run(_contextual(make_config(tmp_path, completion_verifier=verifier)))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=verifier))
+        )
 
         def simultaneous_stop(_config: RunConfig, state: RunState, *_args: object):
             state.mark_completed()
@@ -234,7 +244,9 @@ class TestRunManagerStopRun:
             return CompletionVerdict(ok=True, feedback="")
 
         manager = RunManager()
-        managed = manager.create_run(_contextual(make_config(tmp_path, completion_verifier=blocking_verifier)))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=blocking_verifier))
+        )
         manager.start_run(managed.state.run_id)
         assert verifier_started.wait(timeout=1)
 
@@ -259,7 +271,9 @@ class TestRunManagerStopRun:
             raise RuntimeError("verifier failed")
 
         manager = RunManager()
-        managed = manager.create_run(_contextual(make_config(tmp_path, completion_verifier=failing_verifier)))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=failing_verifier))
+        )
         manager.start_run(managed.state.run_id)
         assert verifier_started.wait(timeout=1)
 

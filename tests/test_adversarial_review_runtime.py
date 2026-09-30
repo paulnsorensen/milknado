@@ -800,7 +800,7 @@ def test_review_failure_blocks_without_redispatch(
             project_root: Path,
             *,
             timeout_seconds: float,
-            graph_run_id: str,
+            graph_run_id: str | None = None,
         ) -> ReviewVerdict:
             _ = graph_run_id
             raise RuntimeError("review process failed")
@@ -829,9 +829,10 @@ def test_unconfirmed_reviewer_preserves_node_run_and_worktree(
             project_root: Path,
             *,
             timeout_seconds: float,
-            graph_run_id: str,
+            graph_run_id: str | None = None,
         ) -> ReviewVerdict:
             _ = agent, prompt, worktree, project_root, timeout_seconds
+            assert graph_run_id is not None
             raise PreservedWorkerRun(1, graph_run_id)
 
     executor = _executor(graph, tmp_path, UnconfirmedReviewLoop([True]))
@@ -1297,7 +1298,7 @@ class _MalformedReviewLoop(_ReviewLoop):
         project_root: Path,
         *,
         timeout_seconds: float,
-        graph_run_id: str,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
         _ = agent, prompt, worktree, project_root, timeout_seconds, graph_run_id
         return _parse_review_verdict("progress only")

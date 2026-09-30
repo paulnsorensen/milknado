@@ -36,7 +36,6 @@ from typing import IO, Any, cast
 
 from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._events import OutputStream
-from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
 from milknado.loop._output import (
     IS_WINDOWS,
     SESSION_KWARGS,
@@ -44,6 +43,8 @@ from milknado.loop._output import (
     ProcessResult,
     warn,
 )
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
 from milknado.loop.adapters._protocol import SoftWindDownAdapter
@@ -425,7 +426,7 @@ def _wait_for_process(
     deadline: float | None,
     force_stop_event: threading.Event | None,
     windows_job: _WindowsJob | None,
-    protected: ProtectedWorker | None,
+    protected: WorkerHandle | None,
     correlation: str,
 ) -> tuple[int | None, bool, bool]:
     """Interruptibly reap a worker, returning (returncode, timed_out, force_stopped)."""
@@ -570,7 +571,7 @@ class AgentRunSpec:
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
     env: dict[str, str] | None = None
-    spawn_worker: Callable[[SpawnOptions], ProtectedWorker] | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -594,12 +595,12 @@ class _ResolvedAgentRun:
     completion_signal: str | None = None
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
-    spawn_worker: Callable[[SpawnOptions], ProtectedWorker] | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
 
 
 def _spawn_agent_process(
     run: _ResolvedAgentRun, pipe_stdin: bool, pipe_stdout: bool, pipe_stderr: bool
-) -> tuple[subprocess.Popen[str], ProtectedWorker | None]:
+) -> tuple[subprocess.Popen[str], WorkerHandle | None]:
     stdin = subprocess.PIPE if pipe_stdin else subprocess.DEVNULL
     stdout = subprocess.PIPE if pipe_stdout else None
     stderr = subprocess.PIPE if pipe_stderr else None
@@ -815,11 +816,9 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
         mirror=log_sink,
     )
 
-    protected: ProtectedWorker | None = None
+    protected: WorkerHandle | None = None
     try:
-        proc, protected = _spawn_agent_process(
-            run, pipe_stdin, True, pipe_stderr
-        )
+        proc, protected = _spawn_agent_process(run, pipe_stdin, True, pipe_stderr)
         try:
             windows_job = _WindowsJob.assign(proc)
         except Exception:
@@ -1064,11 +1063,9 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             correlation=f"iteration={run.iteration}",
         )
 
-    protected: ProtectedWorker | None = None
+    protected: WorkerHandle | None = None
     try:
-        proc, protected = _spawn_agent_process(
-            run, pipe_stdin, pipe_stdout, pipe_stderr
-        )
+        proc, protected = _spawn_agent_process(run, pipe_stdin, pipe_stdout, pipe_stderr)
         try:
             windows_job = _WindowsJob.assign(proc)
         except Exception:

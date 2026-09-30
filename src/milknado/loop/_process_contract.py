@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -9,6 +11,21 @@ from typing import Protocol
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.loop._process_identity import Descendant
 from milknado.loop._process_registry import WorkerRegistry
+
+
+class WorkerHandle(Protocol):
+    @property
+    def process(self) -> subprocess.Popen[str] | subprocess.Popen[bytes]: ...
+
+    def cleanup(
+        self,
+        threads: tuple[threading.Thread | None, ...] = (),
+        *,
+        stop: threading.Event | None = None,
+        deadline: float | None = None,
+    ) -> bool: ...
+
+    def complete(self, *, graceful: bool) -> bool: ...
 
 
 class WorkerRecordView(Protocol):

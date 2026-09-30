@@ -24,9 +24,7 @@ def main() -> int:
         return 2
     if read_fd < 0 or generation < 0 or not sys.argv[3]:
         return 2
-    helper = HelperIdentity(
-        sys.argv[3], generation, os.getpid(), psutil.Process().create_time()
-    )
+    helper = HelperIdentity(sys.argv[3], generation, os.getpid(), psutil.Process().create_time())
     try:
         with WorkerEvidenceStore(db_path) as store:
             return run_lifeline(read_fd, helper, store)

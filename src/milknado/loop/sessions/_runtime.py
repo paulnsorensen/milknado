@@ -15,11 +15,13 @@ from milknado.loop._agent import (
     AgentRunSpec,
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._factory import create_protocol
-from milknado.loop.sessions._outcome import SessionOutcome, publish_events as _publish_events
+from milknado.loop.sessions._outcome import SessionOutcome
+from milknado.loop.sessions._outcome import publish_events as _publish_events
 from milknado.loop.sessions._process import (
     POLL_INTERVAL,
     READER_QUEUE_LIMIT,
@@ -39,6 +41,7 @@ from milknado.loop.sessions._process import (
 from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
 from milknado.loop.sessions._stream import StreamContext, consume, drain
 
+
 @dataclass(slots=True)
 class _SessionExecution:
     spec: AgentRunSpec
@@ -52,7 +55,7 @@ class _SessionExecution:
     log_file: Path | None = None
     log_handle: IO[str] | None = None
     proc: subprocess.Popen[bytes] | None = None
-    protected: ProtectedWorker | None = None
+    protected: WorkerHandle | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     threads: list[threading.Thread] = field(default_factory=list)
     eof_streams: set[str] = field(default_factory=set)
@@ -61,18 +64,22 @@ class _SessionExecution:
 
     def launch(self) -> None:
         self.wind_down = prepare_wind_down(self.spec)
-        wind_down_overrides = self.wind_down.env_overrides if self.wind_down is not None else {}
         env = {
             **(self.spec.env or {}),
-            **wind_down_overrides,
+            **(self.wind_down.env_overrides if self.wind_down is not None else {}),
             "MILKNADO_INVOCATION_ID": self.process_invocation_id,
         }
         cwd = self.spec.cwd or Path.cwd()
         if self.spec.spawn_worker is not None:
             self.protected = self.spec.spawn_worker(
                 SpawnOptions(
-                    self.protocol.command, cwd, worker_environment(env), False,
-                    subprocess.PIPE, subprocess.PIPE, subprocess.PIPE,
+                    self.protocol.command,
+                    cwd,
+                    worker_environment(env),
+                    False,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
                     self.process_invocation_id,
                 )
             )
@@ -164,9 +171,8 @@ class _SessionExecution:
         assert context is not None
         assert self.proc is not None
         deadline = self.started_at + self.spec.timeout if self.spec.timeout is not None else None
-        force_stop = self.spec.force_stop_event
         while True:
-            if force_stop is not None and force_stop.is_set():
+            if self.spec.force_stop_event is not None and self.spec.force_stop_event.is_set():
                 self.outcome.force_stopped = True
                 break
             if deadline is not None and time.monotonic() >= deadline:
@@ -200,18 +206,15 @@ class _SessionExecution:
             if self.spec.max_turns is not None and self.outcome.tool_count >= self.spec.max_turns:
                 self.outcome.capped = True
                 break
+        self._finish(context)
+
+    def _finish(self, context: StreamContext) -> None:
         assert self.proc is not None
-        graceful = not (
-            self.outcome.timed_out
-            or self.outcome.force_stopped
-            or not self.outcome.done
-            or self.outcome.capped
-        )
         if self.protected is not None:
-            if not self.protected.complete(graceful=graceful):
+            if not self.protected.complete(graceful=self.outcome.graceful):
                 raise RuntimeError("worker cleanup remains unresolved")
         else:
-            finish_process(self.proc, graceful=graceful)
+            finish_process(self.proc, graceful=self.outcome.graceful)
         drain(self.lines, self.eof_streams, context)
 
     def result(self) -> AgentResult:
@@ -264,7 +267,6 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         raise ValueError(f"unsupported structured session command: {spec.cmd!r}")
     context = channel.view().context or SessionContext(family=Path(spec.cmd[0]).stem, cwd=str(cwd))
     process_invocation_id = uuid.uuid4().hex
-    started_at = time.monotonic()
     start_step = protocol.start(spec.prompt)
     channel.start(context, tuple(protocol.actions), invocation_id=process_invocation_id)
     execution = _SessionExecution(
@@ -274,7 +276,7 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         process_invocation_id=process_invocation_id,
         start_step=start_step,
         outcome=SessionOutcome(),
-        started_at=started_at,
+        started_at=time.monotonic(),
         lines=queue.Queue(maxsize=READER_QUEUE_LIMIT),
     )
     execution.remember_step(start_step)

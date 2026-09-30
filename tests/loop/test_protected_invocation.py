@@ -26,6 +26,7 @@ def _context(graph: MikadoGraph, node_id: int) -> ProtectionContext:
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
     return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
 
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
@@ -34,7 +35,12 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     options = SpawnOptions(
         (sys.executable, "-c", "print('ready-output', flush=True)"),
-        tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        tmp_path,
+        None,
+        True,
+        subprocess.DEVNULL,
+        subprocess.PIPE,
+        subprocess.PIPE,
     )
     try:
         worker = spawn_protected(options, _context(graph, node.id))
@@ -48,6 +54,55 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_monitor_start_failure_closes_worker_helper_and_lifeline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    acquired: list[lifecycle.ProtectedWorker] = []
+
+    real_start_monitor = lifecycle.ProtectedWorker.start_monitor
+
+    def fail_monitor(worker: lifecycle.ProtectedWorker) -> None:
+        acquired.append(worker)
+        with monkeypatch.context() as patch:
+
+            def fail_thread_start(_thread: threading.Thread) -> None:
+                raise RuntimeError("monitor unavailable")
+
+            patch.setattr(threading.Thread, "start", fail_thread_start)
+            real_start_monitor(worker)
+
+    monkeypatch.setattr(lifecycle.ProtectedWorker, "start_monitor", fail_monitor)
+    try:
+        with pytest.raises(RuntimeError, match="monitor unavailable"):
+            spawn_protected(
+                SpawnOptions(
+                    (sys.executable, "-c", "import time; time.sleep(30)"),
+                    tmp_path,
+                    None,
+                    True,
+                    subprocess.DEVNULL,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
+                ),
+                _context(graph, node.id),
+            )
+        assert len(acquired) == 1
+        protected = acquired[0]
+        assert protected.process.poll() is not None
+        assert protected._helper.poll() is not None
+        assert protected._write_fd is None
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        for protected in acquired:
+            if protected.process.poll() is None:
+                _ = protected.shutdown(time.monotonic() + 3)
+        graph.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_owned_worker_exit_during_observation_commits_current_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -57,7 +112,12 @@ def test_owned_worker_exit_during_observation_commits_current_marker(
     worker = spawn_protected(
         SpawnOptions(
             (sys.executable, "-c", "import time; time.sleep(30)"),
-            tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            tmp_path,
+            None,
+            True,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
         ),
         _context(graph, node.id),
     )
@@ -91,7 +151,12 @@ def test_shared_owner_stops_worker_and_drains_its_pipes(tmp_path: Path) -> None:
     worker = spawn_protected(
         SpawnOptions(
             (sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)"),
-            tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            tmp_path,
+            None,
+            True,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
         ),
         _context(graph, node.id),
     )
@@ -129,7 +194,10 @@ def test_blocking_agent_uses_protected_worker_without_changing_output(
         result = _run_agent_blocking(
             _ResolvedAgentRun(
                 [sys.executable, "-c", "print('agent-output', flush=True)"],
-                None, timeout=5, log_dir=tmp_path, iteration=1,
+                None,
+                timeout=5,
+                log_dir=tmp_path,
+                iteration=1,
                 spawn_worker=lambda options: spawn_protected(options, context),
             )
         )
@@ -155,8 +223,15 @@ def test_streaming_agent_preserves_json_framing(
     try:
         result = _run_agent_streaming(
             _ResolvedAgentRun(
-                [sys.executable, "-c", "print('{\"type\":\"result\",\"result\":\"streamed\"}', flush=True)"],
-                None, timeout=5, log_dir=tmp_path, iteration=1,
+                [
+                    sys.executable,
+                    "-c",
+                    'print(\'{"type":"result","result":"streamed"}\', flush=True)',
+                ],
+                None,
+                timeout=5,
+                log_dir=tmp_path,
+                iteration=1,
                 spawn_worker=lambda options: spawn_protected(options, context),
             )
         )
@@ -175,7 +250,12 @@ def test_dead_lifeline_is_replaced_without_restarting_worker(tmp_path: Path) -> 
     worker = spawn_protected(
         SpawnOptions(
             (sys.executable, "-c", "import time; time.sleep(30)"),
-            tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            tmp_path,
+            None,
+            False,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
         ),
         _context(graph, node.id),
     )
@@ -204,9 +284,11 @@ def test_dead_lifeline_is_replaced_without_restarting_worker(tmp_path: Path) -> 
             _ = worker.process.wait(timeout=1)
         graph.close()
 
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_failed_observation_stops_worker_and_keeps_open_marker(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
@@ -214,11 +296,17 @@ def test_failed_observation_stops_worker_and_keeps_open_marker(
     worker = spawn_protected(
         SpawnOptions(
             (sys.executable, "-c", "import time; time.sleep(30)"),
-            tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            tmp_path,
+            None,
+            False,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
         ),
         _context(graph, node.id),
     )
     try:
+
         def fail_observation(_identity):
             raise RuntimeError("simulated observation failure")
 

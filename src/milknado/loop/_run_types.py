@@ -13,7 +13,8 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common import SessionContext, SessionEvent, SessionInput
 from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
-from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 
 if TYPE_CHECKING:
     from milknado.loop.sessions import SessionChannel
@@ -139,7 +140,7 @@ class RunConfig:
     session_state_sink: Callable[[SessionInput, str], None] | None = None
     session_durable_drain: Callable[[], tuple[SessionInput, ...]] | None = None
     env: dict[str, str] | None = None
-    spawn_worker: Callable[[SpawnOptions], ProtectedWorker] | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
 
     def __post_init__(self) -> None:
         if (self.prompt is None) == (self.loop_file is None):

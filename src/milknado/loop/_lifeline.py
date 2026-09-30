@@ -13,8 +13,8 @@ from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdenti
 from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
-
 _log = logging.getLogger(__name__)
+
 
 class WorkerEvidence(Protocol):
     @property
@@ -98,7 +98,9 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
             observed = observe_descendants(worker)
             store.commit(key, observed)
         except (OSError, RuntimeError, sqlite3.OperationalError, TimeoutError) as exc:
-            _log.warning("lifeline observation unresolved invocation=%s: %s", helper.invocation_id, exc)
+            _log.warning(
+                "lifeline observation unresolved invocation=%s: %s", helper.invocation_id, exc
+            )
             return 1
     try:
         current = store.get(helper.invocation_id)
@@ -136,9 +138,8 @@ def run_lifeline(read_fd: int, helper: HelperIdentity, store: EvidenceStore) -> 
             flush=True,
         )
         while True:
-            if selector.select(timeout=1):
-                if os.read(read_fd, 1) == b"":
-                    return _cleanup(store, helper, time.monotonic() + 3)
+            if selector.select(timeout=1) and os.read(read_fd, 1) == b"":
+                return _cleanup(store, helper, time.monotonic() + 3)
             record = store.get(helper.invocation_id)
             if not _current(record, helper):
                 return 1
