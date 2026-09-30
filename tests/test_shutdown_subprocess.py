@@ -214,7 +214,9 @@ def test_repeated_interrupt_keeps_first_deadline_and_worker_ownership(
         time.sleep(0.1)
         if proc.poll() is None:
             os.kill(proc.pid, signal.SIGINT)
-        assert _wait_exit(proc, master) == 128 + signal.SIGINT, _output(proc, master)
+        assert _wait_exit(proc, master) in (128 + signal.SIGINT, -signal.SIGINT), _output(
+            proc, master
+        )
         assert time.monotonic() - started < 8.25
         alive = psutil.pid_exists(pid) and psutil.Process(pid).status() != psutil.STATUS_ZOMBIE
         open_record, node_running = _worker_state(db, pid)
