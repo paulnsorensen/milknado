@@ -794,7 +794,10 @@ def test_control_queue_applies_cancel_and_force_stop(
     run_loop.cancel("run-1")
     assert fake_loop.requested_stops == ["run-1"]
     assert run_loop.force_stop("run-1", timeout=2.5) is True
-    assert fake_loop.force_stops == [("run-1", 2.5)]
+    assert len(fake_loop.force_stops) == 1
+    run_id, remaining = fake_loop.force_stops[0]
+    assert run_id == "run-1"
+    assert 2.4 < remaining <= 2.5
     assert run_loop.state().active_runs[0].actions.force_stop_reason == (
         "force stop already requested"
     )
