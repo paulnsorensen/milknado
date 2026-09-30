@@ -12,7 +12,7 @@ import psutil
 import pytest
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.domains.common import HelperIdentity, WorkerOwner
+from milknado.domains.common import HelperIdentity, SessionInput, WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import (
     AgentRunSpec,
@@ -134,6 +134,10 @@ print(json.dumps({'type':'assistant','session_id':'sid','message':
     {'role':'assistant','content':[{'type':'text','text':'before'}]}}), flush=True)
 while not release.exists():
     time.sleep(.02)
+print(json.dumps({'type':'result','subtype':'success','result':'native-before',
+                  'session_id':'sid'}), flush=True)
+follow_up = json.loads(sys.stdin.readline())
+stage.with_name('follow-up').write_text(follow_up['message']['content'])
 print(json.dumps({'type':'result','subtype':'success','result':'native-after',
                   'session_id':'sid'}), flush=True)
 raise SystemExit(13)
@@ -166,7 +170,8 @@ def test_native_session_preserves_worker_and_result_during_replacement(tmp_path:
     )
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(run_session, spec, SessionChannel())
+            channel = SessionChannel()
+            future = pool.submit(run_session, spec, channel)
             assert _until(stage.exists)
             worker = owned[0]
             before = graph.runs.get_worker(worker.identity.invocation_id)
@@ -176,10 +181,12 @@ def test_native_session_preserves_worker_and_result_during_replacement(tmp_path:
             assert _until(lambda: _replacement_ready(graph, worker, 1))
             after = graph.runs.get_worker(worker.identity.invocation_id)
             assert after is not None and after.pid == before.pid
+            assert channel.submit(SessionInput(action="follow_up", text="after takeover"))
             release.touch()
             result = future.result(timeout=10)
         assert result.returncode == 13
         assert result.result_text == "native-after"
+        assert stage.with_name("follow-up").read_text() == "after takeover"
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         release.touch()
