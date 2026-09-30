@@ -19,6 +19,7 @@ from tests.test_shutdown_subprocess import (  # pyright: ignore[reportPrivateUsa
 )
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
+_SIGHUP = getattr(signal, "SIGHUP", signal.SIGTERM)
 
 _DISPATCH_BARRIER = """
 import os
@@ -47,9 +48,9 @@ setattr(RunLoop, method, blocked)
     "mode",
     [
         (False, signal.SIGTERM),
-        (False, signal.SIGHUP),
+        (False, _SIGHUP),
         (True, signal.SIGTERM),
-        (True, signal.SIGHUP),
+        (True, _SIGHUP),
     ],
     ids=["headless-term", "headless-hup", "controller-term", "controller-hup"],
 )

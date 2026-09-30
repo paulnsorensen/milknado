@@ -18,6 +18,7 @@ from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
+_SIGHUP = getattr(signal, "SIGHUP", signal.SIGTERM)
 
 _PTY_OUTPUT: dict[int, bytearray] = {}
 
@@ -192,7 +193,7 @@ def _owned_cleanup(proc: subprocess.Popen[bytes], pid_file: Path, master: int | 
 
 
 @pytest.mark.parametrize("interactive", [False, True], ids=["headless", "controller-pty"])
-@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM, signal.SIGHUP])
+@pytest.mark.parametrize("signum", [signal.SIGINT, signal.SIGTERM, _SIGHUP])
 def test_cli_signal_stops_real_worker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interactive: bool, signum: int
 ) -> None:
@@ -264,7 +265,7 @@ subprocess.Popen = _BlockedPopen
 
 
 @pytest.mark.parametrize("interactive", [False, True], ids=["headless", "controller-pty"])
-@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP])
+@pytest.mark.parametrize("signum", [signal.SIGTERM, _SIGHUP])
 def test_cli_exits_while_worker_popen_is_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interactive: bool, signum: int
 ) -> None:
