@@ -39,7 +39,15 @@ for raw in sys.stdin:
         continue
     mark("start")
     emit({"type": "system", "subtype": "init", "session_id": "s", "model": "fixture"})
-    time.sleep(float(os.environ["WORKER_SECONDS"]))
+    if os.environ.get("WORKER_AWAIT_PEER") == "1":
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            text = Path(os.environ["WORKER_LOG"]).read_text(encoding="utf-8")
+            if text.count("start") >= 2:
+                break
+            time.sleep(0.05)
+    else:
+        time.sleep(float(os.environ["WORKER_SECONDS"]))
     Path("work.txt").write_text("done", encoding="utf-8")
     mark("end")
     emit({
@@ -52,12 +60,15 @@ for raw in sys.stdin:
 """
 
 
-def _install_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
+def _install_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, await_peer: bool = False
+) -> tuple[str, Path]:
     source = tmp_path / "sleeping_worker.py"
     _ = source.write_text(_WORKER_SOURCE, encoding="utf-8")
     log = tmp_path / "worker.log"
     monkeypatch.setenv("WORKER_LOG", str(log))
     monkeypatch.setenv("WORKER_SECONDS", str(_WORKER_SECONDS))
+    monkeypatch.setenv("WORKER_AWAIT_PEER", "1" if await_peer else "0")
     command = install_worker_command(
         tmp_path / "worker-bin",
         monkeypatch,
@@ -127,6 +138,6 @@ def test_two_projects_never_run_workers_at_the_same_time_under_a_limit_of_one(
 def test_the_same_workers_overlap_when_the_host_limit_allows_two(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    worker, log = _install_worker(tmp_path, monkeypatch)
+    worker, log = _install_worker(tmp_path, monkeypatch, await_peer=True)
     _ = _run_two_projects(tmp_path, worker, limit=2)
     assert _peak_overlap(log) == 2

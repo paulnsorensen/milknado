@@ -42,7 +42,7 @@ from milknado.domains.dispatch import (
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.graph import ConcurrencyLimitReached
+from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull
 
 _logger = logging.getLogger(__name__)
 
@@ -234,6 +234,7 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
     try:
         claim = _claim_loop(graph, git, request)
     except ConcurrencyLimitReached as exc:
+        host_full = isinstance(exc, HostCapacityFull)
         _logger.info(
             "loop dispatch deferred: node_id=%d running=%d limit=%d",
             request.node_id,
@@ -246,7 +247,10 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
             "running": exc.running,
             "limit": exc.limit,
             "detail": (
-                f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
+                f"host worker pool full ({exc.running}/{exc.limit}), possibly held by "
+                "other projects; wait for a worker to finish, then start this node again"
+                if host_full
+                else f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
                 "running; wait for a task to finish, then start this node again"
             ),
         }

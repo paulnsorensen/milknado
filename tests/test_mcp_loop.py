@@ -1245,6 +1245,28 @@ def test_start_spawns_below_concurrency_limit(tmp_path: Path) -> None:
     assert _read_run(tmp_path, started["run_id"])["status"] == "running"
 
 
+def test_start_defers_with_host_pool_wording_when_the_host_pool_is_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full host pool is not a project-graph limit, and the detail says so."""
+    from milknado.domains.graph import HostCapacityFull
+
+    root, (waiting,) = _limited_project(tmp_path, 2, "waiting")
+
+    def _full(*_args: object, **_kwargs: object) -> object:
+        raise HostCapacityFull(3, 3)
+
+    monkeypatch.setattr("milknado.app.loop.claim_with_host_slot", _full)
+
+    deferred = _start_noop(root, waiting)
+
+    assert deferred["status"] == "deferred"
+    detail = deferred["detail"] or ""
+    assert "host worker pool full (3/3)" in detail
+    assert "other projects" in detail
+    assert "tasks are running" not in detail
+
+
 def test_start_defers_at_concurrency_limit_without_claiming(tmp_path: Path) -> None:
     """At the limit the loop path spawns nothing: it returns a structured deferred
     result with the counts and leaves the node pending with no run row."""

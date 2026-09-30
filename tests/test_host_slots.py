@@ -14,6 +14,7 @@ from collections.abc import Callable, Generator
 from contextlib import closing
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -363,6 +364,36 @@ class TestDeferredNodeRetry:
                 _ = driver.run(
                     config, "main", interactive=False, process_controls=process_controls
                 )
+
+    def test_a_full_pool_is_retried_at_most_once_per_idle_rescan_interval(
+        self, tmp_path: Path
+    ) -> None:
+        executor, graph, _, config = _executor(tmp_path / "proj", 2)
+        calls: list[float] = []
+        clock = [10.0]
+
+        def dispatch(*_args: object) -> tuple[int, int]:
+            calls.append(clock[0])
+            return 0, 0
+
+        with closing(graph):
+            driver = RunLoop(executor=executor, graph=graph, loop=FakeLoop(id_prefix="cadence"))
+            setattr(driver, "_capacity_deferred", True)  # noqa: B010
+            setattr(driver, "_dispatch_if_scheduling_open", dispatch)  # noqa: B010
+            retry = cast(
+                Callable[[ExecutionConfig, int], tuple[int, int]],
+                getattr(driver, "_retry_deferred_if_due"),  # noqa: B009
+            )
+            interval = run_loop_module.IDLE_RESCAN_SECONDS
+            monotonic = "milknado.domains.execution.run_loop.time.monotonic"
+            with patch(monotonic, side_effect=lambda: clock[0]):
+                _ = retry(config, 2)
+                clock[0] += interval / 2
+                _ = retry(config, 2)
+                clock[0] += interval / 2
+                _ = retry(config, 2)
+
+        assert calls == [10.0, 10.0 + interval]
 
 
 _NOW = "2026-01-01T00:00:00+00:00"

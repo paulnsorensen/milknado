@@ -400,17 +400,23 @@ class RunLoop(NodeDriverMixin):
             ):
                 self._process_controls()
                 dispatched, failed = self._retry_deferred_if_due(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
                 return dispatched, 0, failed, [], False
             if self._capacity_deferred and (
                 timeout is None or time.monotonic() - self._completion_wait_started < timeout
             ):
                 dispatched, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
                 return dispatched, 0, failed, [], False
             return 0, 0, self._handle_completion_timeout(ct), [], True
         if isinstance(outcome, ProgressEvent):
             self._progress_by_run[outcome.run_id] = outcome
             if self._process_controls is not None:
                 self._process_controls()
+            else:
+                self._completion_wait_started = time.monotonic()
             self._publish_state()
             return 0, 0, 0, [], False
         self._completion_wait_started = time.monotonic()
