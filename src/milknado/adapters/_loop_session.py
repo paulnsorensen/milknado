@@ -10,6 +10,7 @@ from milknado.domains.common import SessionAction, SessionContext, SessionInput,
 from milknado.domains.graph import MikadoGraph, admit_session_command
 from milknado.loop import QueueEmitter, RunManager
 from milknado.loop._events import Event, EventData
+from milknado.loop._process_registry import WorkerRegistry
 from milknado.loop._run_types import RunConfig
 from milknado.loop.manager import ManagedRun
 from milknado.loop.sessions import is_supported
@@ -18,6 +19,7 @@ from milknado.loop.sessions import is_supported
 class LoopSessionMixin:
     def __init__(self, agent: str = "", graph: MikadoGraph | None = None) -> None:
         self._manager: RunManager = RunManager()
+        self._worker_registry = WorkerRegistry()
         self._queue: queue.Queue[Event[EventData]] = queue.Queue()
         self._emitter: QueueEmitter = QueueEmitter(self._queue)
         self._agent: str = agent

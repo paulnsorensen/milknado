@@ -252,18 +252,23 @@ def log_path(log_dir: Path, iteration: int) -> Path:
     return log_dir / f"{iteration:04d}_{uuid.uuid4().hex}.log"
 
 
-def start_process(
-    protocol: SessionProtocol,
-    cwd: Path,
-    env: dict[str, str] | None = None,
-) -> subprocess.Popen[bytes]:
-    """Start a marked worker process without controller authority."""
+def worker_environment(env: dict[str, str] | None) -> dict[str, str]:
     spawn_env = os.environ.copy()
     _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
     if env:
         spawn_env.update(env)
         _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
     spawn_env[WORKER_CONTEXT_ENV] = "1"
+    return spawn_env
+
+
+def start_process(
+    protocol: SessionProtocol,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.Popen[bytes]:
+    """Start a marked worker process without controller authority."""
+    spawn_env = worker_environment(env)
     if os.name == "nt":
         proc = subprocess.Popen(
             protocol.command,

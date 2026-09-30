@@ -213,6 +213,7 @@ def _launch_agent(
         force_stop_event=state.force_stop_event,
         cwd=config.project_root,
         env=config.env,
+        spawn_worker=config.spawn_worker,
     )
     try:
         if is_supported(tuple(cmd)):

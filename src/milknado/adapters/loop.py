@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import shlex
@@ -27,6 +28,7 @@ from milknado.domains.common import (
 )
 from milknado.domains.execution import build_completion_verifier
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData
@@ -82,6 +84,9 @@ class LoopAdapter(LoopSessionMixin):
             timeout=timeout,
             env=env,
         )
+        if self._graph is not None and run_id is not None and os.name != "nt":
+            protection = ProtectionContext(self._graph.runs, run_id, self._graph.db_path, self._worker_registry)
+            config.spawn_worker = lambda options: spawn_protected(options, protection)
         if context is not None:
             config.session_context = context
             if run_id is not None:
@@ -102,6 +107,12 @@ class LoopAdapter(LoopSessionMixin):
 
     def request_stop_run(self, run_id: str) -> None:
         self._manager.stop_run(run_id)
+
+    def bind_shutdown_intent(self, requested: Callable[[], bool]) -> None:
+        self._worker_registry.bind_shutdown_intent(requested)
+
+    def stop_active_workers(self, deadline: float) -> bool:
+        return self._worker_registry.stop_all(deadline)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.force_stop_and_join(run_id, timeout)

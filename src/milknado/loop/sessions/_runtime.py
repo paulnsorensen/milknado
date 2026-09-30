@@ -7,7 +7,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 from milknado.domains.common import SessionContext, SessionEvent
 from milknado.loop._agent import (
@@ -15,6 +15,7 @@ from milknado.loop._agent import (
     AgentRunSpec,
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._factory import create_protocol
@@ -31,6 +32,7 @@ from milknado.loop.sessions._process import (
     start_process,
     start_readers,
     terminate,
+    worker_environment,
     write_commands,
 )
 from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
@@ -70,6 +72,7 @@ class _SessionExecution:
     log_file: Path | None = None
     log_handle: IO[str] | None = None
     proc: subprocess.Popen[bytes] | None = None
+    protected: ProtectedWorker | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     threads: list[threading.Thread] = field(default_factory=list)
     eof_streams: set[str] = field(default_factory=set)
@@ -84,7 +87,18 @@ class _SessionExecution:
             **wind_down_overrides,
             "MILKNADO_INVOCATION_ID": self.process_invocation_id,
         }
-        proc = start_process(self.protocol, self.spec.cwd or Path.cwd(), env=env)
+        cwd = self.spec.cwd or Path.cwd()
+        if self.spec.spawn_worker is not None:
+            self.protected = self.spec.spawn_worker(
+                SpawnOptions(
+                    self.protocol.command, cwd, worker_environment(env), False,
+                    subprocess.PIPE, subprocess.PIPE, subprocess.PIPE,
+                    self.process_invocation_id,
+                )
+            )
+            proc = cast(subprocess.Popen[bytes], self.protected.process)
+        else:
+            proc = start_process(self.protocol, cwd, env=env)
         self.proc = proc
         self.threads = start_readers(proc, self.lines, self.stop, self.spec.iteration)
         self.stream_context = StreamContext(
@@ -252,6 +266,8 @@ class _SessionExecution:
     def cleanup(self) -> None:
         if self.proc is not None:
             cleanup_process(self.proc, self.stop, tuple(self.threads))
+        if self.protected is not None and not self.protected.finish():
+            raise RuntimeError("worker cleanup remains unresolved")
         if self.log_handle is not None:
             self.log_handle.close()
         if self.wind_down is not None:

@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+import milknado.loop._process_lifecycle as lifecycle
+from milknado.domains.graph import MikadoGraph
+from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._process_registry import WorkerRegistry
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX protected launch is required")
+def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    registry = WorkerRegistry()
+    worker = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        ),
+        ProtectionContext(graph.runs, "run-1", graph.db_path, registry),
+    )
+    try:
+        assert registry.stop_all(time.monotonic() + 4)
+        assert worker.process.poll() is not None
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        if worker.process.poll() is None:
+            worker.process.kill()
+            _ = worker.process.wait(timeout=1)
+        graph.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
+def test_registry_abort_covers_popen_returning_after_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    registry = WorkerRegistry()
+    entered, release = threading.Event(), threading.Event()
+    real_spawn = lifecycle.spawn_gated
+
+    def delayed_spawn(options: SpawnOptions):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_spawn(options)
+
+    monkeypatch.setattr(lifecycle, "spawn_gated", delayed_spawn)
+    marker = tmp_path / "worked"
+    errors: list[Exception] = []
+
+    def launch() -> None:
+        try:
+            _ = spawn_protected(
+                SpawnOptions(
+                    (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
+                    tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+                ),
+                ProtectionContext(graph.runs, "run-1", graph.db_path, registry),
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=launch)
+    try:
+        thread.start()
+        assert entered.wait(timeout=5)
+        assert registry.stop_all(time.monotonic() + 1) is False
+        release.set()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert len(errors) == 1
+        assert not marker.exists()
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        release.set()
+        thread.join(timeout=5)
+        graph.close()
+
+def test_registry_rejects_admission_on_scalar_intent() -> None:
+    registry = WorkerRegistry()
+    requested = False
+    registry.bind_shutdown_intent(lambda: requested)
+    ticket = registry.reserve()
+    requested = True
+    assert not ticket.activate(lambda: pytest.fail("released after signal"), lambda _: True)
+    with pytest.raises(RuntimeError, match="admission is closed"):
+        registry.reserve()
+    ticket.close()

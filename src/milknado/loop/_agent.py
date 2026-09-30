@@ -36,6 +36,7 @@ from typing import IO, Any, cast
 
 from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
 from milknado.loop._events import OutputStream
+from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
 from milknado.loop._output import (
     IS_WINDOWS,
     SESSION_KWARGS,
@@ -565,6 +566,7 @@ class AgentRunSpec:
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
     env: dict[str, str] | None = None
+    spawn_worker: Callable[[SpawnOptions], ProtectedWorker] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,6 +590,32 @@ class _ResolvedAgentRun:
     completion_signal: str | None = None
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
+    spawn_worker: Callable[[SpawnOptions], ProtectedWorker] | None = None
+
+
+def _spawn_agent_process(
+    run: _ResolvedAgentRun, pipe_stdin: bool, pipe_stdout: bool, pipe_stderr: bool
+) -> tuple[subprocess.Popen[str], ProtectedWorker | None]:
+    stdin = subprocess.PIPE if pipe_stdin else subprocess.DEVNULL
+    stdout = subprocess.PIPE if pipe_stdout else None
+    stderr = subprocess.PIPE if pipe_stderr else None
+    env = _build_spawn_env(run.env)
+    if run.spawn_worker is not None:
+        protected = run.spawn_worker(
+            SpawnOptions(tuple(run.cmd), run.cwd, env, True, stdin, stdout, stderr)
+        )
+        return cast(subprocess.Popen[str], protected.process), protected
+    proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
+        run.cmd,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        env=env,
+        cwd=run.cwd,
+        **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
+        **SESSION_KWARGS,
+    )
+    return proc, None
 
 
 def _readline_pump(
@@ -783,16 +811,10 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
         mirror=log_sink,
     )
 
+    protected: ProtectedWorker | None = None
     try:
-        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
-            run.cmd,
-            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE if pipe_stderr else None,
-            env=_build_spawn_env(run.env),
-            cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
-            **SESSION_KWARGS,
+        proc, protected = _spawn_agent_process(
+            run, pipe_stdin, True, pipe_stderr
         )
         try:
             windows_job = _WindowsJob.assign(proc)
@@ -860,6 +882,8 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
                 )
     finally:
         _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
+        if protected is not None and not protected.finish():
+            raise RuntimeError("worker cleanup remains unresolved")
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text
@@ -1032,16 +1056,10 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             correlation=f"iteration={run.iteration}",
         )
 
+    protected: ProtectedWorker | None = None
     try:
-        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
-            run.cmd,
-            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-            stdout=subprocess.PIPE if pipe_stdout else None,
-            stderr=subprocess.PIPE if pipe_stderr else None,
-            env=_build_spawn_env(run.env),
-            cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
-            **SESSION_KWARGS,
+        proc, protected = _spawn_agent_process(
+            run, pipe_stdin, pipe_stdout, pipe_stderr
         )
         try:
             windows_job = _WindowsJob.assign(proc)
@@ -1088,6 +1106,8 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             writer_thread,
             windows_job=windows_job,
         )
+        if protected is not None and not protected.finish():
+            raise RuntimeError("worker cleanup remains unresolved")
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text
@@ -1151,6 +1171,7 @@ def _prepare_agent_run(
         cwd=spec.cwd,
         completion_signal=spec.completion_signal,
         force_stop_event=spec.force_stop_event,
+        spawn_worker=spec.spawn_worker,
     )
 
 
