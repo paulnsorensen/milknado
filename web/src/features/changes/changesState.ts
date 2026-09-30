@@ -1,6 +1,6 @@
 // Tracks the changed-file list and the selected file's diff for the run
 // associated with the currently selected node.
-import { get } from '../../app/api';
+import { ApiError, get } from '../../app/api';
 import { pushNotice } from '../../app/store';
 import { fetchDiffText } from './diffText';
 import type { WireChangedFile } from './changesWire';
@@ -38,8 +38,7 @@ async function fetchFiles(runId: string): Promise<void> {
       emit();
     }
   } catch (error) {
-    const status = typeof error === 'object' && error !== null && 'status' in error ? error.status : null;
-    if (status === 404) {
+    if (error instanceof ApiError && error.status === 404) {
       if (state.runId === runId) {
         state = { ...state, files: [] };
         emit();

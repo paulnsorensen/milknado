@@ -20,12 +20,71 @@ from typing import TYPE_CHECKING, Protocol, cast
 from milknado.app._shutdown import ShutdownIntent, ShutdownSignal, supervise
 from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
-from milknado.domains.graph import RunFenceLostError
+from milknado.domains.graph import HostCapacityFull, RunFenceLostError
 
 if TYPE_CHECKING:
     from milknado.domains.execution import NodeLoopOutcome, RunLoop
 
 _logger = logging.getLogger("milknado")
+
+# EX_TEMPFAIL: the host worker pool was full, so the node went back to PENDING.
+_DEFERRED_EXIT = 75
+
+
+def _defer_run(graph: object, root: Path, args: _RunnerArgs, exc: HostCapacityFull) -> int:
+    """Hand a node back to PENDING when the host pool stays full.
+
+    The launcher already answered "running" and freed its probe slot, so another
+    process took it. Failing the node would burn a retry on a capacity race, so the
+    claim is released and the run records why it never started a worker.
+    """
+    _logger.warning(
+        "loop runner deferred: run_id=%s node_id=%d running=%d limit=%d",
+        args.run_id,
+        args.node_id,
+        exc.running,
+        exc.limit,
+    )
+    released = cast(_ReleasableGraph, graph).release(args.node_id, args.run_id)
+    detail = f"deferred: host worker pool full ({exc.running} of {exc.limit} slots held); " + (
+        "node returned to pending, start it again" if released else "node claim was lost"
+    )
+    _ = _finish_run(
+        graph,
+        root,
+        args.run_id,
+        RunResult(
+            status="failed",
+            exit_code=_DEFERRED_EXIT,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=detail,
+        ),
+    )
+    return _DEFERRED_EXIT
+
+
+def _fail_run(graph: object, root: Path, args: _RunnerArgs, exc: Exception) -> int:
+    _logger.exception(
+        "loop runner failed: run_id=%s node_id=%d",
+        args.run_id,
+        args.node_id,
+    )
+    _ = _finish_run(
+        graph,
+        root,
+        args.run_id,
+        RunResult(
+            status="failed",
+            exit_code=1,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=f"{type(exc).__name__}: {exc}",
+        ),
+    )
+    return 1
 
 
 class _RunFacade(Protocol):
@@ -34,6 +93,10 @@ class _RunFacade(Protocol):
 
 class _GraphWithRuns(Protocol):
     runs: _RunFacade
+
+
+class _ReleasableGraph(Protocol):
+    def release(self, node_id: int, run_id: str) -> bool: ...
 
 
 class _RunnerArgs(Protocol):
@@ -83,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     _ = parser.add_argument("--base-oid", required=True)
     args = cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
 
-    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.adapters import CrgAdapter, FlockSlotPool, GitAdapter, LoopAdapter
     from milknado.app.project import open_graph
     from milknado.app.worker_recovery import reconcile_loop_workers
     from milknado.domains.common import resolve_flavor_profile
@@ -117,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         loop = LoopAdapter(graph=graph)
         loop.bind_shutdown_intent(lambda: intent.requested)
         executor = Executor(graph=graph, git=git, loop=loop, crg=CrgAdapter(root))
+        executor.use_host_capacity(FlockSlotPool(cfg.host_worker_limit))
         exec_config = ExecutionConfig(
             execution_agent=profile.execution_agent,
             quality_gates=profile.quality_gates,
@@ -181,30 +245,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if outcome.success else 1
     except ShutdownSignal as shutdown:
         return 128 + shutdown.signum
+    except HostCapacityFull as exc:
+        return _defer_run(graph, root, args, exc)
     except Exception as exc:
-        _logger.exception(
-            "loop runner failed: run_id=%s node_id=%d",
-            args.run_id,
-            args.node_id,
-        )
         if driver is not None:
             _ = driver.confirm_preserved_stop(
                 NodeLoopOutcome(args.node_id, False, ownership_preserved=True)
             )
-        _ = _finish_run(
-            graph,
-            root,
-            args.run_id,
-            RunResult(
-                status="failed",
-                exit_code=1,
-                timed_out=False,
-                ended_at=now_iso(),
-                rebased=False,
-                detail=f"{type(exc).__name__}: {exc}",
-            ),
-        )
-        return 1
+        return _fail_run(graph, root, args, exc)
     finally:
         graph.close()
 

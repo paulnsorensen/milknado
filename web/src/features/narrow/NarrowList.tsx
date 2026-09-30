@@ -8,8 +8,8 @@ import { Milknado } from '../../design-system';
 import { formatRunTotals } from '../../shared/runTotals';
 import { toGraphNodes } from '../../app/wire';
 import { ownerLabel } from '../../shared/ownerLabel';
-import { PendingPermissionIndicator } from '../session-input/PendingPermissionIndicator';
 import { Wordmark } from '../../shared/Wordmark';
+import { renderSlot } from '../../app/hosts/renderSlot';
 
 export interface NarrowListProps {
   onOpen: (id: string | number) => void;
@@ -56,7 +56,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
         <Wordmark />
         <div className="mk-button-row">
           <StatusBadge state={owner ? 'running' : 'pending'}>{ownerLabel(owner).badge}</StatusBadge>
-          <PendingPermissionIndicator />
+          {renderSlot('permission-status')}
         </div>
       </header>
       <div className="mk-narrow-intro">

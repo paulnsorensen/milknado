@@ -641,6 +641,67 @@ def test_runner_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
     assert state["detail"] == (f"QualityGatesNotConfigured: {NO_GATES_CONFIGURED_MESSAGE}")
 
 
+def test_runner_defers_and_returns_node_to_pending_when_host_pool_is_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full host-wide pool sends the claimed node back to PENDING with the pool detail."""
+    from datetime import UTC, datetime
+
+    import milknado.adapters as adapters
+    from milknado.domains.graph import HostCapacityFull
+    from milknado.mcp import _loop_node_runner
+
+    root = str(tmp_path)
+    node_id = _call(milknado_todo_add, description="task", kind="task", project_root=root)["id"]
+    run_id = f"node-{node_id}-20260101T000000Z-full"
+    now = datetime.now(UTC).isoformat()
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        assert graph.claim_node(node_id, run_id, now=now)
+        graph.runs.start(
+            run_id,
+            node_id,
+            str(tmp_path / ".milknado" / "runs" / f"{run_id}.log"),
+            now,
+            10,
+            None,
+        )
+    finally:
+        graph.close()
+
+    def _full(*_args: object, **_kwargs: object) -> object:
+        raise HostCapacityFull(3, 3)
+
+    monkeypatch.setattr(adapters, "FlockSlotPool", _full)
+
+    rc = _loop_node_runner.main(
+        [
+            "--node-id",
+            str(node_id),
+            "--project-root",
+            root,
+            "--run-id",
+            run_id,
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
+    )
+
+    assert rc == 75
+    state = _read_run(tmp_path, run_id)
+    assert state["status"] == "failed"
+    assert "deferred: host worker pool full" in (state["detail"] or "")
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
+
+
 def test_runner_writes_done_on_successful_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -663,6 +724,7 @@ def test_runner_writes_done_on_successful_outcome(
         agent_family: str = "claude"
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
+        host_worker_limit: int = 6
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
@@ -719,7 +781,15 @@ def test_runner_writes_done_on_successful_outcome(
 
     monkeypatch.setattr(adapters, "LoopAdapter", loop_adapter_stub)
     monkeypatch.setattr(adapters, "CrgAdapter", object_stub)
-    monkeypatch.setattr(execution, "Executor", object_stub)
+
+    class _HostCapacityAcceptor:
+        def use_host_capacity(self, port: object) -> None:
+            _ = port
+
+    def executor_object_stub(*_args: object, **_kwargs: object) -> _HostCapacityAcceptor:
+        return _HostCapacityAcceptor()
+
+    monkeypatch.setattr(execution, "Executor", executor_object_stub)
     monkeypatch.setattr(execution, "ExecutionConfig", object_stub)
 
     class _StubRunLoop:
@@ -778,6 +848,7 @@ def test_runner_calls_force_stop_on_timeout(
         agent_family: str = "claude"
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
+        host_worker_limit: int = 6
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
@@ -832,6 +903,9 @@ def test_runner_calls_force_stop_on_timeout(
             return []
 
     class _StubExecutor:
+        def use_host_capacity(self, port: object) -> None:
+            _ = port
+
         def dispatch(
             self,
             node_id: int,
@@ -1244,6 +1318,28 @@ def test_start_spawns_below_concurrency_limit(tmp_path: Path) -> None:
     assert started["status"] == "running"
     assert started["run_id"].startswith(f"node-{free}-")
     assert _read_run(tmp_path, started["run_id"])["status"] == "running"
+
+
+def test_start_defers_with_host_pool_wording_when_the_host_pool_is_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full host pool is not a project-graph limit, and the detail says so."""
+    from milknado.domains.graph import HostCapacityFull
+
+    root, (waiting,) = _limited_project(tmp_path, 2, "waiting")
+
+    def _full(*_args: object, **_kwargs: object) -> object:
+        raise HostCapacityFull(3, 3)
+
+    monkeypatch.setattr("milknado.app.loop.claim_with_host_slot", _full)
+
+    deferred = _start_noop(root, waiting)
+
+    assert deferred["status"] == "deferred"
+    detail = deferred["detail"] or ""
+    assert "host worker pool full (3/3)" in detail
+    assert "other projects" in detail
+    assert "tasks are running" not in detail
 
 
 def test_start_defers_at_concurrency_limit_without_claiming(tmp_path: Path) -> None:

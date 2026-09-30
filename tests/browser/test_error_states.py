@@ -10,7 +10,6 @@ from typing import Literal, cast
 import pytest
 from playwright.sync_api import Page, expect
 
-from milknado.app.run_source import ExecutionRunStatus, TerminalRunSnapshot
 from milknado.app.watch import WatchSnapshotSource
 from milknado.cli._helpers import ensure_db
 from milknado.domains.graph import OwnerCapabilities
@@ -54,41 +53,6 @@ def unavailable_cancel_server() -> Iterator[BrowserServer]:
     server.stop()
 
 
-@pytest.fixture
-def inactive_session_server() -> Iterator[BrowserServer]:
-    login = LaunchToken(BROWSER_TOKEN)
-    terminal = TerminalRunSnapshot(
-        run_id=RUN_ID,
-        node_id=1,
-        description="Inactive fixture run",
-        status=ExecutionRunStatus.COMPLETED,
-        output=(),
-        pending_guidance=None,
-        duration_seconds=0,
-    )
-    source = BrowserSnapshotSource(
-        snapshot=replace(build_fixture_snapshot(), terminal_runs=(terminal,))
-    )
-    commands = WebCommands(
-        host_owner=True,
-        session_input=lambda run_id, request: None,
-        owner_capabilities=OwnerCapabilities(
-            run_id=RUN_ID,
-            node_id=1,
-            invocation_id="invocation-1",
-            owner_incarnation="1",
-            actions=("interrupt",),
-            permission_ids=(),
-            published_at="",
-        ),
-    )
-    app = create_app(source, commands, login)
-    server = BrowserServer(app=app, login=login)
-    server.start()
-    yield server
-    server.stop()
-
-
 def test_409_domain_reason_shows_toast(
     page: Page, unavailable_cancel_server: BrowserServer
 ) -> None:
@@ -106,23 +70,6 @@ def test_409_domain_reason_shows_toast(
     page.get_by_role("alertdialog").get_by_role("button", name="Cancel run", exact=True).click()
 
     expect(page.get_by_text("Cancel is unavailable.")).to_be_visible()
-
-
-def test_inactive_session_rejection_includes_run_reason(
-    page: Page, inactive_session_server: BrowserServer
-) -> None:
-    node_button = page.get_by_role(
-        "button", name=f"pending {FIXTURE_NODE_DESCRIPTION}", exact=True
-    )
-    open_app(page, inactive_session_server.login_url, node_button)
-    node_button.click()
-
-    page.get_by_role("button", name="Interrupt", exact=True).click()
-    page.get_by_role("button", name="Send", exact=True).click()
-
-    expect(
-        page.get_by_text("Session input was rejected: the run is not active.", exact=True)
-    ).to_be_visible()
 
 
 @pytest.fixture

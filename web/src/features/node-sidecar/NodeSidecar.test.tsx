@@ -1,108 +1,15 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { get } from "../../app/api";
-import {
-  getState,
-  resetStore,
-  setSelection,
-  setSnapshot,
-} from "../../app/store";
-import {
-  resetDetail,
-  resetTab,
-  setActiveTab,
-  type WireNodeDetailResponse,
-} from "../../shared/node-detail";
-import { NodeSidecar } from "./NodeSidecar";
-import { summarizePathTitle } from "./pathTitle";
-import { resetReviewSelection } from "../goal-review/selection";
-import { DetailsTabSection, SessionTabSection } from "./TabSections";
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { get } from '../../app/api';
+import { getState, resetStore, setSelection } from '../../app/store';
+import { resetDetail, resetTab } from '../../shared/node-detail';
+import { NodeSidecar } from './NodeSidecar';
+import { resetReviewSelection } from '../goal-review/selection';
+import { detailResponse } from './testFixtures';
 
-vi.mock("../../app/api", () => ({ get: vi.fn() }));
+vi.mock('../../app/api', () => ({ get: vi.fn() }));
 
-function detailResponse(
-  overrides: Partial<WireNodeDetailResponse["detail"]> = {},
-): WireNodeDetailResponse {
-  return {
-    node_id: 7,
-    request_generation: 1,
-    detail: {
-      node: {
-        id: 7,
-        description: "Bake the roadmap",
-        status: "running",
-        parent_id: null,
-        kind: "task",
-        flavor: null,
-      },
-      description: "Bake the roadmap",
-      parent: null,
-      ancestors: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      prerequisite_ids: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      dependent_ids: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      owned_files: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      runs: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      sessions: {
-        items: [],
-        offset: 0,
-        limit: 50,
-        total: 0,
-        has_more: false,
-        state: "loaded",
-      },
-      ...overrides,
-    },
-  };
-}
-
-const EMPTY_CAPABILITIES = {
-  session_input: { available: false, reason: null },
-  cancel: { available: false, reason: null },
-  force_stop: { available: false, reason: null },
-  stop_scheduling: { available: false, reason: null },
-  graph_edits: { available: false, reason: null },
-  review_decision: { available: false, reason: null },
-  git: { available: false, reason: null },
-  host_owner: { available: false, reason: null },
-  owner: { available: false },
-};
-
-describe("NodeSidecar", () => {
+describe('NodeSidecar', () => {
   beforeEach(() => {
     resetStore();
     resetDetail();
@@ -116,268 +23,27 @@ describe("NodeSidecar", () => {
     vi.restoreAllMocks();
   });
 
-  it("summarizes path titles by sentence and length", () => {
-    expect(summarizePathTitle("First sentence. Second sentence.")).toBe(
-      "First sentence.",
-    );
-    expect(summarizePathTitle("Use e.g. milknado. Next task.")).toBe(
-      "Use e.g. milknado.",
-    );
-    expect(
-      summarizePathTitle("Use e.g. Milknado to continue. Next task."),
-    ).toBe("Use e.g. Milknado to continue.");
-    expect(summarizePathTitle(`${"x".repeat(100)}. second sentence`)).toBe(
-      `${"x".repeat(79)}…`,
-    );
-  });
-
-  it("renders the summarized path title with its full accessible title", async () => {
-    const fullTitle =
-      "First ancestor sentence. Additional ancestor context stays in the full title.";
-    vi.mocked(get).mockResolvedValue(detailResponse());
-    setSnapshot({
-      goal: null,
-      graph: {
-        nodes: [
-          {
-            id: 1,
-            description: fullTitle,
-            status: "running",
-            parent_id: null,
-            kind: "goal",
-            flavor: null,
-          },
-          {
-            id: 7,
-            description: "Bake the roadmap",
-            status: "running",
-            parent_id: 1,
-            kind: "task",
-            flavor: null,
-          },
-        ],
-        edges: [{ parent_id: 1, child_id: 7 }],
-        root_ids: [1],
-      },
-      capabilities: EMPTY_CAPABILITIES,
-    });
-    setSelection(7);
-
-    render(<NodeSidecar />);
-
-    const pathItem = await screen.findByRole("button", {
-      name: summarizePathTitle(fullTitle),
-    });
-    expect(pathItem).toHaveTextContent("First ancestor sentence.");
-    expect(pathItem).toHaveAttribute("title", fullTitle);
-  });
-
-  it("renders a visible tabpanel for a selected run", async () => {
-    vi.mocked(get).mockResolvedValue(detailResponse());
-    setSnapshot({
-      goal: null,
-      graph: null,
-      capabilities: EMPTY_CAPABILITIES,
-      active_runs: [
-        { run_id: "run-1", node_id: 7, description: "Fixture run", status: "running" },
-      ],
-    });
-    setSelection("run-1");
-
-    render(
-      <>
-        <NodeSidecar />
-        <SessionTabSection />
-      </>,
-    );
-
-    expect(await screen.findByRole("tabpanel")).toBeVisible();
-  });
-  it("renders the empty caption without a selection", () => {
-    render(<NodeSidecar />);
-    expect(
-      screen.getByText("Select a node to inspect its details."),
-    ).toBeTruthy();
-  });
-
-  it("renders the empty-runs state for a selected node with no runs", async () => {
-    vi.mocked(get).mockResolvedValue(detailResponse());
-    setSelection(7);
-
-    render(<NodeSidecar />);
-
-    expect(await screen.findByText("This node has no runs yet.")).toBeTruthy();
-    expect(screen.getByText("Bake the roadmap")).toBeTruthy();
-  });
-
-  it("keeps watch metrics inside the Run group and waits for capabilities", async () => {
-    vi.mocked(get).mockResolvedValue(detailResponse());
-    setSelection(7);
-    render(<NodeSidecar />);
-
-    expect(screen.queryByText("unavailable")).toBeNull();
-    setSnapshot({
-      goal: null,
-      graph: null,
-      capabilities: {
-        session_input: { available: false, reason: null },
-        cancel: { available: false, reason: null },
-        force_stop: { available: false, reason: null },
-        stop_scheduling: { available: false, reason: null },
-        graph_edits: { available: false, reason: null },
-        review_decision: { available: false, reason: null },
-        git: { available: false, reason: null },
-        host_owner: { available: false, reason: null },
-        owner: { available: false },
-      },
-    });
-
-    const run = await screen.findByRole("region", { name: "Run" });
-    expect(run).toHaveTextContent("ETAunavailable");
-    expect(run).toHaveTextContent("Attemptunavailable");
-    expect(run).toHaveTextContent("guidanceunavailable");
-    expect(
-      screen.queryByRole("region", { name: "Watch mode availability" }),
-    ).toBeNull();
-  });
-
-  it("renders a run row for each run", async () => {
-    vi.mocked(get).mockResolvedValue(
-      detailResponse({
-        runs: {
-          items: [
-            {
-              run_id: "run-1",
-              node_id: 7,
-              status: "running",
-              started_at: "",
-              ended_at: null,
-              error: null,
-            },
-          ],
-          offset: 0,
-          limit: 50,
-          total: 1,
-          has_more: false,
-          state: "loaded",
-        },
-      }),
-    );
-    setSelection(7);
-
-    render(<NodeSidecar />);
-
-    expect(await screen.findByText("run-1", { exact: false })).toBeTruthy();
-    expect(screen.getByText("Completed")).toBeTruthy();
-    expect(screen.getByText("none")).toBeTruthy();
-  });
-
-  it("clamps long descriptions until the expand control is used", async () => {
-    const description = "A".repeat(600);
-    vi.mocked(get).mockResolvedValue(detailResponse({ description }));
-    setSelection(7);
-    const scrollHeight = vi
-      .spyOn(HTMLElement.prototype, "scrollHeight", "get")
-      .mockReturnValue(600);
-    const clientHeight = vi
-      .spyOn(HTMLElement.prototype, "clientHeight", "get")
-      .mockReturnValue(100);
-
-    render(<NodeSidecar />);
-
-    expect(
-      await screen.findByRole("button", { name: "Expand description" }),
-    ).toBeTruthy();
-    expect(screen.getByRole("heading", { name: description })).not.toHaveClass(
-      "is-expanded",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Expand description" }));
-    expect(screen.getByRole("heading", { name: description })).toHaveClass(
-      "is-expanded",
-    );
-    scrollHeight.mockRestore();
-    clientHeight.mockRestore();
-  });
-
-  it("keys error rows by run id, not by index, when two runs share the same error", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.mocked(get).mockResolvedValue(
-      detailResponse({
-        runs: {
-          items: [
-            {
-              run_id: "run-1",
-              node_id: 7,
-              status: "failed",
-              started_at: "",
-              ended_at: "",
-              error: "boom",
-            },
-            {
-              run_id: "run-2",
-              node_id: 7,
-              status: "failed",
-              started_at: "",
-              ended_at: "",
-              error: "boom",
-            },
-          ],
-          offset: 0,
-          limit: 50,
-          total: 2,
-          has_more: false,
-          state: "loaded",
-        },
-      }),
-    );
-    setSelection(7);
-
-    render(<NodeSidecar />);
-
-    expect((await screen.findAllByRole("alert")).length).toBe(2);
-    expect(screen.getAllByText("boom")).toHaveLength(2);
-    const keyWarning = errorSpy.mock.calls.some((call) =>
-      String(call[0]).includes("two children with the same key"),
-    );
-    expect(keyWarning).toBe(false);
-  });
-
-  it("calls onClose on the close button when provided", async () => {
+  it('calls onClose on the close button when provided', async () => {
     vi.mocked(get).mockResolvedValue(detailResponse());
     setSelection(7);
     const onClose = vi.fn();
 
     render(<NodeSidecar onClose={onClose} />);
-    await screen.findByText("Bake the roadmap");
-    fireEvent.click(screen.getByRole("button", { name: "Close the sidecar" }));
+    await screen.findByText('Bake the roadmap');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the sidecar' }));
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(getState().selection).toBe(7);
   });
 
-  it("clears the selection on the close button when onClose is omitted", async () => {
+  it('clears the selection on the close button when onClose is omitted', async () => {
     vi.mocked(get).mockResolvedValue(detailResponse());
     setSelection(7);
 
     render(<NodeSidecar />);
-    await screen.findByText("Bake the roadmap");
-    fireEvent.click(screen.getByRole("button", { name: "Close the sidecar" }));
+    await screen.findByText('Bake the roadmap');
+    fireEvent.click(screen.getByRole('button', { name: 'Close the sidecar' }));
 
     expect(getState().selection).toBeNull();
-  });
-
-  it("renders the details tab body when the details tab is active", async () => {
-    vi.mocked(get).mockResolvedValue(detailResponse());
-    setSelection(7);
-    setActiveTab("details");
-
-    render(
-      <>
-        <NodeSidecar />
-        <DetailsTabSection />
-      </>,
-    );
-
-    expect(await screen.findByText("Parent")).toBeTruthy();
   });
 });

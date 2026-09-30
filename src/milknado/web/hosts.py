@@ -84,6 +84,44 @@ def _graph_edits(dependencies: HostDependencies) -> GraphEditCommands | None:
     )
 
 
+def _admit_owner_session_input(
+    controller: OwnerController,
+    dependencies: HostDependencies,
+    run_id: str,
+    request: SessionInput,
+) -> SessionInput:
+    owner = _current_owner_capabilities(dependencies, run_id)
+    if owner is not None and run_id != owner.run_id:
+        raise ValueError("the run is not active")
+    if not controller.session_input(run_id, request):
+        raise ValueError("the command is unavailable")
+    return request
+
+
+def _observer_session_input_reason(graph: MikadoGraph, run_id: str) -> str:
+    if graph.runs.get(run_id) is None:
+        return "the run is not active"
+    return "the command is unavailable"
+
+
+def _admit_observer_session_input(
+    graph: MikadoGraph,
+    dependencies: HostDependencies,
+    run_id: str,
+    request: SessionInput,
+) -> SessionInput:
+    owner = _current_owner_capabilities(dependencies, run_id)
+    admitted = admit_session_command(
+        graph,
+        run_id,
+        request,
+        owner_incarnation=owner.owner_incarnation if owner is not None else None,
+    )
+    if admitted is None:
+        raise ValueError(_observer_session_input_reason(graph, run_id))
+    return admitted
+
+
 def owner_commands(
     handlers: OwnerHandlers | OwnerController | None = None,
     dependencies: HostDependencies | None = None,
@@ -94,16 +132,8 @@ def owner_commands(
     elif not isinstance(handlers, OwnerHandlers):
         controller = handlers
         handlers = OwnerHandlers(
-            session_input=lambda run_id, request: (
-                request
-                if (
-                    (
-                        (owner := _current_owner_capabilities(dependencies, run_id)) is None
-                        or run_id == owner.run_id
-                    )
-                    and controller.session_input(run_id, request)
-                )
-                else None
+            session_input=lambda run_id, request: _admit_owner_session_input(
+                controller, dependencies, run_id, request
             ),
             cancel=lambda run_id: _cancel_owner(controller, dependencies.graph, run_id),
             force_stop=lambda run_id: {
@@ -134,15 +164,8 @@ def observer_commands(
     if handlers.session_input is None and dependencies.graph is not None:
         graph = dependencies.graph
         handlers = ObserverHandlers(
-            session_input=lambda run_id, request: admit_session_command(
-                graph,
-                run_id,
-                request,
-                owner_incarnation=(
-                    owner.owner_incarnation
-                    if (owner := _current_owner_capabilities(dependencies, run_id)) is not None
-                    else None
-                ),
+            session_input=lambda run_id, request: _admit_observer_session_input(
+                graph, dependencies, run_id, request
             ),
             cancel=handlers.cancel,
         )

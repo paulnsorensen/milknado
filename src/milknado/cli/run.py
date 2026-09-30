@@ -183,6 +183,14 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
 
 def _run(options: RunCommandOptions) -> None:
     """Execute a run command after parsing its grouped options."""
+    from milknado.domains.common import WORKER_CONTEXT_ENV
+
+    if os.environ.get(WORKER_CONTEXT_ENV) == "1":
+        console.print(
+            "[red]milknado run cannot start inside a milknado worker "
+            + f"({WORKER_CONTEXT_ENV}=1)[/red]"
+        )
+        raise typer.Exit(code=2)
     project_root, strict, allow_protected, web, port, no_open = options
     from milknado.app._shutdown import ShutdownSignal
     from milknado.app.run import (

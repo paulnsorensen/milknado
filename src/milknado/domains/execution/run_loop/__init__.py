@@ -105,6 +105,7 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
         self._process_controls: Callable[[], None] | None = None
         self._await_owner_work: bool = False
         self._capacity_deferred: bool = False
+        self._deferred_retry_at: float = 0.0
         self._idle_sleep: Callable[[float], None] = time.sleep
         self._completion_wait_started: float = 0.0
         self._scheduling_stopped: bool = False
@@ -374,6 +375,10 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
         wait_timeout = timeout
         if self._process_controls is not None:
             wait_timeout = 0.1 if timeout is None else min(timeout, 0.1)
+        elif self._capacity_deferred:
+            wait_timeout = (
+                IDLE_RESCAN_SECONDS if timeout is None else min(timeout, IDLE_RESCAN_SECONDS)
+            )
         try:
             run_id, outcome = self._loop.wait_for_next_completion(
                 set(self._active.keys()), timeout=wait_timeout
@@ -383,12 +388,24 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
                 timeout is None or time.monotonic() - self._completion_wait_started < timeout
             ):
                 self._process_controls()
-                return 0, 0, 0, [], False
+                dispatched, failed = self._retry_deferred_if_due(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
+                return dispatched, 0, failed, [], False
+            if self._capacity_deferred and (
+                timeout is None or time.monotonic() - self._completion_wait_started < timeout
+            ):
+                dispatched, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
+                return dispatched, 0, failed, [], False
             return 0, 0, self._handle_completion_timeout(ct), [], True
         if isinstance(outcome, ProgressEvent):
             self._progress_by_run[outcome.run_id] = outcome
             if self._process_controls is not None:
                 self._process_controls()
+            else:
+                self._completion_wait_started = time.monotonic()
             self._publish_state()
             return 0, 0, 0, [], False
         self._completion_wait_started = time.monotonic()
@@ -402,6 +419,18 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
             config, concurrency_limit
         )
         return dispatched, completed, failed + dispatch_failures, list(conflicts), False
+
+    def _retry_deferred_if_due(
+        self, config: ExecutionConfig, concurrency_limit: int
+    ) -> tuple[int, int]:
+        """Retry a capacity-deferred dispatch at the idle-rescan cadence."""
+        if not self._capacity_deferred:
+            return 0, 0
+        now = time.monotonic()
+        if now < self._deferred_retry_at:
+            return 0, 0
+        self._deferred_retry_at = now + IDLE_RESCAN_SECONDS
+        return self._dispatch_if_scheduling_open(config, concurrency_limit)
 
     def _dispatch_if_scheduling_open(
         self,

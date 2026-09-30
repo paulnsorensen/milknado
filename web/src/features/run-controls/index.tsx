@@ -5,6 +5,7 @@ import { registerSlot } from '../../app/slots';
 import { getState, pushNotice } from '../../app/store';
 import { cancelRun, forceStopRun, stopScheduling } from './commands';
 import { ConfirmDialog } from './ConfirmDialog';
+import { CANCEL_RUN_CONFIRM, FORCE_STOP_CONFIRM } from './confirmOptions';
 import { requestConfirm } from './confirmState';
 import { RunControlsSidecar } from './RunControlsSidecar';
 import { RunModeHeader } from './RunModeHeader';
@@ -20,22 +21,11 @@ export function register(): void {
 
   registerAction('run.cancel', () => {
     const runId = currentRunId() ?? '';
-    requestConfirm({
-      prompt: 'Cancel this run?',
-      dismissLabel: 'Keep the run',
-      confirmLabel: 'Cancel run',
-      action: () => void cancelRun(runId),
-    });
+    requestConfirm({ ...CANCEL_RUN_CONFIRM, action: () => void cancelRun(runId) });
   });
   registerAction('run.force-stop', () => {
     const runId = currentRunId() ?? '';
-    requestConfirm({
-      prompt: 'Force stop the run?',
-      body: 'The run stops now. It does not wait for the current turn. Changes that are not committed stay in the worktree.',
-      dismissLabel: 'Keep the run',
-      confirmLabel: 'Force stop',
-      action: () => void forceStopRun(runId),
-    });
+    requestConfirm({ ...FORCE_STOP_CONFIRM, action: () => void forceStopRun(runId) });
   });
   registerAction('scheduling.stop', () => {
     const activeRuns = getState().snapshot?.active_runs;

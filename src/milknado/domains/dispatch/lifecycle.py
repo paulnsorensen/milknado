@@ -16,6 +16,8 @@ from milknado.domains.common import (
     RunResult,
     WorktreeMode,
 )
+from milknado.domains.common.protocols import HostCapacityPort
+from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.isolate import (
@@ -54,6 +56,7 @@ class SyncDispatchRequest:
     worktree_mode: WorktreeMode = WorktreeMode.ISOLATE
     merge_back: bool = True
     worktree_pattern: str = ""
+    host_capacity: HostCapacityPort | None = None
 
 
 def _setup_sync_worktree(
@@ -125,7 +128,23 @@ def dispatch_node_sync(
             f"node {request.node_id} has kind={node.kind.value}; only task nodes can be dispatched"
         )
     run_id = make_run_id(request.node_id)
-    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    lease = claim_with_host_slot(
+        graph, request.host_capacity, (request.node_id, run_id), request.project_root
+    )
+    try:
+        return _run_claimed_node(graph, git, request, (node, run_id))
+    finally:
+        if lease is not None:
+            lease.release()
+
+
+def _run_claimed_node(
+    graph: MikadoGraph,
+    git: GitPort,
+    request: SyncDispatchRequest,
+    claimed: tuple[MikadoNode, str],
+) -> dict[str, object]:
+    node, run_id = claimed
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
     try:

@@ -1,15 +1,8 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false
-from dataclasses import replace
-
 import pytest
 
-from milknado.app.run_source import (
-    ActiveRunSnapshot,
-    ExecutionRunStatus,
-    RunActionAvailability,
-)
-from milknado.web import HostDependencies, WebCommands, observer_commands
-from tests.web.support import client, client_with_source, headers
+from milknado.web import HostDependencies, WebCommands, observer_commands, owner_commands
+from tests.web.support import client, headers
 
 
 def _commands(graph):
@@ -70,10 +63,13 @@ def test_session_input_rejects_malformed_payload(graph, payload, reason) -> None
     assert reason in response.json()["reason"]
 
 
-def test_session_input_rejection_includes_run_reason() -> None:
-    commands = WebCommands(session_input=lambda run_id, request: None)
-    test_client = client_with_source(commands)[0]
-    response = test_client.post(
+def test_session_input_rejection_surfaces_handler_reason() -> None:
+    def reject(run_id: str, request: object) -> None:
+        del run_id, request
+        raise ValueError("the run is not active")
+
+    commands = WebCommands(session_input=reject)
+    response = client(commands)[0].post(
         "/api/runs/run-1/session-input",
         json={"command_id": "cmd-rejected", "action": "interrupt"},
         headers=headers(),
@@ -83,31 +79,64 @@ def test_session_input_rejection_includes_run_reason() -> None:
     assert response.json()["reason"] == "Session input was rejected: the run is not active."
 
 
-def test_session_input_rejection_reports_unavailable_command_for_active_run() -> None:
+def test_session_input_rejection_falls_back_to_unavailable_when_handler_returns_none() -> None:
     commands = WebCommands(session_input=lambda run_id, request: None)
-    test_client, _, fixture = client_with_source(commands)
-    active_run = ActiveRunSnapshot(
-        run_id="run-1",
-        node_id=1,
-        description="Implement snapshots",
-        status=ExecutionRunStatus.RUNNING,
-        progress=None,
-        stop_requested=False,
-        actions=RunActionAvailability(),
-        output=(),
-        pending_guidance=None,
-        elapsed_seconds=0.0,
-        progress_pct=None,
-        eta_seconds=None,
-        attempt=None,
-        max_attempts=None,
-        stalled=False,
-    )
-    fixture.publish(replace(fixture.snapshot(), active_runs=(active_run,)))
-
-    response = test_client.post(
+    response = client(commands)[0].post(
         "/api/runs/run-1/session-input",
         json={"command_id": "cmd-rejected", "action": "interrupt"},
+        headers=headers(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "Session input was rejected: the command is unavailable."
+
+
+class _DecliningController:
+    def session_input(self, run_id, command) -> bool:
+        del run_id, command
+        return False
+
+    def cancel(self, run_id) -> dict[str, object] | None:
+        del run_id
+        return None
+
+    def force_stop(self, run_id, timeout: float = 10.0) -> bool:
+        del run_id, timeout
+        return False
+
+    def stop_scheduling(self) -> None:
+        return None
+
+
+def test_owner_session_input_reports_unavailable_when_controller_declines() -> None:
+    commands = owner_commands(_DecliningController())
+    response = client(commands)[0].post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-declined", "action": "interrupt"},
+        headers=headers(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "Session input was rejected: the command is unavailable."
+
+
+def test_session_input_rejection_reports_run_not_active_for_missing_run(graph) -> None:
+    commands = observer_commands(dependencies=HostDependencies(graph=graph))
+    response = client(commands)[0].post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-rejected", "action": "interrupt"},
+        headers=headers(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["reason"] == "Session input was rejected: the run is not active."
+
+
+def test_session_input_rejection_reports_unavailable_for_disallowed_action(graph) -> None:
+    commands = _commands(graph)
+    response = client(commands)[0].post(
+        "/api/runs/run-1/session-input",
+        json={"command_id": "cmd-rejected", "action": "follow_up", "text": "hi"},
         headers=headers(),
     )
 

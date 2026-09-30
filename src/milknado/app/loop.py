@@ -19,13 +19,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
-from milknado.adapters import GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.adapters import FlockSlotPool, GitAdapter, ProcessAdapter, TmuxAdapter
 from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
     RunFenceLostError,
     RunResult,
+    SlotLease,
     UnlandedWorkError,
     pid_alive,
 )
@@ -33,6 +34,7 @@ from milknado.domains.dispatch import (
     ProcessPort,
     RunWindow,
     build_worker_env,
+    claim_with_host_slot,
     ensure_tmux_ready,
     exit_code_path,
     fail_stale_running_runs,
@@ -44,7 +46,7 @@ from milknado.domains.dispatch import (
     runs_dir,
 )
 from milknado.domains.dispatch.reap import ReapRequest
-from milknado.domains.graph import ConcurrencyLimitReached, NodeWorkers
+from milknado.domains.graph import ConcurrencyLimitReached, NodeWorkers, HostCapacityFull
 
 _logger = logging.getLogger(__name__)
 
@@ -67,6 +69,7 @@ class LoopStartRequest:
     timeout_seconds: int
     use_tmux: bool
     root: Path
+    host_worker_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ class LoopClaim:
     target_branch: str
     base_oid: str
     stale_worktree: Path | None
+    lease: SlotLease | None = None
 
 
 def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) -> LoopClaim:
@@ -117,13 +121,15 @@ def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) 
     target_branch = git.current_branch()
     base_oid = git.resolve_ref(f"refs/heads/{target_branch}")
     run_id = make_run_id(request.node_id)
-    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    pool = FlockSlotPool(request.host_worker_limit) if request.host_worker_limit else None
+    lease = claim_with_host_slot(graph, pool, (request.node_id, run_id), request.root)
     return LoopClaim(
         run_id=run_id,
         node_id=request.node_id,
         target_branch=target_branch,
         base_oid=base_oid,
         stale_worktree=stale_worktree,
+        lease=lease,
     )
 
 
@@ -244,6 +250,7 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
     try:
         claim = _claim_loop(graph, git, request)
     except ConcurrencyLimitReached as exc:
+        host_full = isinstance(exc, HostCapacityFull)
         _logger.info(
             "loop dispatch deferred: node_id=%d running=%d limit=%d",
             request.node_id,
@@ -256,8 +263,11 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
             "running": exc.running,
             "limit": exc.limit,
             "detail": (
-                f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
-                "running; wait for a task to finish, then start this node again"
+                f"host worker pool full ({exc.running}/{exc.limit}), possibly held by "
+                + "other projects; wait for a worker to finish, then start this node again"
+                if host_full
+                else f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
+                + "running; wait for a task to finish, then start this node again"
             ),
         }
     run_started = False
@@ -277,6 +287,9 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
     except Exception as exc:
         _record_start_failure(graph, claim, exc, run_started=run_started)
         raise
+    finally:
+        if claim.lease is not None:
+            claim.lease.release()
     graph.runs.set_pid(claim.run_id, pid)
     graph.set_pid(request.node_id, claim.run_id, pid)
     _logger.info(

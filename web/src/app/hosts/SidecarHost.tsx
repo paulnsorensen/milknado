@@ -1,8 +1,8 @@
-import type { ReactElement } from "react";
-import { useSyncExternalStore } from "react";
-import { getActiveTab, subscribeTab } from "../../shared/node-detail";
-import { getState, selectedNodeId, subscribe } from "../store";
-import { renderSlot } from "./renderSlot";
+import type { ReactElement } from 'react';
+import { useSyncExternalStore } from 'react';
+import { getActiveTab, subscribeTab } from '../../shared/node-detail';
+import { getState, selectedNodeId, subscribe } from '../store';
+import { renderSlot } from './renderSlot';
 
 /**
  * The sidecar: the node or review panel, the owner-run actions, then the
@@ -16,7 +16,7 @@ export function SidecarHost(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
   const activeTab = useSyncExternalStore(subscribeTab, getActiveTab);
   const nodeSelected = selectedNodeId(store) !== null;
-  const wide = nodeSelected && activeTab === "changes";
+  const wide = nodeSelected && activeTab === 'changes';
 
   return (
     <aside data-region="sidecar" aria-label="Detail" className={wide ? 'is-wide' : undefined}>
@@ -27,11 +27,11 @@ export function SidecarHost(): ReactElement {
       {nodeSelected && <div data-region="run-controls">{renderSlot('run-controls')}</div>}
       {nodeSelected && (
         <div data-region="sidecar-tab" role="tablist" aria-label="Node detail">
-          {renderSlot("sidecar-tab")}
+          {renderSlot('sidecar-tab')}
         </div>
       )}
       {nodeSelected && (
-        <div data-region="sidecar-section">{renderSlot("sidecar-section")}</div>
+        <div data-region="sidecar-section">{renderSlot('sidecar-section')}</div>
       )}
     </aside>
   );

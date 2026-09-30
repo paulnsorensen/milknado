@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
+from typing_extensions import override
+
 import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
@@ -149,6 +151,17 @@ class ConcurrencyLimitReached(Exception):
         self.running: int = running
         self.limit: int = limit
         super().__init__(f"execution capacity is full ({running}/{limit})")
+
+
+class HostCapacityFull(ConcurrencyLimitReached):
+    """The host-wide worker pool has no free slot."""
+
+    def __init__(self, running: int, limit: int) -> None:
+        super().__init__(running, limit)
+
+    @override
+    def __str__(self) -> str:
+        return f"host worker capacity is full ({self.running}/{self.limit})"
 
 
 def claim_node(

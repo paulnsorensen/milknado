@@ -49,6 +49,10 @@ _logger = logging.getLogger(__name__)
 # ignored with a warning rather than crashing.
 _LOCAL_ONLY_KEYS = ("project_root", "db_path", "plugins")
 
+# Host-wide keys. A project config that sets them is warned about and ignored.
+_GLOBAL_ONLY_KEYS = ("host_worker_limit",)
+DEFAULT_HOST_WORKER_LIMIT = 6
+
 # Native Workflow ("ultracode") backend defaults. Coordinator-side knobs that the
 # subprocess dispatcher never reads; resolved per-flavor by resolve_flavor_profile.
 DEFAULT_WORKER_AGENT_TYPE = "milknado:milknado-worker"
@@ -70,6 +74,7 @@ class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
+    host_worker_limit: int = DEFAULT_HOST_WORKER_LIMIT
     project_root: Path = Path(".")
     db_path: Path = Path(".milknado/milknado.db")
     plugins: tuple[str, ...] = ()
@@ -160,6 +165,7 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
+    host_worker_limit: int = DEFAULT_HOST_WORKER_LIMIT
     db_path: str = ".milknado/milknado.db"
     plugins: tuple[str, ...] = ()
     stall_threshold_seconds: int = 300
@@ -179,6 +185,7 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
 
     def __post_init__(self) -> None:
         _ = validate_positive_int(self.plan_review_max_rounds, "[milknado] plan_review_max_rounds")
+        _ = validate_positive_int(self.host_worker_limit, "[milknado] host_worker_limit")
         _ = validate_positive_int(self.max_iterations, "[milknado] max_iterations")
         _ = validate_positive_int(self.max_turns, "[milknado] max_turns")
         _ = validate_loop_mode(self.loop_mode)
@@ -309,7 +316,17 @@ def default_config(project_root: Path) -> MilknadoConfig:
         execution_agent=resolve_execution_agent_command("claude"),
         project_root=project_root,
         db_path=project_root / ".milknado" / "milknado.db",
+        host_worker_limit=decode_milknado_section(_global_only_overrides()).host_worker_limit,
     )
+
+
+def _global_only_overrides() -> dict[str, object]:
+    """Read host-wide keys from the global config file, independent of inherit_global."""
+    global_path = global_config_path()
+    if not global_path.exists():
+        return {}
+    global_raw = _read_milknado_section(global_path)
+    return {key: global_raw[key] for key in _GLOBAL_ONLY_KEYS if key in global_raw}
 
 
 def global_config_path() -> Path:
@@ -339,6 +356,7 @@ def load_config(path: Path, *, include_global: bool = True) -> MilknadoConfig:
 def load_config_details(path: Path, *, include_global: bool = True) -> LoadedConfig:
     """Load config and preserve each supplied key's layer of origin."""
     local_raw = _read_milknado_section(path)
+    _drop_global_only_keys(local_raw, path)
     inherit_global, replaced_flavors = _extract_inheritance(local_raw, local=True)
     raw: dict[str, object] = {}
     origins: OriginMap = {}
@@ -356,6 +374,11 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
             record_origins(origins, global_raw, f"global:{global_path}")
+    elif include_global:
+        global_only = _global_only_overrides()
+        if global_only:
+            raw = _merge(raw, global_only)
+            record_origins(origins, global_only, f"global:{global_config_path()}")
 
     for flavor in replaced_flavors:
         flavors = raw.get("flavor")
@@ -588,6 +611,18 @@ def _warn_local_only_keys(global_raw: dict[str, object], path: Path) -> None:
         )
 
 
+def _drop_global_only_keys(local_raw: dict[str, object], path: Path) -> None:
+    leaked = [k for k in _GLOBAL_ONLY_KEYS if k in local_raw]
+    if leaked:
+        _logger.warning(
+            "project milknado config %s sets host-wide keys (%s); ignoring",
+            path,
+            ", ".join(leaked),
+        )
+    for key in leaked:
+        _ = local_raw.pop(key)
+
+
 def _reject_omp_tool_translation(section: MilknadoSection, family: str) -> None:
     """omp has no tool-list-to-flag translation; only an explicit command works."""
     if family != "omp":
@@ -637,6 +672,7 @@ def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConf
         worktree=section.worktree,
         worktree_pattern=section.worktree_pattern,
         concurrency_limit=section.concurrency_limit,
+        host_worker_limit=section.host_worker_limit,
         project_root=project_root,
         db_path=resolve_project_path(section.db_path, project_root, label="db_path"),
         plugins=section.plugins,

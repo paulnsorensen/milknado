@@ -1,8 +1,10 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearSlots, registerSlot } from '../../app/slots';
 import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
 import { NoticeToasts } from '../errors/NoticeToasts';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
+import { PendingPermissionIndicator } from '../session-input/PendingPermissionIndicator';
 import { NarrowList } from './NarrowList';
 
 function snapshotWithNodes(): RawStreamSnapshot {
@@ -64,6 +66,8 @@ function setHostOwnerCapabilities(): void {
     expect(screen.queryByText('Read-only')).toBeNull();
   });
   it('shows pending permission requests in the narrow header', () => {
+    clearSlots();
+    registerSlot('permission-status', () => <PendingPermissionIndicator />);
     setSnapshot({
       ...getState().snapshot!,
       capabilities: {
@@ -76,6 +80,7 @@ function setHostOwnerCapabilities(): void {
     expect(screen.getByRole('status', { name: 'Pending permission requests' })).toHaveTextContent(
       'Permission requested',
     );
+    clearSlots();
   });
 
   it('jumping to a known node id selects it', () => {

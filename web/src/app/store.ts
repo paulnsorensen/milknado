@@ -96,6 +96,7 @@ export function selectedNodeId(store: StoreState): number | null {
 export function canActOnSelectedRun(store: StoreState): boolean {
   const owner = store.capabilities?.owner;
   if (
+    !store.capabilities?.host_owner.available ||
     !owner?.available ||
     owner.run_id === undefined ||
     owner.node_id === undefined

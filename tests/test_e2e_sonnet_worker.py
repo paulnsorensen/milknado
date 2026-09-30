@@ -37,6 +37,8 @@ _AGENT = "claude --model claude-sonnet-4-6"
 _TIMEOUT = 300.0  # 5-minute ceiling — generous but finite
 
 _CLAUDE_MISSING = shutil.which("claude") is None
+# Captured at collection, before the session guard shadows agent CLIs on PATH.
+_REAL_PATH = os.environ.get("PATH", "")
 _KEY_MISSING = not os.environ.get("ANTHROPIC_API_KEY")
 _SKIP_REASON = (
     "claude CLI not found"
@@ -50,6 +52,15 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or "n/a"),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _allow_real_claude(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This live e2e module is the one deliberate user of the real claude CLI."""
+    monkeypatch.setenv("PATH", _REAL_PATH)
+
 
 # ---------------------------------------------------------------------------
 # Minimal CRG stub — satisfies CrgPort structurally; never actually called
