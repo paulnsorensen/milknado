@@ -14,8 +14,9 @@ import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
+from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
-from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
+from milknado.loop._process_lifecycle import spawn_protected
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
@@ -37,7 +38,7 @@ def test_helper_start_failure_closes_gated_worker_and_parent_pipes(
     monkeypatch.setattr(lifecycle, "_start_helper", fail_helper)
     try:
         with pytest.raises(RuntimeError, match="helper startup failed"):
-            spawn_protected(
+            _ = spawn_protected(
                 SpawnOptions(
                     (sys.executable, "-c", "raise AssertionError('gate opened')"),
                     tmp_path,
