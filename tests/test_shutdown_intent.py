@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import signal
 
+import pytest
+
 from milknado.app._shutdown import ShutdownIntent
 
 
-def test_first_signal_and_timestamp_remain_fixed(monkeypatch) -> None:
+def test_first_signal_and_timestamp_remain_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
     times = iter((10.0, 20.0))
     monkeypatch.setattr("milknado.app._shutdown.monotonic", lambda: next(times))
     intent = ShutdownIntent()
@@ -29,4 +31,14 @@ def test_installed_handlers_record_intent_and_restore_prior_handler() -> None:
         handler(signal.SIGINT, None)
         assert intent.signum == signal.SIGINT
 
+    assert signal.getsignal(signal.SIGINT) is prior
+
+
+def test_rearm_restores_intent_after_ui_replaces_handler() -> None:
+    prior = signal.getsignal(signal.SIGINT)
+    intent = ShutdownIntent()
+    with intent.installed():
+        _ = signal.signal(signal.SIGINT, signal.SIG_DFL)
+        intent.rearm()
+        assert signal.getsignal(signal.SIGINT) == intent.record
     assert signal.getsignal(signal.SIGINT) is prior

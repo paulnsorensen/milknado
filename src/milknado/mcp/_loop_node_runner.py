@@ -85,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
     from milknado.app.project import open_graph
+    from milknado.app.worker_recovery import reconcile_loop_workers
     from milknado.domains.common import resolve_flavor_profile
     from milknado.domains.execution import (
         ExecutionConfig,
@@ -108,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     graph.set_pid(args.node_id, args.run_id, pid)
     driver: RunLoop | None = None
     try:
+        reconcile_loop_workers(graph)
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
         git = GitAdapter(root)

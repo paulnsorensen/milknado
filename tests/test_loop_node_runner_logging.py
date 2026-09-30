@@ -17,6 +17,7 @@ def test_main_logs_terminal_event_with_run_id(
     finish_result, fail_run, expected_rc = case
     import milknado.adapters as adapters
     import milknado.app.project as project
+    import milknado.app.worker_recovery as worker_recovery
     import milknado.domains.execution as execution
     from milknado.domains.execution import NodeLoopOutcome
     from milknado.mcp import _loop_node_runner
@@ -118,6 +119,8 @@ def test_main_logs_terminal_event_with_run_id(
             confirmed.append(outcome.ownership_preserved)
             return outcome
 
+    recovered: list[_Graph] = []
+    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", recovered.append)
     monkeypatch.setattr(project, "open_graph", _open_graph)
     monkeypatch.setattr(adapters, "GitAdapter", _make_git)
     monkeypatch.setattr(adapters, "LoopAdapter", _make_loop)
@@ -143,6 +146,7 @@ def test_main_logs_terminal_event_with_run_id(
     )
 
     assert rc == expected_rc
+    assert recovered == [graph]
     assert confirmed == [fail_run]
     assert captured_configs[0]["brief_prepend"] == "Detached worker instruction."
     assert list((tmp_path / ".milknado").glob("run-*.log")) == []

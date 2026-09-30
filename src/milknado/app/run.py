@@ -383,10 +383,12 @@ def build_execution_controller(
     """Compose the sole UI-facing execution API from application dependencies."""
     graph.register_controller_master()
     from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
+    from milknado.app.worker_recovery import reconcile_loop_workers
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
     _ = reconcile_orphaned_runs(graph, ProcessAdapter())
+    reconcile_loop_workers(graph)
     shutdown_intent = ShutdownIntent()
     loop_adapter = LoopAdapter(graph=graph)
     loop_adapter.bind_shutdown_intent(lambda: shutdown_intent.requested)

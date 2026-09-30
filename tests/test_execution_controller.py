@@ -22,6 +22,7 @@ from milknado.app.run import (
     ExecutionRunStatus,
     ExecutionSnapshot,
     RunActionAvailability,
+    build_execution_controller,
 )
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
@@ -318,6 +319,21 @@ async def test_tui_quit_force_stops_real_controller_before_exit() -> None:
         assert await asyncio.to_thread(stopped.wait, 2.0)
         assert loop.stop_scheduling_calls == 0
         assert len(loop.force_stop_deadlines) == 1
+
+
+def test_controller_preflight_reconciles_unassociated_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.app.worker_recovery as worker_recovery
+
+    graph = MikadoGraph(tmp_path / "graph.db")
+    reconciled: list[MikadoGraph] = []
+    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", reconciled.append)
+    try:
+        _ = build_execution_controller(graph, _policy_config(), tmp_path)
+        assert reconciled == [graph]
+    finally:
+        graph.close()
 
 
 def test_project_and_watch_snapshots_share_pending_goal_review_filter(tmp_path: Path) -> None:

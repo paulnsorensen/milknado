@@ -114,6 +114,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     def on_mount(self) -> None:
         super().on_mount()
         if self._shutdown_intent is not None:
+            self._shutdown_intent.rearm()
             self.set_interval(0.05, self._check_shutdown)
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()

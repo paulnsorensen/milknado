@@ -25,6 +25,7 @@ class ShutdownIntent:
     def __init__(self) -> None:
         self.signum: int | None = None
         self.started_at: float | None = None
+        self._installed = False
 
     @property
     def requested(self) -> bool:
@@ -39,6 +40,13 @@ class ShutdownIntent:
     def deadline(self, timeout: float) -> float | None:
         return None if self.started_at is None else self.started_at + timeout
 
+    def rearm(self) -> None:
+        if not self._installed:
+            return
+        for signum in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+            if signum is not None:
+                signal.signal(signum, self.record)
+
     @contextmanager
     def installed(self) -> Iterator[None]:
         signals = [signal.SIGINT, signal.SIGTERM]
@@ -46,10 +54,11 @@ class ShutdownIntent:
             signals.append(hangup)
         previous = {signum: signal.getsignal(signum) for signum in signals}
         try:
-            for signum in signals:
-                signal.signal(signum, self.record)
+            self._installed = True
+            self.rearm()
             yield
         finally:
+            self._installed = False
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
 
