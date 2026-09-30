@@ -12,7 +12,8 @@ import pytest
 
 import milknado.loop._process_identity as process_identity
 from milknado.domains.common import WorkerIdentity
-from milknado.loop._process_lifecycle import SpawnOptions, spawn_gated, terminate_verified
+from milknado.loop._process_gate import SpawnOptions, spawn_gated
+from milknado.loop._process_lifecycle import terminate_verified
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX group identity is required")

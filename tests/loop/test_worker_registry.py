@@ -10,7 +10,7 @@ from pathlib import Path
 import psutil
 import pytest
 
-import milknado.loop._process_lifecycle as lifecycle
+import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
@@ -63,14 +63,14 @@ def test_registry_abort_covers_popen_returning_after_stop(
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     registry = WorkerRegistry()
     entered, release = threading.Event(), threading.Event()
-    real_spawn = lifecycle.spawn_gated
+    real_spawn = startup.spawn_gated
 
     def delayed_spawn(options: SpawnOptions):
         entered.set()
         assert release.wait(timeout=5)
         return real_spawn(options)
 
-    monkeypatch.setattr(lifecycle, "spawn_gated", delayed_spawn)
+    monkeypatch.setattr(startup, "spawn_gated", delayed_spawn)
     marker = tmp_path / "worked"
     errors: list[Exception] = []
 
