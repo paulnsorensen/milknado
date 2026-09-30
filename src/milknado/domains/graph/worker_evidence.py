@@ -173,9 +173,9 @@ class WorkerEvidenceStore:
             return _worker_persistence.live_workers(self._conn, node_id=selection.node_id)
         if isinstance(selection, RunWorkers):
             return _worker_persistence.live_workers(self._conn, run_id=selection.graph_run_id)
-        if type(selection) is not UnassociatedWorkers:
-            raise TypeError("worker selection required")
-        return _worker_persistence.live_workers(self._conn, unassociated=True)
+        if isinstance(cast(object, selection), UnassociatedWorkers):
+            return _worker_persistence.live_workers(self._conn, unassociated=True)
+        raise TypeError("worker selection required")
 
     def get(self, invocation_id: str) -> _worker_persistence.WorkerRecord | None:
         self._limit_wait()

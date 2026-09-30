@@ -196,7 +196,12 @@ def test_unassociated_worker_uses_same_durable_store(tmp_path: Path) -> None:
             WorkerOwner("runtime-1", 999999, 123.5),
             WorkerIdentity("inv-1", 2345, 2345, 123.5),
         )
+
+        class DerivedSelection(UnassociatedWorkers):
+            pass
+
         records = store.live_workers(UnassociatedWorkers())
+        assert store.live_workers(DerivedSelection()) == records
         assert len(records) == 1
         assert records[0].runtime_run_id == "runtime-1"
         assert records[0].graph_run_id is None
