@@ -8,7 +8,7 @@ from threading import Lock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import LoopPort
+    from milknado.domains.common import LoopPort
     from milknado.domains.execution.executor import Executor
 
 

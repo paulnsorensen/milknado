@@ -156,7 +156,9 @@ class LoopAdapter(LoopSessionMixin):
         return self._worker_registry.stop_all(deadline)
 
     def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
-        return self._worker_registry.stop_run_workers(graph_run_id, deadline)
+        stopped = self._worker_registry.stop_run_workers(graph_run_id, deadline)
+        graph = self._graph
+        return stopped and (graph is None or not graph.runs.live_workers(run_id=graph_run_id))
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.force_stop_and_join(run_id, timeout)
@@ -343,9 +345,19 @@ class LoopAdapter(LoopSessionMixin):
                 )
             local_manager.start_run(run.state.run_id)
             try:
-                return drain_review_run(
+                verdict = drain_review_run(
                     local_manager, run.state.run_id, local_queue, timeout_seconds
                 )
+                try:
+                    unconfirmed = self._graph is not None and any(
+                        record.runtime_run_id == run.state.run_id
+                        for record in self._graph.runs.live_workers(run_id=graph_run_id)
+                    )
+                except Exception as exc:
+                    raise UnconfirmedReviewStop(run.state.run_id) from exc
+                if unconfirmed:
+                    raise UnconfirmedReviewStop(run.state.run_id)
+                return verdict
             except UnconfirmedReviewStop as exc:
                 if self._graph is None or graph_run_id is None:
                     raise

@@ -114,6 +114,65 @@ def _stop_workers(
     return completed
 
 
+def _recoverable_records(
+    records: tuple[WorkerRecord, ...],
+    process: ProcessTerminationPort,
+    selection: NodeWorkers | RunWorkers | UnassociatedWorkers,
+) -> tuple[list[WorkerRecord], bool]:
+    recoverable: list[WorkerRecord] = []
+    complete = True
+    for record in records:
+        if isinstance(selection, UnassociatedWorkers):
+            state = process.supervisor_state(record.supervisor_pid, record.supervisor_start_token)
+            if state == "live":
+                continue
+            if state != "gone":
+                complete = False
+                _logger.error(
+                    "worker owner unresolved: invocation_id=%s supervisor_pid=%s state=%s",
+                    record.invocation_id,
+                    record.supervisor_pid,
+                    state,
+                )
+                continue
+        recoverable.append(record)
+    return recoverable, complete
+
+
+def _close_confirmed_records(
+    evidence: WorkerEvidenceStore,
+    prepared: tuple[WorkerRecord, ...],
+    outcomes: dict[str, WorkerCleanupResult],
+    deadline: float,
+) -> bool:
+    complete = True
+    for record in prepared:
+        result = outcomes.get(
+            record.invocation_id,
+            WorkerCleanupResult(False, ("worker recovery deadline expired",)),
+        )
+        if not result.covered_exited or time.monotonic() >= deadline:
+            complete = False
+            _logger.error(
+                "worker recovery unresolved: invocation_id=%s graph_run_id=%s "
+                + "node_id=%s identities=%s",
+                record.invocation_id,
+                record.graph_run_id,
+                record.node_id,
+                result.unresolved,
+            )
+            continue
+        try:
+            evidence.end(record.invocation_id, record.snapshot_seq)
+        except Exception:
+            complete = False
+            _logger.exception(
+                "worker recovery closure unresolved: invocation_id=%s",
+                record.invocation_id,
+            )
+    return complete
+
+
 def reap_orphaned_workers(
     graph: WorkerRecoveryPort, process: ProcessTerminationPort, request: ReapRequest
 ) -> bool:
@@ -123,25 +182,7 @@ def reap_orphaned_workers(
     try:
         with WorkerEvidenceStore(path, deadline=deadline) as evidence:
             records = evidence.live_workers(request.selection)
-            recoverable: list[WorkerRecord] = []
-            complete = True
-            for record in records:
-                if isinstance(request.selection, UnassociatedWorkers):
-                    state = process.supervisor_state(
-                        record.supervisor_pid, record.supervisor_start_token
-                    )
-                    if state == "live":
-                        continue
-                    if state != "gone":
-                        complete = False
-                        _logger.error(
-                            "worker owner unresolved: invocation_id=%s supervisor_pid=%s state=%s",
-                            record.invocation_id,
-                            record.supervisor_pid,
-                            state,
-                        )
-                        continue
-                recoverable.append(record)
+            recoverable, complete = _recoverable_records(records, process, request.selection)
             prepared = tuple(
                 refreshed
                 for record in recoverable
@@ -158,31 +199,7 @@ def reap_orphaned_workers(
                 )
                 return False
             outcomes = _stop_workers(process, prepared, deadline)
-            for record in prepared:
-                result = outcomes.get(
-                    record.invocation_id,
-                    WorkerCleanupResult(False, ("worker recovery deadline expired",)),
-                )
-                if not result.covered_exited or time.monotonic() >= deadline:
-                    complete = False
-                    _logger.error(
-                        "worker recovery unresolved: invocation_id=%s graph_run_id=%s "
-                        + "node_id=%s identities=%s",
-                        record.invocation_id,
-                        record.graph_run_id,
-                        record.node_id,
-                        result.unresolved,
-                    )
-                    continue
-                try:
-                    evidence.end(record.invocation_id, record.snapshot_seq)
-                except Exception:
-                    complete = False
-                    _logger.exception(
-                        "worker recovery closure unresolved: invocation_id=%s",
-                        record.invocation_id,
-                    )
-            return complete
+            return _close_confirmed_records(evidence, prepared, outcomes, deadline) and complete
     except Exception:
         _logger.exception("worker recovery evidence unavailable: selection=%s", request.selection)
         return False

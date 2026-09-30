@@ -132,8 +132,8 @@ class NodeDriverMixin(RunLoopState, ABC):
         outcome: TerminalRunOutcome,
         feature_branch: str,
     ) -> tuple[int, int, list[RebaseConflict]] | None:
-        if outcome.status == "failed" and not self._executor.stop_run(run_id, timeout=10.0):
-            _logger.error("worker did not exit; preserving ownership run_id=%s", run_id)
+        if not self._executor.stop_run(run_id, timeout=10.0):
+            _logger.error("worker cleanup unconfirmed; preserving ownership run_id=%s", run_id)
             return None
         try:
             return handle_completion(self, run_id, outcome, feature_branch)

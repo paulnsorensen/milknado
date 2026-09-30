@@ -1406,6 +1406,7 @@ class Executor:
                 tuple(VALID_TRANSITIONS[node.status]),
             )
 
+        self._require_worker_cleanup(node)
         self._validate_completion_target(node_id, feature_branch)
         worktree = Path(node.worktree_path) if node.worktree_path else None
         config = self._config_by_node.get(node_id)
@@ -1422,6 +1423,21 @@ class Executor:
             result,
             review_notification_failed=not notification.notification_succeeded,
         )
+
+    def _require_worker_cleanup(self, node: MikadoNode) -> None:
+        records = self._graph.runs.live_workers(node_id=node.id)
+        if records:
+            run_id = node.run_id or records[0].graph_run_id or records[0].runtime_run_id
+            raise PreservedWorkerRun(node.id, run_id, node.run_id)
+
+    def _settle_node_slot(self, node_id: int) -> None:
+        try:
+            current = self._graph.get_node(node_id)
+            self._slots.settle(
+                node_id, running=current is not None and current.status is NodeStatus.RUNNING
+            )
+        except Exception:
+            _logger.exception("host slot settle failed node_id=%d", node_id)
 
     def _mark_terminal(
         self, node: MikadoNode, status: NodeStatus, *, preserve_recovery: bool = False
@@ -1464,6 +1480,8 @@ class Executor:
     def finish_preserved_abort(self, node_id: int, owner_run_id: str, run_id: str) -> None:
         try:
             node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
             if (
                 node is not None
                 and node.status is NodeStatus.RUNNING
@@ -1483,12 +1501,14 @@ class Executor:
                 ),
             )
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)
 
     def fail(self, node_id: int, detail: str | None = None) -> None:
         try:
-            self._wt.ensure_clean(node_id)
             node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
+            self._wt.ensure_clean(node_id)
             preserved = self._discard_worktree(node_id, node, "failed") if node else None
             self._graph.mark_failed(node_id)
             self._finish_node_worker_run(
@@ -1502,7 +1522,7 @@ class Executor:
                 ),
             )
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)
 
     def cancel(self, node_id: int) -> None:
         """Clean a stopped run and make its graph node schedulable next invocation."""
@@ -1510,6 +1530,7 @@ class Executor:
             node = self._graph.get_node(node_id)
             if node is None:
                 raise ValueError(f"Node {node_id} not found")
+            self._require_worker_cleanup(node)
             self._finish_node_worker_run(
                 node_id,
                 RunResult(
@@ -1526,4 +1547,4 @@ class Executor:
             else:
                 self._graph.mark_pending(node_id)
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)
