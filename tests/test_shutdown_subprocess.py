@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import select
 import shlex
 import signal
 import sqlite3
@@ -9,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from threading import Thread
 
 import psutil
 import pytest
@@ -18,6 +18,23 @@ from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
+
+_PTY_OUTPUT: dict[int, bytearray] = {}
+
+
+def _drain_pty(fd: int) -> None:
+    output = _PTY_OUTPUT[fd]
+    while True:
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            return
+        if not chunk:
+            return
+        output.extend(chunk)
+        if len(output) > 65536:
+            del output[:-65536]
+
 
 _WORKER = """
 import json
@@ -83,10 +100,11 @@ def _start(
     )
     if injection is not None:
         env["PYTHONPATH"] = str(injection) + os.pathsep + env["PYTHONPATH"]
+    bootstrap = "from milknado.cli import app; app()"
     argv = [
         sys.executable,
         "-c",
-        "from milknado.cli import app; app()",
+        bootstrap,
         "run",
         "--project-root",
         str(repo),
@@ -106,6 +124,8 @@ def _start(
             )
         finally:
             os.close(slave)
+        _PTY_OUTPUT[master] = bytearray()
+        Thread(target=_drain_pty, args=(master,), daemon=True).start()
         return proc, master
     return subprocess.Popen(
         argv,
@@ -122,13 +142,7 @@ def _output(proc: subprocess.Popen[bytes], master: int | None) -> str:
     if master is None:
         assert proc.stdout is not None
         return proc.stdout.read().decode(errors="replace")
-    chunks = []
-    while select.select([master], [], [], 0.01)[0]:
-        try:
-            chunks.append(os.read(master, 65536))
-        except OSError:
-            break
-    return b"".join(chunks).decode(errors="replace")
+    return bytes(_PTY_OUTPUT[master]).decode(errors="replace")
 
 
 def _wait_exit(proc: subprocess.Popen[bytes], master: int | None) -> int:
@@ -173,6 +187,7 @@ def _owned_cleanup(proc: subprocess.Popen[bytes], pid_file: Path, master: int | 
             child.wait(timeout=3)
     if master is not None:
         os.close(master)
+        _PTY_OUTPUT.pop(master, None)
     if proc.stdout is not None:
         proc.stdout.close()
 
