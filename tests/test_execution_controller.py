@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from operator import attrgetter
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 from typing_extensions import override
 
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal
 from milknado.app.run import (
     ActiveRunSnapshot,
     ExecutionController,
@@ -71,6 +73,7 @@ class FakeLoop:
     cancelled: list[str] = field(default_factory=list)
     force_stops: list[tuple[str, float]] = field(default_factory=list)
     stop_scheduling_calls: int = 0
+    force_stop_deadlines: list[float] = field(default_factory=list)
 
     def state(self) -> RunLoopState:
         return self.current_state
@@ -102,6 +105,10 @@ class FakeLoop:
 
     def force_stop(self, run_id: str, timeout: float) -> bool:
         self.force_stops.append((run_id, timeout))
+        return True
+
+    def force_stop_active(self, deadline: float) -> bool:
+        self.force_stop_deadlines.append(deadline)
         return True
 
 
@@ -210,6 +217,50 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.cancelled == ["run-1"]
     assert loop.force_stops == [("run-1", 2.5)]
     assert loop.stop_scheduling_calls == 1
+
+
+def test_force_stop_all_calls_loop_without_control_queue() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    start = monotonic()
+
+    assert controller.force_stop_all(timeout=1.0) is True
+    assert len(loop.force_stop_deadlines) == 1
+    assert start + 1.0 <= loop.force_stop_deadlines[0] <= monotonic() + 1.0
+
+
+def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
+    started = Event()
+    release = Event()
+    intent = ShutdownIntent()
+
+    class BlockedLoop(FakeLoop):
+        def run(self, **kwargs: object) -> str:
+            del kwargs
+            started.set()
+            _ = release.wait(2.0)
+            return "result"
+
+    loop = BlockedLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config(),
+        shutdown_intent=intent,
+    )
+    signaler = Thread(target=lambda: (started.wait(), intent.record(signal.SIGTERM, None)))
+    signaler.start()
+    start = monotonic()
+    try:
+        with pytest.raises(ShutdownSignal) as caught:
+            _ = controller.run(feature_branch="feature")
+    finally:
+        release.set()
+        signaler.join(1.0)
+
+    assert caught.value.signum == signal.SIGTERM
+    assert monotonic() - start < 1.0
+    assert loop.force_stop_deadlines == [intent.deadline(8.0)]
 
 
 def test_project_and_watch_snapshots_share_pending_goal_review_filter(tmp_path: Path) -> None:

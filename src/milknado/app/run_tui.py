@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.screen import ModalScreen
@@ -160,8 +160,19 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             action, run_id = request
             if action == "force" and run_id is not None:
                 _ = self._force_stop(run_id)
-            elif action in {"quit", "stop"}:
+            elif action == "quit":
+                _ = self._quit_after_force_stop()
+            elif action == "stop":
                 _ = self._stop_scheduling()
+
+    @work(thread=True, group="controls", exclusive=False)
+    def _quit_after_force_stop(self) -> None:
+        confirmed = self.controller.force_stop_all()
+        if not confirmed:
+            _ = self.call_from_thread(
+                self.notify, "Force-stop cleanup did not finish in time.", severity="warning"
+            )
+        _ = self.call_from_thread(self.exit)
 
     def action_stop_scheduling(self) -> None:  # noqa: V105 - Textual binding action
         if self.snapshot.active_runs or self._execution_in_flight():

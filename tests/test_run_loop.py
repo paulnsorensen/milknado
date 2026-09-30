@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
+from threading import Event, Thread
+from time import monotonic
 from typing import Protocol, TypeVar, cast
 from unittest.mock import MagicMock, patch
 
@@ -290,6 +292,7 @@ class FakeLoop:
         self._progress_before_completion: list[ProgressEvent] = []
         self.requested_stops: list[str] = []
         self.force_stops: list[tuple[str, float | None]] = []
+        self.stop_active_deadlines: list[float] = []
         self._ordinal_to_run_id: dict[str, str] = {}
         self._run_id_to_ordinal: dict[str, str] = {}
 
@@ -350,6 +353,10 @@ class FakeLoop:
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         self.force_stops.append((run_id, timeout))
         self._runs[run_id].state.force_stop_requested = True
+        return True
+
+    def stop_active_workers(self, deadline: float) -> bool:
+        self.stop_active_deadlines.append(deadline)
         return True
 
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
@@ -494,6 +501,41 @@ def executor(
     fake_crg: FakeCrg,
 ) -> Executor:
     return Executor(graph=graph, git=fake_git, loop=fake_loop, crg=fake_crg)
+
+
+def test_shutdown_intent_refuses_dispatch_before_main_stop(
+    graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop, config: ExecutionConfig
+) -> None:
+    root = graph.add_node("root")
+    _ = graph.add_node("leaf", parent_id=root.id)
+    run_loop = RunLoop(
+        executor=executor,
+        graph=graph,
+        loop=fake_loop,
+        shutdown_requested=lambda: True,
+    )
+
+    result = run_loop.run(config, "feature", interactive=False)
+
+    assert result.dispatched_total == 0
+    assert fake_loop.list_runs() == []
+
+
+def test_force_stop_active_closes_admission_without_scheduling_lock(
+    run_loop: RunLoop, fake_loop: FakeLoop
+) -> None:
+    lock = run_loop._scheduling_lock  # pyright: ignore[reportPrivateUsage]
+    finished = Event()
+    deadline = monotonic() + 1.0
+    lock.acquire()
+    try:
+        worker = Thread(target=lambda: (run_loop.force_stop_active(deadline), finished.set()), daemon=True)
+        worker.start()
+        assert finished.wait(0.5)
+        assert fake_loop.stop_active_deadlines == [deadline]
+        assert run_loop._scheduling_stopped is True  # pyright: ignore[reportPrivateUsage]
+    finally:
+        lock.release()
 
 
 def test_state_is_bounded_and_published(

@@ -76,6 +76,7 @@ class RunLoop(NodeDriverMixin):
         loop: LoopPort,
         config: MilknadoConfig | None = None,
         planner: Planner | None = None,
+        shutdown_requested: Callable[[], bool] | None = None,
     ) -> None:
         self._executor: Executor = executor
         self._graph: MikadoGraph = graph
@@ -106,6 +107,7 @@ class RunLoop(NodeDriverMixin):
         self._idle_sleep: Callable[[float], None] = time.sleep
         self._completion_wait_started: float = 0.0
         self._scheduling_stopped: bool = False
+        self._shutdown_requested = shutdown_requested
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
         self._spec: tuple[str | None, Path | None] = (None, None)
@@ -212,6 +214,14 @@ class RunLoop(NodeDriverMixin):
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
         stopped = self._executor.force_stop_run(run_id, timeout)
         self._publish_state()
+        return stopped
+
+    def force_stop_active(self, deadline: float) -> bool:
+        self._scheduling_stopped = True
+        stopped = self._loop.stop_active_workers(deadline)
+        for run_id in tuple(self._active):
+            remaining = max(0.0, deadline - time.monotonic())
+            stopped = self._executor.force_stop_run(run_id, remaining) and stopped
         return stopped
 
     def admit_stop_scheduling(self) -> None:
@@ -346,7 +356,9 @@ class RunLoop(NodeDriverMixin):
             if self._strict and self._failure_triggered:
                 return 0
             with self._scheduling_lock:
-                if self._scheduling_stopped:
+                if self._scheduling_stopped or (
+                    self._shutdown_requested is not None and self._shutdown_requested()
+                ):
                     return 0
             self._idle_settled_graph = settle_once(
                 self._graph,
@@ -420,7 +432,9 @@ class RunLoop(NodeDriverMixin):
         concurrency_limit: int,
     ) -> tuple[int, int]:
         with self._scheduling_lock:
-            if self._scheduling_stopped:
+            if self._scheduling_stopped or (
+                self._shutdown_requested is not None and self._shutdown_requested()
+            ):
                 return 0, 0
             return self._dispatch_batch(config, concurrency_limit)
 
@@ -431,7 +445,9 @@ class RunLoop(NodeDriverMixin):
         config: ExecutionConfig,
     ) -> VerifyOutcome | None:
         with self._scheduling_lock:
-            if self._scheduling_stopped:
+            if self._scheduling_stopped or (
+                self._shutdown_requested is not None and self._shutdown_requested()
+            ):
                 return None
             if spec_text:
                 outcome = self._maybe_verify_spec(spec_text, spec_path, config)
@@ -496,6 +512,8 @@ class RunLoop(NodeDriverMixin):
         dispatched = 0
         failed = 0
         for node_id in dispatchable[:available]:
+            if self._shutdown_requested is not None and self._shutdown_requested():
+                break
             node = self._graph.get_node(node_id)
             desc = summarize_description(node.description) if node else str(node_id)
             node_config = config

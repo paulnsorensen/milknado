@@ -8,17 +8,20 @@ from __future__ import annotations
 
 import logging
 import shlex
+import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
-from queue import Queue
-from threading import Event, Lock, Thread
+from queue import Empty, Queue
+from threading import Event, Lock, Thread, current_thread, main_thread
 from typing import TYPE_CHECKING, cast, final
 
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
+from milknado.app._shutdown import STOP_TIMEOUT_SECONDS, ShutdownIntent, ShutdownSignal
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -114,12 +117,14 @@ class ExecutionController:
         concurrency_limit: int,
         config: MilknadoConfig,
         graph: MikadoGraph | None = None,
+        shutdown_intent: ShutdownIntent | None = None,
     ) -> None:
         self._loop = loop
         self._execution_config = execution_config
         self._concurrency_limit = concurrency_limit
         self._config = config
         self._graph = graph
+        self.shutdown_intent = shutdown_intent or ShutdownIntent()
         self._controls: Queue[_ControlRequest] = Queue()
         self._state_lock = Lock()
         self._listeners: set[Callable[[ExecutionSnapshot], None]] = set()
@@ -167,13 +172,33 @@ class ExecutionController:
                     self._running = False
                     self._reject_pending_controls()
 
-        worker = Thread(target=execute, name="milknado-execution", daemon=True)
-        worker.start()
-        outcome = outcomes.get()
-        worker.join()
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
+        handlers = (
+            self.shutdown_intent.installed()
+            if current_thread() is main_thread()
+            else nullcontext()
+        )
+        with handlers:
+            worker = Thread(target=execute, name="milknado-execution", daemon=True)
+            worker.start()
+            return self._await_execution(outcomes)
+
+    def _await_execution(self, outcomes: Queue[RunLoopResult | BaseException]) -> RunLoopResult:
+        while True:
+            if signum := self.shutdown_intent.signum:
+                deadline = self.shutdown_intent.deadline(STOP_TIMEOUT_SECONDS)
+                assert deadline is not None
+                if not self._force_stop_until(deadline):
+                    _logger.warning("shutdown cleanup remains unresolved after signal %d", signum)
+                raise ShutdownSignal(signum)
+            try:
+                outcome = outcomes.get(timeout=0.05)
+            except Empty:
+                continue
+            if self.shutdown_intent.requested:
+                continue
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
 
     def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
         """Return the controller's current immutable presentation snapshot."""
@@ -328,6 +353,27 @@ class ExecutionController:
 
     def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
         return bool(self._control("force_stop", run_id, timeout))
+
+    def force_stop_all(self, timeout: float = STOP_TIMEOUT_SECONDS) -> bool:
+        return self._force_stop_until(time.monotonic() + timeout)
+
+    def _force_stop_until(self, deadline: float) -> bool:
+        outcomes: Queue[bool | BaseException] = Queue(maxsize=1)
+
+        def stop() -> None:
+            try:
+                outcomes.put(self._loop.force_stop_active(deadline))
+            except BaseException as exc:
+                outcomes.put(exc)
+
+        Thread(target=stop, name="milknado-force-stop", daemon=True).start()
+        try:
+            outcome = outcomes.get(timeout=max(0.0, deadline - time.monotonic()))
+        except Empty:
+            return False
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
     def stop_scheduling(self) -> None:
         """Stop admitting new work and request terminal completion of active runs."""
