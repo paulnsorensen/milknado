@@ -1,8 +1,9 @@
 # Deep-module reliability TUI evidence
 
-These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with source `e6bc9030fba7514bb1ee2045028b8d466aed36a9`.
-The after source includes the TUI change from `966c3df`.
-Presentation files did not change between the requested checkpoint `51731144` and the captured revision.
+These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with source `605059eb6b57f98231c14692e862f9cb75e75667`.
+The after source includes the TUI change from `966c3df` and the signal rearm from `605059e`.
+Only the signal rearm changed presentation inputs after the first after capture.
+The eight after PNGs remained byte-identical.
 The [after manifest](./after/manifest.json) records SHA-256 hashes for seven presentation inputs.
 
 ## Reproduce
@@ -17,7 +18,7 @@ work=$(mktemp -d)
 before="$work/before"
 after="$work/after"
 git worktree add --detach "$before" 37e942cc9102f63d9bf93c4c21c94fdcaf8716c8
-git worktree add --detach "$after" e6bc9030fba7514bb1ee2045028b8d466aed36a9
+git worktree add --detach "$after" 605059eb6b57f98231c14692e862f9cb75e75667
 python="${PYTHON:?Set PYTHON to an installed Python environment}"
 script="$evidence/docs/tui-captures/deep-module-reliability/capture.py"
 captures="$evidence/.context/deep-module-reliability"
@@ -59,8 +60,11 @@ Watch `q` exited locally with zero fixture stop calls at both sizes.
 
 The warning appears on stderr after Textual exits.
 The [standard transcript](./after/run-unconfirmed-stop-warning-120x40.txt) and [compact transcript](./after/run-unconfirmed-stop-warning-80x24.txt) contain that exact warning.
+The two after-only PNGs render the transcripts through a labeled synthetic Textual view and the same SVG-to-PNG path.
+Both PNGs were opened: the warning fits without clipping or wrapping, and the synthetic label remains visible.
+No interactive focus or key hint applies after exit.
 The fixture returned `False` from `force_stop_all()` once per transcript.
-The transcript fixture patches `ExecutionApp.run`; it tests the wrapper's post-exit warning, not terminal rendering or live cleanup.
+The fixture patches `ExecutionApp.run`; it tests the wrapper warning, not a live worker or terminal exit.
 
 ## Reviewer-accessible pairs
 
@@ -70,6 +74,7 @@ The transcript fixture patches `ExecutionApp.run`; it tests the wrapper's post-e
 | run quit confirmation | [before](./before/run-quit-confirmation-120x40.png) / [after](./after/run-quit-confirmation-120x40.png) | [before](./before/run-quit-confirmation-80x24.png) / [after](./after/run-quit-confirmation-80x24.png) |
 | run graceful stop confirmation | [before](./before/run-stop-confirmation-120x40.png) / [after](./after/run-stop-confirmation-120x40.png) | [before](./before/run-stop-confirmation-80x24.png) / [after](./after/run-stop-confirmation-80x24.png) |
 | watch main | [before](./before/watch-main-120x40.png) / [after](./after/watch-main-120x40.png) | [before](./before/watch-main-80x24.png) / [after](./after/watch-main-80x24.png) |
+| post-exit warning (new after-only state) | no before state / [after](./after/run-unconfirmed-stop-warning-120x40.png) | no before state / [after](./after/run-unconfirmed-stop-warning-80x24.png) |
 
 ## Limits
 

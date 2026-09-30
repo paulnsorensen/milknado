@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 from playwright.async_api import async_playwright
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.widgets import Static
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent-steering"))
 
@@ -26,6 +28,21 @@ from milknado.app.watch_tui import WatchApp
 
 SIZES = ((120, 40), (80, 24))
 STATES = {"run": ("main", "quit-confirmation", "stop-confirmation"), "watch": ("main",)}
+
+
+class WarningTranscriptApp(App[None]):
+    CSS = "#warning { padding: 1 2; }"
+
+    def __init__(self, warning: str) -> None:
+        super().__init__()
+        self.warning = warning
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            f"Synthetic post-exit stderr transcript (wrapper only)\n\n{self.warning}",
+            id="warning",
+            markup=False,
+        )
 
 
 class CaptureSource(Source):
@@ -89,7 +106,7 @@ async def render_pngs(output: Path, records: list[dict]) -> None:
         await browser.close()
 
 
-def capture_warning(output: Path) -> list[dict]:
+async def capture_warning(output: Path) -> list[dict]:
     from milknado.app._shutdown import ShutdownIntent
 
     records = []
@@ -110,6 +127,13 @@ def capture_warning(output: Path) -> list[dict]:
             raise AssertionError(f"Unexpected {width}x{height} warning transcript: {warning!r}")
         stem = f"run-unconfirmed-stop-warning-{width}x{height}"
         (output / f"{stem}.txt").write_text(warning, encoding="utf-8")
+        app = WarningTranscriptApp(warning)
+        app.theme = "textual-dark"
+        async with app.run_test(size=(width, height)) as pilot:
+            await pilot.pause()
+            (output / f"{stem}.svg").write_text(
+                app.export_screenshot(title="Synthetic post-exit stderr"), encoding="utf-8"
+            )
         records.append({"stem": stem, "size": [width, height], "force_stop_all_calls": 1})
     return records
 
@@ -140,8 +164,9 @@ def publish_pngs(output: Path, destination: Path, root: Path, revision: str) -> 
         name = f"{record['stem']}.png"
         shutil.copyfile(output / name, destination / name)
     for record in manifest.get("warning_records", []):
-        name = f"{record['stem']}.txt"
-        shutil.copyfile(output / name, destination / name)
+        for suffix in (".png", ".txt"):
+            name = f"{record['stem']}{suffix}"
+            shutil.copyfile(output / name, destination / name)
     shutil.copyfile(manifest_path, destination / "manifest.json")
 
 
@@ -163,7 +188,8 @@ async def main(args: argparse.Namespace) -> None:
             for surface, states in STATES.items():
                 for state in states:
                     records.append(await capture(output, surface, state, size))
-    await render_pngs(output, records)
+    warning_records = await capture_warning(output) if args.warning else []
+    await render_pngs(output, [*records, *warning_records])
     manifest = {
         "source_revision": revision,
         "presentation_sha256": presentation_hashes(root),
@@ -177,7 +203,7 @@ async def main(args: argparse.Namespace) -> None:
             "Chromium renders Textual SVG; this does not prove terminal palette fidelity.",
         ],
         "records": records,
-        "warning_records": capture_warning(output) if args.warning else [],
+        "warning_records": warning_records,
     }
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"{revision}: {len(records)} SVG and PNG pairs in {output}")
