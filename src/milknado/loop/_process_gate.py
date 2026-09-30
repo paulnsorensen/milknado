@@ -8,6 +8,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import final
 
 import psutil
 
@@ -26,6 +27,7 @@ class SpawnOptions:
     invocation_id: str | None = None
 
 
+@final
 class WorkerProcess:
     def __init__(
         self,
@@ -43,7 +45,7 @@ class WorkerProcess:
         gate_fd = self._gate_fd
         self._gate_fd = None
         try:
-            os.write(gate_fd, b"R")
+            _ = os.write(gate_fd, b"R")
         finally:
             os.close(gate_fd)
 
@@ -90,7 +92,7 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
         if gate_write is not None:
             os.close(gate_write)
         proc.kill()
-        proc.wait(timeout=1)
+        _ = proc.wait(timeout=1)
         raise
     identity = WorkerIdentity(options.invocation_id or uuid.uuid4().hex, proc.pid, proc.pid, token)
     return WorkerProcess(proc, identity, gate_write)

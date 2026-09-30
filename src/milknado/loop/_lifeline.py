@@ -51,9 +51,7 @@ class EvidenceStore(Protocol):
 
 
 def _worker(record: WorkerEvidence) -> WorkerIdentity:
-    return WorkerIdentity(
-        record.invocation_id, record.pid, record.pgid, record.start_token
-    )
+    return WorkerIdentity(record.invocation_id, record.pid, record.pgid, record.start_token)
 
 
 def _current(record: WorkerEvidence | None, helper: HelperIdentity) -> bool:
@@ -90,8 +88,12 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
     worker = _worker(record)
     if record.observation_owner is None:
         key = ObservationKey(
-            helper.invocation_id, "helper", record.snapshot_seq + 1,
-            helper.generation, helper.pid, helper.start_token,
+            helper.invocation_id,
+            "helper",
+            record.snapshot_seq + 1,
+            helper.generation,
+            helper.pid,
+            helper.start_token,
         )
         try:
             store.begin(key)
@@ -124,7 +126,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
 def run_lifeline(read_fd: int, helper: HelperIdentity, store: EvidenceStore) -> int:
     """Arm EOF before READY; on parent loss persist discovery before signaling."""
     with selectors.DefaultSelector() as selector:
-        selector.register(read_fd, selectors.EVENT_READ)
+        _ = selector.register(read_fd, selectors.EVENT_READ)
         record = _await_record(store, helper, time.monotonic() + 8)
         if record is None:
             return 1
@@ -132,11 +134,15 @@ def run_lifeline(read_fd: int, helper: HelperIdentity, store: EvidenceStore) -> 
             return 1
         if not store.ready(helper, record.snapshot_seq):
             return 1
-        print(
-            f"READY {helper.invocation_id} {helper.generation} {helper.pid} "
-            f"{helper.start_token} {record.snapshot_seq}",
-            flush=True,
+        parts = (
+            "READY",
+            helper.invocation_id,
+            str(helper.generation),
+            str(helper.pid),
+            str(helper.start_token),
+            str(record.snapshot_seq),
         )
+        print(" ".join(parts), flush=True)
         while True:
             if selector.select(timeout=1) and os.read(read_fd, 1) == b"":
                 return _cleanup(store, helper, time.monotonic() + 3)

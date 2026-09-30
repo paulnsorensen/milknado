@@ -64,7 +64,7 @@ from milknado.domains.execution._review import (
     persist_review_findings,
 )
 from milknado.domains.execution._stop import (
-    _LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    LOOP_CANCEL_STOP_TIMEOUT_SECS,
     force_stop_graph_run,
     stop_graph_run,
 )
@@ -825,7 +825,7 @@ class Executor:
         backoff)`` once force_stop_run itself resolved either way.
         """
         try:
-            stopped = self.force_stop_run(run_id, timeout=_LOOP_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for cancelled loop run %s; row left "
@@ -1094,8 +1094,7 @@ class Executor:
             # start a second worker (race) while the first is still live.
             # Withhold release until the stop is confirmed (or nothing was
             # ever started, where stop_confirmed defaults True) — the next
-            # _dispatch_once attempt then hits claim_node failing and raises
-            # ValueError, which the retry loop does not retry.
+            # _dispatch_once attempt then fails at claim_node.
             if release_claim and stop_confirmed:
                 _ = self._graph.release(node_id, owner_run_id)
         except Exception:
@@ -1124,7 +1123,7 @@ class Executor:
     def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
         """Force-stop and finalize a loop run abandoned after start."""
         try:
-            stopped = self.force_stop_run(run_id, timeout=_LOOP_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for aborted loop run %s (%s); row left running",

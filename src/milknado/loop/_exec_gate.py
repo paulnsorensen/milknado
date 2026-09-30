@@ -18,7 +18,6 @@ def main() -> int:
         return 72
     command = sys.argv[2:]
     os.execvpe(command[0], command, os.environ)
-    return 72
 
 
 if __name__ == "__main__":

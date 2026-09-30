@@ -47,7 +47,7 @@ def _await_ready(helper: subprocess.Popen[str], expected: str, deadline: float) 
     return False
 
 
-def _stop_failed_helper(helper: subprocess.Popen[str], deadline: float) -> None:
+def stop_failed_helper(helper: subprocess.Popen[str], deadline: float) -> None:
     if helper.poll() is None and time.monotonic() < deadline:
         with suppress(ProcessLookupError):
             helper.terminate()
@@ -123,5 +123,5 @@ def start_helper(
         return helper, write_fd
     except Exception:
         os.close(write_fd)
-        _stop_failed_helper(helper, request.deadline)
+        stop_failed_helper(helper, request.deadline)
         raise

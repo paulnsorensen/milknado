@@ -12,9 +12,9 @@ from typing import TYPE_CHECKING, Final, cast
 import psutil
 
 from milknado.adapters._loop_local_runs import (
-    _drain_review_run,
-    _drain_verify_run,
-    _UnconfirmedReviewStop,
+    UnconfirmedReviewStop,
+    drain_review_run,
+    drain_verify_run,
 )
 from milknado.adapters._loop_session import LoopSessionMixin
 from milknado.adapters._loop_types import ReviewVerdict
@@ -36,12 +36,9 @@ from milknado.domains.common import (
 from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
 from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker,
-    ProtectionContext,
-    SpawnOptions,
-    spawn_protected,
-)
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData
@@ -303,7 +300,7 @@ class LoopAdapter(LoopSessionMixin):
                 cast(object, local_run.emitter),
             ).queue
             local_manager.start_run(run_id)
-            return _drain_verify_run(local_manager, run_id, ev_queue)
+            return drain_verify_run(local_manager, run_id, ev_queue)
 
     def run_node_review(
         self,
@@ -346,10 +343,10 @@ class LoopAdapter(LoopSessionMixin):
                 )
             local_manager.start_run(run.state.run_id)
             try:
-                return _drain_review_run(
+                return drain_review_run(
                     local_manager, run.state.run_id, local_queue, timeout_seconds
                 )
-            except _UnconfirmedReviewStop as exc:
+            except UnconfirmedReviewStop as exc:
                 if self._graph is None or graph_run_id is None:
                     raise
                 graph_run = self._graph.runs.get(graph_run_id)

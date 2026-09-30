@@ -145,7 +145,9 @@ def terminate_verified(
         return ("POSIX identity cleanup unavailable",)
     descendants = tuple(sorted(set(retained)))
     leader = identity_state(worker.pid, worker.start_token)
-    errors = {f"worker identity {leader}"} if leader in ("mismatch", "unknown") else set()
+    errors: set[str] = (
+        {f"worker identity {leader}"} if leader in ("mismatch", "unknown") else set()
+    )
     _signal_targets(worker, descendants, signal.SIGTERM, deadline)
     _wait_targets(worker, descendants, min(deadline, time.monotonic() + 0.5))
     if time.monotonic() < deadline:

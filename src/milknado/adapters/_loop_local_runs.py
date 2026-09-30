@@ -16,7 +16,7 @@ from milknado.loop._events import Event, EventData
 _logger = logging.getLogger(__name__)
 
 
-def _drain_verify_run(
+def drain_verify_run(
     local_manager: RunManager,
     run_id: str,
     ev_queue: queue.Queue[Event[EventData]],
@@ -51,7 +51,7 @@ def _drain_verify_run(
     return _parse_verify_output("\n".join(output_parts))
 
 
-class _UnconfirmedReviewStop(RuntimeError):
+class UnconfirmedReviewStop(RuntimeError):
     def __init__(self, run_id: str) -> None:
         super().__init__(f"reviewer stop was not confirmed: {run_id}")
 
@@ -61,11 +61,11 @@ def _require_review_stop(local_manager: RunManager, run_id: str) -> None:
         if local_manager.stop_and_join(run_id, timeout=5.0):
             return
     except Exception as exc:
-        raise _UnconfirmedReviewStop(run_id) from exc
-    raise _UnconfirmedReviewStop(run_id)
+        raise UnconfirmedReviewStop(run_id) from exc
+    raise UnconfirmedReviewStop(run_id)
 
 
-def _drain_review_run(
+def drain_review_run(
     local_manager: RunManager,
     run_id: str,
     ev_queue: queue.Queue[Event[EventData]],
@@ -99,7 +99,7 @@ def _drain_review_run(
                     output_parts.append(text)
             elif event.type == EventType.RUN_STOPPED:
                 break
-    except _UnconfirmedReviewStop:
+    except UnconfirmedReviewStop:
         raise
     except Exception as exc:
         _logger.exception("node review drain failed for run_id=%s", run_id)

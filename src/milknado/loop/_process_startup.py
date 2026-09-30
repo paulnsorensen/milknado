@@ -13,19 +13,19 @@ from typing import Protocol, TypeVar
 
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
-from milknado.loop._process_helper import HelperStart, _stop_failed_helper
+from milknado.loop._process_helper import HelperStart, stop_failed_helper
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 from milknado.loop._process_observation import snapshot as _snapshot
 from milknado.loop._process_registry import LaunchTicket
 
 
 class _ProtectedStart(Protocol):
-    _ticket: LaunchTicket | None
+    ticket: LaunchTicket | None
 
     def start_monitor(self) -> None: ...
     def shutdown(self, deadline: float) -> bool: ...
     def cleanup(self, *, deadline: float) -> bool: ...
-    def _close_lifeline(self) -> None: ...
+    def close_lifeline(self) -> None: ...
 
 
 TWorker = TypeVar("TWorker", bound=_ProtectedStart)
@@ -64,8 +64,11 @@ def spawn_protected(
             ticket.close()
         raise
     if ticket is not None and not ticket.bind_pending(worker.close_gate):
-        _ = worker.process.wait(timeout=3)
-        ticket.close()
+        try:
+            _ = worker.process.wait(timeout=3)
+        finally:
+            _close_pipes(worker)
+            ticket.close()
         raise RuntimeError("worker admission closed during launch")
     acquired = _StartupAcquisition(worker, context, ticket)
     deadline = time.monotonic() + 8
@@ -79,7 +82,7 @@ def spawn_protected(
         )
         protected = worker_type(worker, acquired.helper, acquired.write_fd, context)
         acquired.protected = protected
-        protected._ticket = ticket
+        protected.ticket = ticket
         if ticket is not None:
             if not ticket.activate(worker.release, protected.shutdown):
                 raise RuntimeError("worker admission closed before READY")
@@ -110,15 +113,23 @@ def _abort_start(acquired: _StartupAcquisition) -> None:
     finally:
         if acquired.protected is not None:
             with suppress(OSError):
-                acquired.protected._close_lifeline()
+                acquired.protected.close_lifeline()
         elif acquired.write_fd is not None:
             with suppress(OSError):
                 os.close(acquired.write_fd)
         if acquired.helper is not None:
             with suppress(OSError, RuntimeError):
-                _stop_failed_helper(acquired.helper, deadline)
+                stop_failed_helper(acquired.helper, deadline)
+        _close_pipes(worker)
         if acquired.ticket is not None:
             acquired.ticket.close()
+
+
+def _close_pipes(worker: WorkerProcess) -> None:
+    for pipe in (worker.process.stdin, worker.process.stdout, worker.process.stderr):
+        if pipe is not None:
+            with suppress(OSError, ValueError):
+                pipe.close()
 
 
 def _end_unprotected(worker: WorkerProcess, context: ProtectionContext, deadline: float) -> None:

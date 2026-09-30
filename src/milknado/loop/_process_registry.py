@@ -6,10 +6,12 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from typing import final
 
 _log = logging.getLogger(__name__)
 
 
+@final
 class LaunchTicket:
     def __init__(self, registry: WorkerRegistry, graph_run_id: str | None) -> None:
         self._registry = registry
@@ -19,13 +21,13 @@ class LaunchTicket:
 
     @property
     def cancelled(self) -> bool:
-        with self._registry._lock:
-            return self._registry._requested()
+        with self._registry.lock:
+            return self._registry.requested()
 
     def bind_pending(self, close_gate: Callable[[], None]) -> bool:
-        with self._registry._lock:
+        with self._registry.lock:
             self._gate_close = close_gate
-            cancelled = self._registry._requested()
+            cancelled = self._registry.requested()
         if cancelled:
             close_gate()
         return not cancelled
@@ -33,15 +35,15 @@ class LaunchTicket:
     def activate(
         self, release_gate: Callable[[], None], shutdown: Callable[[float], bool]
     ) -> bool:
-        with self._registry._lock:
-            if self._registry._requested():
+        with self._registry.lock:
+            if self._registry.requested():
                 return False
             self._shutdown = shutdown
             release_gate()
             return True
 
     def stop(self, deadline: float) -> bool:
-        with self._registry._lock:
+        with self._registry.lock:
             close_gate, shutdown = self._gate_close, self._shutdown
         if shutdown is not None:
             return shutdown(deadline)
@@ -50,45 +52,46 @@ class LaunchTicket:
         return False
 
     def close(self) -> None:
-        with self._registry._lock:
-            self._registry._tickets.discard(self)
+        with self._registry.lock:
+            self._registry.tickets.discard(self)
 
 
+@final
 class WorkerRegistry:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._tickets: set[LaunchTicket] = set()
+        self.lock = threading.Lock()
+        self.tickets: set[LaunchTicket] = set()
         self._stopping = False
         self._deadline: float | None = None
         self._shutdown_intent: Callable[[], bool] = lambda: False
 
     def bind_shutdown_intent(self, requested: Callable[[], bool]) -> None:
-        with self._lock:
+        with self.lock:
             self._shutdown_intent = requested
 
-    def _requested(self) -> bool:
+    def requested(self) -> bool:
         return self._stopping or self._shutdown_intent()
 
     def reserve(self, graph_run_id: str | None = None) -> LaunchTicket:
-        with self._lock:
-            if self._requested():
+        with self.lock:
+            if self.requested():
                 raise RuntimeError("worker admission is closed")
             ticket = LaunchTicket(self, graph_run_id)
-            self._tickets.add(ticket)
+            self.tickets.add(ticket)
             return ticket
 
     def stop_all(self, deadline: float) -> bool:
-        with self._lock:
+        with self.lock:
             self._stopping = True
             self._deadline = deadline if self._deadline is None else min(self._deadline, deadline)
-            active = tuple(self._tickets)
+            active = tuple(self.tickets)
             effective_deadline = self._deadline
         return self._stop_tickets(active, effective_deadline)
 
     def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
-        with self._lock:
+        with self.lock:
             active = tuple(
-                ticket for ticket in self._tickets if ticket.graph_run_id == graph_run_id
+                ticket for ticket in self.tickets if ticket.graph_run_id == graph_run_id
             )
         return self._stop_tickets(active, deadline)
 

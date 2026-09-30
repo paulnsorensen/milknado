@@ -6,7 +6,7 @@ import time
 
 from milknado.domains.common import LoopPort
 
-_LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
+LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
 
 
 def stop_graph_run(
@@ -23,7 +23,7 @@ def force_stop_graph_run(
     loop: LoopPort, unconfirmed: set[str], run_id: str, timeout: float | None
 ) -> bool:
     deadline = time.monotonic() + (
-        timeout if timeout is not None else _LOOP_CANCEL_STOP_TIMEOUT_SECS
+        timeout if timeout is not None else LOOP_CANCEL_STOP_TIMEOUT_SECS
     )
     unconfirmed.add(run_id)
     try:

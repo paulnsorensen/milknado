@@ -19,7 +19,7 @@ from milknado.loop.sessions import is_supported
 class LoopSessionMixin:
     def __init__(self, agent: str = "", graph: MikadoGraph | None = None) -> None:
         self._manager: RunManager = RunManager()
-        self._worker_registry = WorkerRegistry()
+        self._worker_registry: WorkerRegistry = WorkerRegistry()
         self._queue: queue.Queue[Event[EventData]] = queue.Queue()
         self._emitter: QueueEmitter = QueueEmitter(self._queue)
         self._agent: str = agent
