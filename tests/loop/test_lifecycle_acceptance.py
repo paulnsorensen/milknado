@@ -228,7 +228,7 @@ def test_helper_replacement_keeps_bidirectional_worker_and_exit_status(tmp_path:
         graph.close()
 
 
-def test_repeated_ready_helper_deaths_stop_worker_after_three_launches(tmp_path: Path) -> None:
+def test_repeated_ready_helper_deaths_stop_worker_after_three_replacements(tmp_path: Path) -> None:
     graph, node_id = _graph(tmp_path)
     worker = _protected(
         graph,
@@ -236,12 +236,12 @@ def test_repeated_ready_helper_deaths_stop_worker_after_three_launches(tmp_path:
         "import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)",
     )
     try:
-        for generation in range(3):
+        for generation in range(4):
             record = graph.runs.get_worker(worker.identity.invocation_id)
             assert record is not None and record.ready_generation == generation
             assert record.helper_pid is not None
             os.kill(record.helper_pid, signal.SIGKILL)
-            if generation < 2:
+            if generation < 3:
                 assert _until(
                     lambda expected=generation + 1: (
                         (current := graph.runs.get_worker(worker.identity.invocation_id))
@@ -253,7 +253,7 @@ def test_repeated_ready_helper_deaths_stop_worker_after_three_launches(tmp_path:
         assert _until(lambda: worker.process.poll() is not None, timeout=8)
         assert worker.process.returncode == -signal.SIGKILL
         record = graph.runs.get_worker(worker.identity.invocation_id)
-        assert record is not None and record.helper_generation == 2
+        assert record is not None and record.helper_generation == 3
         assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
     finally:
         if worker.process.poll() is None:
