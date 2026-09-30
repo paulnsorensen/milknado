@@ -32,6 +32,7 @@ from milknado.domains.common import (
 )
 from milknado.domains.dispatch import (
     ProcessPort,
+    ReapRequest,
     RunWindow,
     build_worker_env,
     claim_with_host_slot,
@@ -45,7 +46,6 @@ from milknado.domains.dispatch import (
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.dispatch.reap import ReapRequest
 from milknado.domains.graph import ConcurrencyLimitReached, NodeWorkers, HostCapacityFull
 
 _logger = logging.getLogger(__name__)

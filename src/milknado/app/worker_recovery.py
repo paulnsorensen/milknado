@@ -7,8 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 from milknado.adapters import ProcessAdapter
-from milknado.domains.dispatch import reap_orphaned_workers
-from milknado.domains.dispatch.reap import ReapRequest
+from milknado.domains.dispatch import ReapRequest, reap_orphaned_workers
 from milknado.domains.graph import (
     UnassociatedWorkers,
     default_worker_db_path,

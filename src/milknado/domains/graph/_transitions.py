@@ -226,8 +226,7 @@ def release(
         + "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
         + "WHERE id = ? AND run_id = ? AND status = 'running'"
         + (
-            " AND NOT EXISTS (SELECT 1 FROM run_workers "
-            "WHERE node_id = ? AND ended_at IS NULL)"
+            " AND NOT EXISTS (SELECT 1 FROM run_workers WHERE node_id = ? AND ended_at IS NULL)"
             if reclaim
             else ""
         ),

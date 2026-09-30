@@ -39,7 +39,7 @@ from milknado.domains.dispatch.ports import (
     RunWindow,
     TmuxPort,
 )
-from milknado.domains.dispatch.reap import reap_orphaned_workers
+from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     reconcile_node_status,
@@ -61,6 +61,7 @@ __all__ = [
     "AsyncRunRequest",
     "AsyncStartRef",
     "RUN_ID_RE",
+    "ReapRequest",
     "RunResult",
     "IsolateContext",
     "MergeBackResult",
