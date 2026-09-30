@@ -68,12 +68,12 @@ import os
 import sys
 import time
 from pathlib import Path
-value = sys.stdin.readline().strip()
-Path(sys.argv[1]).write_text(f'{os.getpid()}:{value}')
-print(f'before:{value}', flush=True)
+Path(sys.argv[1]).write_text(str(os.getpid()))
+print('before', flush=True)
 while not Path(sys.argv[2]).exists():
     time.sleep(.02)
-print('{"type":"result","result":"after"}', flush=True)
+value = sys.stdin.readline().strip()
+print(f'{{"type":"result","result":"after:{value}"}}', flush=True)
 raise SystemExit(11)
 """
     owned: list[ProtectedWorker] = []
@@ -100,7 +100,7 @@ raise SystemExit(11)
             worker = owned[0]
             before = graph.runs.get_worker(worker.identity.invocation_id)
             assert before is not None and before.helper_pid is not None
-            assert stage.read_text() == f"{before.pid}:request"
+            assert stage.read_text() == str(before.pid)
             os.kill(before.helper_pid, signal.SIGKILL)
             assert _until(lambda: _replacement_ready(graph, worker, 1))
             after = graph.runs.get_worker(worker.identity.invocation_id)
@@ -108,8 +108,9 @@ raise SystemExit(11)
             release.touch()
             result = future.result(timeout=10)
         assert result.returncode == 11
-        assert result.result_text == "after"
-        assert "before:request" in result.captured_stdout
+        assert result.result_text == "after:request"
+        assert result.captured_stdout is not None
+        assert "before\n" in result.captured_stdout
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         release.touch()
@@ -213,6 +214,7 @@ def test_stale_ready_generation_cannot_replace_current_helper(tmp_path: Path) ->
     try:
         first = graph.runs.get_worker(worker.identity.invocation_id)
         assert first is not None and first.helper_pid is not None
+        assert first.helper_start_token is not None
         os.kill(first.helper_pid, signal.SIGKILL)
         assert _until(lambda: _replacement_ready(graph, worker, 1))
         with pytest.raises(RuntimeError, match="stale helper generation"):
@@ -227,7 +229,6 @@ def test_stale_ready_generation_cannot_replace_current_helper(tmp_path: Path) ->
         after = graph.runs.get_worker(worker.identity.invocation_id)
         assert after is not None and after.ready_generation == 1
         assert after.helper_pid != first.helper_pid
-        assert first.helper_start_token is not None
         assert not graph.runs.ready_helper(
             HelperIdentity(
                 worker.identity.invocation_id, 0, first.helper_pid, first.helper_start_token

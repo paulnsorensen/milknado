@@ -11,7 +11,6 @@ from pathlib import Path
 import psutil
 import pytest
 
-import milknado.loop._process_helper as process_helper
 import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerIdentity, WorkerOwner
@@ -124,7 +123,7 @@ def test_hung_replacement_keeps_finite_deadline_and_stops_worker(
     try:
         before = graph.runs.get_worker(worker.identity.invocation_id)
         assert before is not None and before.helper_pid is not None
-        monkeypatch.setattr(process_helper.sys, "executable", str(fake))
+        monkeypatch.setattr(sys, "executable", str(fake))
         start = time.monotonic()
         os.kill(before.helper_pid, signal.SIGKILL)
         assert _until(lambda: worker.process.poll() is not None, timeout=10)
@@ -248,7 +247,7 @@ def test_repeated_pre_ready_helper_crashes_use_three_replacements(
     try:
         before = graph.runs.get_worker(worker.identity.invocation_id)
         assert before is not None and before.helper_pid is not None
-        monkeypatch.setattr(lifecycle.sys, "executable", str(fake))
+        monkeypatch.setattr(sys, "executable", str(fake))
         os.kill(before.helper_pid, signal.SIGKILL)
         assert _until(lambda: worker.process.poll() is not None)
         record = graph.runs.get_worker(worker.identity.invocation_id)
