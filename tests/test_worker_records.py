@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -197,3 +199,48 @@ def test_unassociated_worker_uses_same_durable_store(tmp_path: Path) -> None:
         assert records[0].graph_run_id is None
         assert records[0].node_id is None
         assert records[0].supervisor_pid == 999999
+
+
+
+def test_concurrent_first_open_uses_complete_current_schema(tmp_path: Path) -> None:
+    path = tmp_path / "workers.db"
+
+    def open_store() -> None:
+        with open_standalone_worker_evidence(path) as store:
+            assert store.live_workers(UnassociatedWorkers()) == ()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(open_store) for _ in range(2)]
+        for future in futures:
+            future.result()
+    with sqlite3.connect(path) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {"run_workers", "runs", "nodes"} <= tables
+
+
+def test_graph_worker_admission_rechecks_run_after_writer_lock(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        node = graph.add_node("worker")
+        graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+        locked = Event()
+
+        def finish_run() -> None:
+            with sqlite3.connect(graph.db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("UPDATE runs SET status='failed' WHERE run_id='run-1'")
+                locked.set()
+                time.sleep(0.1)
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(finish_run)
+            assert locked.wait(1)
+            with pytest.raises(RuntimeError, match="running run not found"):
+                graph.runs.record_worker(
+                    WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+                    WorkerIdentity("inv-1", 2345, 2345, 123.5),
+                )
+            future.result()
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        graph.close()

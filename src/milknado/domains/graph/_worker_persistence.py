@@ -87,24 +87,29 @@ def record_worker(conn: sqlite3.Connection, owner: WorkerOwner, worker: WorkerId
         raise ValueError("graph run and node association must be set together")
     if not owner.runtime_run_id or owner.supervisor_pid <= 0 or owner.supervisor_start_token <= 0:
         raise ValueError("invalid worker owner")
-    if owner.graph_run_id is not None:
-        row = fetchone(
-            conn, "SELECT node_id FROM runs WHERE run_id = ? AND status = 'running'",
-            (owner.graph_run_id,),
-        )
-        if row is None or row[0] != owner.node_id:
-            raise RuntimeError(f"running run not found: {owner.graph_run_id}")
     now = datetime.now(UTC).isoformat()
-    conn.execute(
+    columns = (
         "INSERT INTO run_workers "
         "(runtime_run_id, supervisor_pid, supervisor_start_token, graph_run_id, node_id, "
         "invocation_id, pid, pgid, start_token, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (owner.runtime_run_id, owner.supervisor_pid, owner.supervisor_start_token,
-         owner.graph_run_id, owner.node_id, worker.invocation_id, worker.pid,
-         worker.pgid, worker.start_token, now),
     )
+    values = (
+        owner.runtime_run_id, owner.supervisor_pid, owner.supervisor_start_token,
+        worker.invocation_id, worker.pid, worker.pgid, worker.start_token, now,
+    )
+    if owner.graph_run_id is None:
+        cur = conn.execute(
+            columns + "VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)", values,
+        )
+    else:
+        cur = conn.execute(
+            columns + "SELECT ?, ?, ?, run_id, node_id, ?, ?, ?, ?, ? FROM runs "
+            "WHERE run_id = ? AND node_id = ? AND status = 'running'",
+            (*values, owner.graph_run_id, owner.node_id),
+        )
     conn.commit()
+    if cur.rowcount != 1:
+        raise RuntimeError(f"running run not found: {owner.graph_run_id}")
 
 
 def live_workers(

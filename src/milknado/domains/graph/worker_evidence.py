@@ -10,9 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, cast
 
+from filelock import FileLock
+
 import milknado.domains.graph._worker_persistence as _worker_persistence
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
-from milknado.domains.graph._persistence import SCHEMA_VERSION
+from milknado.domains.graph._persistence import SCHEMA_VERSION, create_tables, migrate
 from milknado.domains.graph._sqlite_rows import fetchone
 
 
@@ -66,18 +68,26 @@ def open_standalone_worker_evidence(
     if not parent.exists():
         parent.mkdir(mode=0o700, parents=True)
     _check_private(parent, directory=True)
-    if not path.exists():
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(descriptor)
-        try:
-            with sqlite3.connect(path) as conn:
-                conn.execute(_worker_persistence.CREATE_RUN_WORKERS)
-                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-        except Exception:
-            path.unlink()
-            raise
-    _check_private(path, directory=False)
-    return WorkerEvidenceStore(path, deadline=deadline)
+    except FileExistsError:
+        _check_private(lock_path, directory=False)
+    timeout = 1 if deadline is None else max(0, deadline - time.monotonic())
+    with FileLock(lock_path, timeout=timeout):
+        if not path.exists():
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
+            try:
+                with sqlite3.connect(path) as conn:
+                    create_tables(conn)
+                    migrate(conn)
+            except Exception:
+                path.unlink()
+                raise
+        _check_private(path, directory=False)
+        return WorkerEvidenceStore(path, deadline=deadline)
 
 
 class WorkerEvidenceStore:
@@ -131,6 +141,10 @@ class WorkerEvidenceStore:
     def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
         self._limit_wait()
         _worker_persistence.record_worker(self._conn, owner, worker)
+
+    def record_helper(self, helper: HelperIdentity) -> None:
+        self._limit_wait()
+        _worker_persistence.record_helper(self._conn, helper)
 
     def live_workers(
         self, selection: WorkerSelection
