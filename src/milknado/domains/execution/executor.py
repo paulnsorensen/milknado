@@ -703,12 +703,8 @@ class Executor:
         try:
             self._spawn_loop_cancel_watcher(run_id, config.project_root)
         except Exception:
-            # The run is live but its id never escapes _create_loop_run, so
-            # the caller's cleanup cannot see it: tear it down here with the
-            # same confirmed-stop + fenced-finalize discipline as every other
-            # dispatch-abort path. Record the outcome for _dispatch_once's
-            # cleanup so an UNCONFIRMED stop preserves the worktree and fails
-            # loud instead of defaulting to discard under a possibly-live loop.
+            # The run ID cannot reach caller cleanup. Preserve the worktree
+            # when its stop cannot be confirmed.
             stop_confirmed = self._stop_aborted_run(
                 run_id, context=f"post-start setup failed for node {node.id}"
             )
@@ -1067,19 +1063,9 @@ class Executor:
         started_run_id: str | None = None,
         stop_confirmed: bool | None = None,
     ) -> bool:
-        # The loop run may already have been started when dispatch aborted
-        # (fence loss / set_dispatched_at failure): stop it and finalize its
-        # runs row before the worktree it writes into is discarded, so it
-        # can't leak as a live loop with an unrecoverable zombie 'running'
-        # row. On an UNCONFIRMED stop the row stays 'running' and the
-        # worktree is kept — tearing it out from under a live loop is worse
-        # than a recoverable leftover directory.
-        #
-        # stop_confirmed carries a teardown result across the post-start
-        # window: _create_loop_run already stopped the run there (its id
-        # never escaped), so cleanup must NOT stop it again — only honor the
-        # outcome. None means cleanup owns the stop attempt for
-        # started_run_id (the fence-loss paths).
+        # A supplied stop result prevents a second stop of a run whose ID
+        # never escaped _create_loop_run. An unconfirmed stop preserves the
+        # running row and worktree for recovery.
         if stop_confirmed is None:
             stop_confirmed = True
             if started_run_id is not None:
@@ -1088,13 +1074,7 @@ class Executor:
                     context=f"failed-dispatch cleanup for node {node_id}",
                 )
         try:
-            # An unconfirmed stop means the abandoned loop may still be
-            # alive and writing into wt_path: releasing the claim here would
-            # let the caller's transient-retry loop reclaim the node and
-            # start a second worker (race) while the first is still live.
-            # Withhold release until the stop is confirmed (or nothing was
-            # ever started, where stop_confirmed defaults True) — the next
-            # _dispatch_once attempt then fails at claim_node.
+            # Keep the claim while the old worker may still write to wt_path.
             if release_claim and stop_confirmed:
                 _ = self._graph.release(node_id, owner_run_id)
         except Exception:
@@ -1378,12 +1358,7 @@ class Executor:
         try:
             return self._complete(node_id, feature_branch)
         finally:
-            try:
-                current = self._graph.get_node(node_id)
-                in_flight = current is not None and current.status is NodeStatus.RUNNING
-                self._slots.settle(node_id, running=in_flight)
-            except Exception:
-                _logger.exception("host slot settle failed node_id=%d", node_id)
+            self._settle_node_slot(node_id)
 
     def _complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)

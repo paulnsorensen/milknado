@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, cast
@@ -229,9 +230,6 @@ class _SessionExecution:
         elif returncode is None or returncode < 0:
             returncode = 0
         signal = self.spec.completion_signal
-        completion_detected = bool(
-            signal and has_promise_completion(self.outcome.result_text, signal)
-        )
         return AgentResult(
             returncode=returncode,
             timed_out=self.outcome.timed_out,
@@ -240,7 +238,9 @@ class _SessionExecution:
             session_id=self.outcome.session_id,
             result_text=self.outcome.result_text,
             captured_stdout=context.stdout_tail.text,
-            completion_detected=completion_detected,
+            completion_detected=bool(
+                signal and has_promise_completion(self.outcome.result_text, signal)
+            ),
             captured_stderr=context.stderr_tail.text,
             force_stopped=self.outcome.force_stopped,
             interrupted=self.outcome.interrupted and self.outcome.interrupt_requested,
@@ -249,19 +249,16 @@ class _SessionExecution:
         )
 
     def cleanup(self) -> None:
-        try:
+        with ExitStack() as cleanup:
+            if self.wind_down is not None:
+                _ = cleanup.callback(self.wind_down.cleanup)
+            if self.log_handle is not None:
+                _ = cleanup.callback(self.log_handle.close)
             if self.protected is not None:
                 if not self.protected.cleanup(tuple(self.threads), stop=self.stop):
                     raise RuntimeError("worker cleanup remains unresolved")
             elif self.proc is not None:
                 cleanup_process(self.proc, self.stop, tuple(self.threads))
-        finally:
-            try:
-                if self.log_handle is not None:
-                    self.log_handle.close()
-            finally:
-                if self.wind_down is not None:
-                    self.wind_down.cleanup()
 
 
 def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecution:
