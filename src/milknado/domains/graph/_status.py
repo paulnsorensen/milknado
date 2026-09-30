@@ -321,7 +321,7 @@ def try_reclaim(
         return False
 
     def mutate() -> bool:
-        return _transitions.release(conn, node_id, owner_run_id)
+        return _transitions.release(conn, node_id, owner_run_id, reclaim=True)
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid),

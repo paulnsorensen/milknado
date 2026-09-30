@@ -195,7 +195,9 @@ def claim_node(
         raise
 
 
-def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
+def release(
+    conn: sqlite3.Connection, node_id: int, owner_run_id: str, *, reclaim: bool = False
+) -> bool:
     """Flip a RUNNING node back to PENDING, clearing ownership, gated on run_id.
 
     Used by try_reclaim to free a provably-dead owner and by dispatch cleanup to
@@ -209,8 +211,14 @@ def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
     cur = conn.execute(
         "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
         + "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
-        + "WHERE id = ? AND run_id = ? AND status = 'running'",
-        (node_id, owner_run_id),
+        + "WHERE id = ? AND run_id = ? AND status = 'running'"
+        + (
+            " AND NOT EXISTS (SELECT 1 FROM run_workers "
+            "WHERE node_id = ? AND ended_at IS NULL)"
+            if reclaim
+            else ""
+        ),
+        (node_id, owner_run_id, node_id) if reclaim else (node_id, owner_run_id),
     )
     conn.commit()
     return cur.rowcount == 1

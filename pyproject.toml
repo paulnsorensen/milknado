@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn>=0.35.0",
     "sse-starlette>=3.0.0",
     "filelock>=3.19.1",
+    "psutil>=7.0.0",
     "pywin32>=311; sys_platform == 'win32'",
 ]
 

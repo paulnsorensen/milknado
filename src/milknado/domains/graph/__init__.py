@@ -58,6 +58,7 @@ from milknado.domains.graph.status_flow import (
     validate_todo_status,
 )
 from milknado.domains.graph.traversals import walk_ancestors
+from milknado.domains.graph.worker_evidence import WorkerEvidenceStore
 
 __all__ = [
     "admit_session_command",
@@ -94,6 +95,7 @@ __all__ = [
     "ObserverSnapshot",
     "RunFenceLostError",
     "RunRecord",
+    "WorkerEvidenceStore",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",
