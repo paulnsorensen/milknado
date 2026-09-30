@@ -90,7 +90,7 @@ def _reconcile_cancel(
         if worktree.exists():
             try:
                 git.remove_worktree(worktree)
-            except Exception as exc:  # noqa: BLE001 - retain worktree on any git failure
+            except Exception as exc:
                 _logger.warning(
                     "cancel preserving worktree: run_id=%s worktree=%s: %s",
                     run_id,

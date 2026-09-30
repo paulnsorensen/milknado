@@ -1,10 +1,4 @@
-"""Application-layer policy for detached, worktree-isolated loop runs.
-
-The MCP ``milknado_run_loop_start`` tool is a thin registration veneer over
-``start_loop_run`` here, which owns the claim/spawn policy and constructs the
-git / process / tmux adapters. Entry modules therefore build no adapters and
-hold no dispatch policy inline.
-"""
+"""Application policy and adapter composition for detached loop runs."""
 
 from __future__ import annotations
 
@@ -46,7 +40,7 @@ from milknado.domains.dispatch import (
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.graph import ConcurrencyLimitReached, NodeWorkers, HostCapacityFull
+from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull, NodeWorkers
 
 _logger = logging.getLogger(__name__)
 
@@ -234,12 +228,7 @@ def _record_start_failure(
 
 
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
-    """Claim a task node and spawn its detached loop; return the run state dict.
-
-    Returns a deferred result instead when the graph is at its concurrency limit.
-    Owns the adapter composition (git, process, tmux) and the claim/spawn policy
-    so the MCP tool never constructs an adapter or holds this policy inline.
-    """
+    """Claim a task node and spawn its detached loop, or return a deferred result."""
     graph.register_controller_master()
     reconcile_loop_workers(graph)
     _ = reconcile_orphaned_runs(graph, ProcessAdapter())
