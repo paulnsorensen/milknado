@@ -6,6 +6,7 @@ import os
 import sqlite3
 import stat
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, cast
@@ -80,7 +81,7 @@ def open_standalone_worker_evidence(
         raise ValueError("worker evidence path must be absolute")
     parent = path.parent
     if not parent.exists():
-        parent.mkdir(mode=0o700, parents=True)
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     _check_private(parent, directory=True)
     lock_path = path.with_suffix(path.suffix + ".lock")
     try:
@@ -94,7 +95,7 @@ def open_standalone_worker_evidence(
             descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             os.close(descriptor)
             try:
-                with sqlite3.connect(path) as conn:
+                with closing(sqlite3.connect(path)) as conn, conn:
                     create_tables(conn)
                     migrate(conn)
             except Exception:
