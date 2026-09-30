@@ -28,22 +28,34 @@ def signal_project(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     agent = bin_dir / "claude"
-    agent.write_text(
-        f"#!{sys.executable}\n"
-        "import os, time\n"
-        "from pathlib import Path\n"
-        f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
-        "while True: time.sleep(1)\n"
+    _ = agent.write_text(
+        "\n".join(
+            (
+                f"#!{sys.executable}",
+                "import os, time",
+                "from pathlib import Path",
+                f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))",
+                "while True: time.sleep(1)",
+            )
+        )
+        + "\n"
     )
-    agent.chmod(0o755)
-    (root / "milknado.toml").write_text(
-        '[milknado]\nagent_family = "claude"\n'
-        'execution_agent = "claude -p"\nquality_gates = ["true"]\n'
-        "max_iterations = 1\n"
+    _ = agent.chmod(0o755)
+    _ = (root / "milknado.toml").write_text(
+        "\n".join(
+            (
+                "[milknado]",
+                'agent_family = "claude"',
+                'execution_agent = "claude -p"',
+                'quality_gates = ["true"]',
+                "max_iterations = 1",
+            )
+        )
+        + "\n"
     )
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
-    subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
-    subprocess.run(
+    _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    _ = subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
+    _ = subprocess.run(
         [
             "git",
             "-c",
@@ -131,9 +143,10 @@ def test_actual_runner_handles_signal_before_exiting(
         if record.ended_at is None:
             node = graph.get_node(node_id)
             assert node is not None and node.run_id == run_id
-            assert graph.runs.get(run_id)["status"] == "running"
+            run_state = graph.runs.get(run_id)
+            assert run_state is not None and run_state["status"] == "running"
             assert node.worktree_path is not None and Path(node.worktree_path).exists()
     finally:
         if proc.poll() is None:
             proc.kill()
-        proc.wait(timeout=2)
+        _ = proc.wait(timeout=2)

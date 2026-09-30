@@ -7,6 +7,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TypedDict
 
 import psutil
 import pytest
@@ -20,6 +21,11 @@ from milknado.domains.graph import MikadoGraph, WorkerRecord
 
 if os.name != "posix":
     pytest.skip("POSIX process signals are required", allow_module_level=True)
+
+
+class _StartedRun(TypedDict):
+    run_id: str
+    pid: int
 
 
 def _wait_for_worker(graph: MikadoGraph, node_id: int, marker: Path) -> WorkerRecord:
@@ -68,23 +74,35 @@ def running_project(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     agent = bin_dir / "claude"
-    agent.write_text(
-        f"#!{sys.executable}\n"
-        "import os, time\n"
-        "from pathlib import Path\n"
-        f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
-        "while True: time.sleep(1)\n"
+    _ = agent.write_text(
+        "\n".join(
+            (
+                f"#!{sys.executable}",
+                "import os, time",
+                "from pathlib import Path",
+                f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))",
+                "while True: time.sleep(1)",
+            )
+        )
+        + "\n"
     )
-    agent.chmod(0o755)
+    _ = agent.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    (root / "milknado.toml").write_text(
-        '[milknado]\nagent_family = "claude"\n'
-        'execution_agent = "claude -p"\nquality_gates = ["true"]\n'
-        "max_iterations = 1\n"
+    _ = (root / "milknado.toml").write_text(
+        "\n".join(
+            (
+                "[milknado]",
+                'agent_family = "claude"',
+                'execution_agent = "claude -p"',
+                'quality_gates = ["true"]',
+                "max_iterations = 1",
+            )
+        )
+        + "\n"
     )
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
-    subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
-    subprocess.run(
+    _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    _ = subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
+    _ = subprocess.run(
         [
             "git",
             "-c",
@@ -113,13 +131,13 @@ def running_project(
         graph.close()
 
 
-def _start(root: Path, graph: MikadoGraph, node_id: int, groups: list[int]) -> dict[str, object]:
+def _start(root: Path, graph: MikadoGraph, node_id: int, groups: list[int]) -> _StartedRun:
     run = start_loop_run(graph, LoopStartRequest(node_id, None, 30, False, root))
     assert run["status"] == "running"
-    pid = run["pid"]
-    assert isinstance(pid, int)
+    run_id, pid = run["run_id"], run["pid"]
+    assert isinstance(run_id, str) and isinstance(pid, int)
     groups.append(pid)
-    return run
+    return {"run_id": run_id, "pid": pid}
 
 
 def test_actual_runner_cancel_waits_for_worker_exit(
@@ -130,7 +148,7 @@ def test_actual_runner_cancel_waits_for_worker_exit(
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pgid)
     assert pid_alive(worker.pid)
-    result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, str(run["run_id"]))
+    result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, run["run_id"])
     assert result["status"] == "failed"
     assert result["error"] == "cancelled"
     assert not pid_alive(worker.pid)
@@ -146,9 +164,9 @@ def test_start_reclaims_only_after_actual_old_worker_exits(
     old_worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(old_worker.pid)
     assert pid_alive(old_worker.pid)
-    _freeze_after_snapshot(graph, old_worker, int(old_run["pid"]))
-    os.kill(int(old_run["pid"]), signal.SIGKILL)
-    _wait_for_exit(int(old_run["pid"]))
+    _ = _freeze_after_snapshot(graph, old_worker, old_run["pid"])
+    os.kill(old_run["pid"], signal.SIGKILL)
+    _wait_for_exit(old_run["pid"])
     replacement = _start(root, graph, node_id, groups)
     assert replacement["run_id"] != old_run["run_id"]
     assert not pid_alive(old_worker.pid)
@@ -164,9 +182,9 @@ def test_stale_sweep_waits_for_actual_old_worker_exit(
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
     assert pid_alive(worker.pid)
-    _freeze_after_snapshot(graph, worker, int(run["pid"]))
-    os.kill(int(run["pid"]), signal.SIGKILL)
-    _wait_for_exit(int(run["pid"]))
+    _ = _freeze_after_snapshot(graph, worker, run["pid"])
+    os.kill(run["pid"], signal.SIGKILL)
+    _wait_for_exit(run["pid"])
     changed = fail_stale_running_runs(graph, node_id, ProcessAdapter())
     assert len(changed) == 1
     assert changed[0]["status"] == "failed"
@@ -182,10 +200,10 @@ def test_dead_owner_cancel_recovers_actual_worker(
     run = _start(root, graph, node_id, groups)
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
-    _freeze_after_snapshot(graph, worker, int(run["pid"]))
-    os.kill(int(run["pid"]), signal.SIGKILL)
-    _wait_for_exit(int(run["pid"]))
-    result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, str(run["run_id"]))
+    _ = _freeze_after_snapshot(graph, worker, run["pid"])
+    os.kill(run["pid"], signal.SIGKILL)
+    _wait_for_exit(run["pid"])
+    result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, run["run_id"])
     assert result["status"] == "failed"
     assert result["error"] == "cancelled"
     assert not pid_alive(worker.pid)
@@ -200,7 +218,7 @@ def test_start_preserves_actual_worker_with_interrupted_observation(
     run = _start(root, graph, node_id, groups)
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
-    frozen = _freeze_after_snapshot(graph, worker, int(run["pid"]))
+    frozen = _freeze_after_snapshot(graph, worker, run["pid"])
     key = ObservationKey(
         worker.invocation_id,
         "supervisor",
@@ -210,14 +228,15 @@ def test_start_preserves_actual_worker_with_interrupted_observation(
         worker.start_token,
     )
     graph.runs.begin_worker_observation(key)
-    os.kill(int(run["pid"]), signal.SIGKILL)
-    _wait_for_exit(int(run["pid"]))
+    os.kill(run["pid"], signal.SIGKILL)
+    _wait_for_exit(run["pid"])
     with pytest.raises(RuntimeError, match="worker recovery unresolved"):
-        _start(root, graph, node_id, groups)
+        _ = _start(root, graph, node_id, groups)
     node = graph.get_node(node_id)
     assert node is not None and node.run_id == run["run_id"]
     assert node.worktree_path is not None and Path(node.worktree_path).exists()
-    assert graph.runs.get(str(run["run_id"]))["status"] == "running"
+    run_state = graph.runs.get(run["run_id"])
+    assert run_state is not None and run_state["status"] == "running"
     retained = graph.runs.get_worker(worker.invocation_id)
     assert retained is not None and retained.ended_at is None
     assert retained.observation_owner == "supervisor"

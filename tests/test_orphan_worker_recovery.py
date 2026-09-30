@@ -86,7 +86,8 @@ def test_reap_refuses_mismatched_leader_without_signal(tmp_path: Path, worker: i
         assert psutil.pid_exists(worker)
         assert graph.runs.live_workers(node_id=node.id)
         assert graph.try_reclaim(node.id, now="2026-01-01T00:01:00+00:00") is False
-        assert graph.get_node(node.id).status is NodeStatus.RUNNING
+        node = graph.get_node(node.id)
+        assert node is not None and node.status is NodeStatus.RUNNING
     finally:
         graph.close()
 
@@ -175,7 +176,8 @@ def test_interrupted_observation_preserves_running_owner(
         assert "interrupted observation" in caplog.text
         assert psutil.pid_exists(worker)
         assert graph.runs.live_workers(node_id=1)
-        assert graph.get_node(1).status is NodeStatus.RUNNING
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.RUNNING
     finally:
         graph.close()
 
@@ -199,7 +201,8 @@ def test_dead_owner_cancel_reaps_before_finalization(tmp_path: Path, worker: int
         assert result["worktree_preserved"] is None
         assert graph.runs.live_workers(node_id=1) == ()
         assert not psutil.pid_exists(worker)
-        assert graph.get_node(1).status is NodeStatus.FAILED
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.FAILED
     finally:
         graph.close()
 
@@ -209,9 +212,11 @@ def test_dead_owner_cancel_preserves_unresolved_worker(tmp_path: Path, worker: i
     try:
         with pytest.raises(RuntimeError, match="worker recovery unresolved"):
             cancel_run(graph, GitAdapter(tmp_path), ProcessAdapter(), tmp_path, "run-1")
-        assert graph.runs.get("run-1")["status"] == "running"
+        run = graph.runs.get("run-1")
+        assert run is not None and run["status"] == "running"
         assert graph.runs.live_workers(node_id=1)
-        assert graph.get_node(1).status is NodeStatus.RUNNING
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.RUNNING
         assert psutil.pid_exists(worker)
     finally:
         graph.close()
@@ -228,7 +233,8 @@ def test_pid_cancel_reaps_worker_after_supervisor(tmp_path: Path, worker: int) -
             assert not psutil.pid_exists(supervisor)
             assert not psutil.pid_exists(worker)
             assert graph.runs.live_workers(node_id=1) == ()
-            assert graph.get_node(1).status is NodeStatus.FAILED
+            node = graph.get_node(1)
+            assert node is not None and node.status is NodeStatus.FAILED
         finally:
             graph.close()
 
@@ -239,8 +245,10 @@ def test_dispatch_refuses_reclaim_with_unresolved_identity(tmp_path: Path, worke
     try:
         with pytest.raises(RuntimeError, match="worker recovery unresolved"):
             _claim_loop(graph, GitAdapter(tmp_path), request)
-        assert graph.get_node(1).status is NodeStatus.RUNNING
-        assert graph.runs.get("run-1")["status"] == "running"
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.RUNNING
+        run = graph.runs.get("run-1")
+        assert run is not None and run["status"] == "running"
         assert graph.runs.live_workers(node_id=1)
         assert psutil.pid_exists(worker)
     finally:
@@ -262,7 +270,8 @@ def test_dispatch_reclaims_only_after_worker_exit(tmp_path: Path, worker: int) -
         assert claim.run_id != "run-1"
         assert graph.runs.live_workers(node_id=1) == ()
         assert not psutil.pid_exists(worker)
-        assert graph.get_node(1).run_id == claim.run_id
+        node = graph.get_node(1)
+        assert node is not None and node.run_id == claim.run_id
     finally:
         graph.close()
 
@@ -279,7 +288,8 @@ def test_locked_evidence_database_expires_without_signal(tmp_path: Path, worker:
         assert time.monotonic() - started < 1
         assert psutil.pid_exists(worker)
         assert graph.runs.live_workers(node_id=1)
-        assert graph.get_node(1).status is NodeStatus.RUNNING
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.RUNNING
     finally:
         blocker.rollback()
         blocker.close()

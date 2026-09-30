@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, TypedDict, cast
 
 import pytest
+from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter
 from milknado.domains.common import GitPort, MilknadoConfig, NodeKind, RunResult, WorktreeMode
@@ -817,7 +818,7 @@ class TestDispatchLifecycleGuards:
 
 
 def test_stale_sweep_logs_and_skips_malformed_started_at(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
@@ -825,6 +826,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
     class Graph:
         def __init__(self) -> None:
             self.runs: Graph = self
+            self.db_path: Path = tmp_path / "evidence.db"
 
         def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
@@ -1536,8 +1538,10 @@ class TestCancelFinalizeAndRace:
             _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
         )
 
-        class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:  # pyright: ignore[reportUnusedParameter]
+        class Process(ProcessAdapter):
+            @override
+            def terminate_group(self, pid: int, timeout: float) -> bool:
+                _ = (pid, timeout)
                 return False
 
         with pytest.raises(RuntimeError, match="did not exit after termination"):
