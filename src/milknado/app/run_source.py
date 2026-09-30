@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from milknado.domains.common import SessionView
-from milknado.domains.graph import GraphSnapshot, NodeDetailResponse
+from milknado.domains.graph import GoalReviewRecord, GraphSnapshot, NodeDetailResponse
 
 
 class ExecutionRunStatus(StrEnum):
@@ -82,6 +82,7 @@ class ExecutionSnapshot:
     listener_errors: tuple[str, ...] = ()
     graph: GraphSnapshot | None = None
     node: NodeDetailResponse | None = None
+    pending_goal_reviews: tuple[GoalReviewRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

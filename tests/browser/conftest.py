@@ -130,6 +130,7 @@ def owner_web_commands() -> tuple[WebCommands, RecordingCommands]:
         cancel=recorder.cancel,
         force_stop=recorder.force_stop,
         stop_scheduling=recorder.stop_scheduling,
+        host_owner=True,
         review_decision=recorder.review_decision,
     )
     return commands, recorder

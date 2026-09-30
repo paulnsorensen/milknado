@@ -40,6 +40,7 @@ from milknado.domains.graph._facades import (
     _CommandFacade,
     _FileFacade,
     _GithubFacade,
+    _GoalReviewFacade,
     _RunFacade,
     _SessionFacade,
 )
@@ -66,12 +67,11 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
-class MikadoGraph(_AnalyticsFacade, _EdgeFacade):
+class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     """Thin facade over the graph slice's free-function modules.
 
-    Public methods delegate to `_reads`/`_creation`/`_status`/`_persistence`/
-    `_mutations`; status transitions run through a `StatusPipeline` so plugins
-    observe before/after each change. Rich docstrings live on the free functions.
+    Public methods delegate to graph-slice modules; `StatusPipeline` observes
+    each status transition. Rich docstrings live on the free functions.
     """
 
     _lock: RLock

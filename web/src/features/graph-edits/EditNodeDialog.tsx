@@ -1,7 +1,7 @@
 // The `dialog` slot contribution for editing the selected node's
 // description and flavor, posted to `PATCH /api/nodes/{id}`.
 import type { ReactElement } from 'react';
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { Dialog } from '../../shared/dialog/Dialog';
@@ -18,7 +18,7 @@ export function EditNodeDialog(): ReactElement | null {
 
   // Seed only on a node switch; a live snapshot must not overwrite
   // in-progress edits.
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDescription(node?.description ?? '');
     setFlavor(node?.flavor ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps

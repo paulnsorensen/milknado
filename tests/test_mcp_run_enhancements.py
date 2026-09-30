@@ -103,6 +103,10 @@ def _force_run_id(graph: MikadoGraph, node_id: int, run_id: str) -> None:
     _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
 
 
+def _pid_not_alive(_pid: int) -> bool:
+    return False
+
+
 def _init_git(root: Path) -> None:
     import subprocess
 
@@ -948,6 +952,7 @@ class TestRunCancel:
         _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=2_000_000_000)
         killed: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         _ = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
         assert killed == [(2_000_000_000, sig_mod.SIGTERM)], "must send SIGTERM to process group"
@@ -1367,6 +1372,7 @@ class TestPidCancelReconcile:
 
         killed: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
@@ -1405,6 +1411,7 @@ class TestPidCancelReconcile:
         self._write_pid_state(tmp_path, stale_run, node_id)
 
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         _ = _call(milknado_run_cancel, run_id=stale_run, project_root=str(tmp_path))
@@ -1432,6 +1439,7 @@ class TestPidCancelReconcile:
             raise ProcessLookupError("no such process")
 
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", gone)
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))

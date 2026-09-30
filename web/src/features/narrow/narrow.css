@@ -74,6 +74,40 @@
   min-width: 0;
 }
 
+.mk-narrow-root .mk-seg-opt {
+  min-height: 44px;
+}
+
+.mk-narrow-root .mk-seg {
+  align-self: flex-start;
+  height: auto;
+  min-height: 44px;
+}
+
+.mk-narrow-root .mk-session-send {
+  align-self: flex-start;
+}
+
+/* Keep owner run controls visible while the detail body scrolls. */
+.mk-narrow-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--mk-space-3) var(--mk-space-4);
+  background: var(--mk-surface-raised);
+  border-top: 1px solid var(--mk-line);
+}
+
+.mk-narrow-footer .mk-section {
+  width: 100%;
+}
+
+.mk-narrow-footer .mk-button-row {
+  justify-content: flex-end;
+}
+
 /* Every control gets a 44px touch target. */
 .mk-narrow-jump input,
 .mk-narrow-root .mk-btn,

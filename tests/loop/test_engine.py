@@ -249,6 +249,36 @@ class TestRunLoop:
         assert mock_execute_agent.call_count == 2
         assert state.status is RunStatus.FAILED
 
+    @pytest.mark.parametrize(
+        ("failure_cap", "attempts"), [(None, 1), (2, 2)], ids=["uncapped", "failure-cap"]
+    )
+    @patch("milknado.loop.engine._delay_if_needed")
+    @patch("milknado.loop.engine.execute_agent")
+    def test_timeout_retry_without_iteration_budget_needs_a_failure_cap(  # noqa: PLR0913
+        self,
+        mock_execute_agent: MagicMock,
+        mock_delay: MagicMock,
+        tmp_path: Path,
+        failure_cap: int | None,
+        attempts: int,
+    ):
+        del mock_delay
+        config = make_config(
+            tmp_path,
+            max_iterations=None,
+            stop_on_error=True,
+            timeout=5,
+            max_consecutive_failures=failure_cap,
+        )
+        state = make_state()
+        mock_execute_agent.side_effect = [AgentResult(returncode=None, timed_out=True)] * 3
+
+        run_loop(config, state, NullEmitter())
+
+        assert mock_execute_agent.call_count == attempts
+        assert state.timed_out_count == attempts
+        assert state.status is RunStatus.FAILED
+
     @patch("milknado.loop.engine._delay_if_needed")
     @patch("milknado.loop.engine.execute_agent")
     def test_retriable_timeout_keeps_guidance_open(

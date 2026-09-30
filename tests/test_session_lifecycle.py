@@ -135,7 +135,9 @@ def _wait_for_pid(path: Path) -> int:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:
         if path.exists():
-            return int(path.read_text(encoding="utf-8"))
+            value = path.read_text(encoding="utf-8").strip()
+            if value:
+                return int(value)
         time.sleep(0.01)
     raise AssertionError("child pid was not recorded")
 

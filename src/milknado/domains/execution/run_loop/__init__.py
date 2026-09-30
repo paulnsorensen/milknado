@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import time
 from collections import deque
@@ -24,7 +23,12 @@ from milknado.domains.execution._models import (
     RebaseConflict,
 )
 from milknado.domains.execution.executor import get_dispatchable_nodes, get_execution_overview
-from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
+from milknado.domains.execution.run_loop._idle import IdleGraphState, settle_once
+from milknado.domains.execution.run_loop._logging import (
+    configure_run_logging,
+    emit_final_telemetry,
+    ts,
+)
 from milknado.domains.execution.run_loop._node import IDLE_RESCAN_SECONDS, NodeDriverMixin
 from milknado.domains.execution.run_loop._result import (
     NodeLoopOutcome,
@@ -104,6 +108,9 @@ class RunLoop(NodeDriverMixin):
         self._scheduling_stopped: bool = False
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
+        self._spec: tuple[str | None, Path | None] = (None, None)
+        self._idle_settled_graph: IdleGraphState | None = None
+        self._verify_outcome: VerifyOutcome | None = None
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
         """Set the application-layer state sink used during execution."""
@@ -243,6 +250,8 @@ class RunLoop(NodeDriverMixin):
         self._failed = 0
         self._stopped = 0
         self._log_path = None
+        self._spec = (spec_text, spec_path)
+        self._idle_settled_graph, self._verify_outcome = None, None
         if self._process_controls is not None:
             self._process_controls()
         timeout = (
@@ -259,16 +268,22 @@ class RunLoop(NodeDriverMixin):
             dispatched, completed, failed, conflicts, interrupted = self._execute_run(
                 config, feature_branch, concurrency_limit, timeout, interactive
             )
-            self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
+            root = self._graph.get_root()
+            result = RunLoopResult(
+                root_done=root is not None and root.status == NodeStatus.DONE,
+                dispatched_total=dispatched,
+                completed_total=completed,
+                failed_total=failed,
+                rebase_conflicts=tuple(conflicts),
+                strict_exit=strict and self._failure_triggered,
+            )
+            emit_final_telemetry(result, self._stopped, interrupted)
 
         verify_outcome = self._verify_if_scheduling_open(spec_text, spec_path, config)
         root = self._graph.get_root()
-        return RunLoopResult(
+        return dataclasses.replace(
+            result,
             root_done=root is not None and root.status == NodeStatus.DONE,
-            dispatched_total=dispatched,
-            completed_total=completed,
-            failed_total=failed,
-            rebase_conflicts=tuple(conflicts),
             strict_exit=strict and self._failure_triggered,
             verify_outcome=verify_outcome,
         )
@@ -333,6 +348,11 @@ class RunLoop(NodeDriverMixin):
             with self._scheduling_lock:
                 if self._scheduling_stopped:
                     return 0
+            self._idle_settled_graph = settle_once(
+                self._graph,
+                self._idle_settled_graph,
+                lambda: self._verify_if_scheduling_open(*self._spec, config),
+            )
             root = self._graph.get_root()
             if root is not None and root.status == NodeStatus.DONE:
                 return 0
@@ -342,6 +362,8 @@ class RunLoop(NodeDriverMixin):
                 self._completion_wait_started = time.monotonic()
                 self._publish_state()
                 return added
+            if failed:
+                self._publish_state()
             if not self._capacity_deferred and not owner_wait:
                 return 0
             self._idle_sleep(IDLE_RESCAN_SECONDS)
@@ -392,31 +414,6 @@ class RunLoop(NodeDriverMixin):
         )
         return dispatched, completed, failed + dispatch_failures, list(conflicts), False
 
-    def _emit_final_telemetry(
-        self,
-        dispatched: int,
-        completed: int,
-        failed: int,
-        conflicts: list[RebaseConflict],
-        interrupted: bool,
-    ) -> None:
-        root_node = self._graph.get_root()
-        _logger.info(
-            "FINAL_TELEMETRY %s",
-            json.dumps(
-                {
-                    "dispatched": dispatched,
-                    "completed": completed,
-                    "failed": failed,
-                    "stopped": self._stopped,
-                    "conflicts": len(conflicts),
-                    "root_done": root_node is not None and root_node.status == NodeStatus.DONE,
-                    "strict_exit": self._strict and self._failure_triggered,
-                    "interrupted": interrupted,
-                }
-            ),
-        )
-
     def _dispatch_if_scheduling_open(
         self,
         config: ExecutionConfig,
@@ -437,7 +434,9 @@ class RunLoop(NodeDriverMixin):
             if self._scheduling_stopped:
                 return None
             if spec_text:
-                return self._maybe_verify_spec(spec_text, spec_path, config)
+                outcome = self._maybe_verify_spec(spec_text, spec_path, config)
+                self._verify_outcome = outcome or self._verify_outcome
+                return self._verify_outcome
             self._complete_root_if_settled()
             return None
 

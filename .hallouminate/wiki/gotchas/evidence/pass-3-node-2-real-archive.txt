@@ -1,0 +1,24 @@
+Pass 3 real archive parity capture
+===================================
+
+Command:
+  uv run milknado graph archive 1 --project-root /tmp/milknado-pass3-real-final9
+
+Result:
+  Archived 2 node(s) under 1
+
+After one observer refresh interval:
+
+Web:
+  0 active · 0 completed · 0 failed · 0 stopped
+  No graph nodes or runs rendered
+  `observe()` exposed no goal or task node button.
+
+Watch:
+  /private/tmp/milknado-pass3-real-final9 — 0 active · 0 completed · 0 failed · 0 stopped · 0 available
+  No runs.
+  No events yet.
+
+Database proof:
+  goal 1 and task 2 have non-null archived_at values.
+  `milknado status` reports no visible nodes; `milknado status --all` reports both nodes archived.

@@ -59,10 +59,10 @@ class LoopSessionMixin:
             context: SessionContext,
             actions: tuple[SessionAction, ...],
             invocation_id: str,
-            permission_ids: tuple[str, ...],
+            permissions: tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
         ) -> None:
             self._publish_session_capabilities(
-                run_id, context, actions, invocation_id, permission_ids
+                run_id, context, actions, invocation_id, *permissions
             )
 
         session.set_capability_sink(
@@ -92,6 +92,7 @@ class LoopSessionMixin:
         actions: tuple[str, ...],
         invocation_id: str,
         permission_ids: tuple[str, ...],
+        permission_commands: tuple[tuple[str, str], ...],
     ) -> None:
         del context
         if self._graph is None:
@@ -106,6 +107,7 @@ class LoopSessionMixin:
             self._owner_incarnation,
             actions,
             permission_ids,
+            permission_commands,
         )
 
     def _admit_session_command(self, run_id: str, command: SessionInput) -> SessionInput | None:

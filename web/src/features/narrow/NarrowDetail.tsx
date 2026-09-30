@@ -28,6 +28,9 @@ export function NarrowDetail({ onBack }: NarrowDetailProps): ReactElement {
         </div>
         <div data-region="sidecar-section">{renderSlot('sidecar-section')}</div>
       </div>
+      <div className="mk-narrow-footer" data-region="run-controls">
+        {renderSlot('run-controls')}
+      </div>
     </div>
   );
 }

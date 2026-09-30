@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import uuid
 from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+
+from milknado.domains.execution.run_loop._result import RunLoopResult
 
 _logger = logging.getLogger("milknado")
 _MAX_RETAINED_LOGS = 20
@@ -67,8 +70,26 @@ def configure_run_logging(
         _prune_old_logs(log_dir, "run-*.log", active_run_ids=active_run_ids)
 
 
+def emit_final_telemetry(result: RunLoopResult, stopped: int, interrupted: bool) -> None:
+    _logger.info(
+        "FINAL_TELEMETRY %s",
+        json.dumps(
+            {
+                "dispatched": result.dispatched_total,
+                "completed": result.completed_total,
+                "failed": result.failed_total,
+                "stopped": stopped,
+                "conflicts": len(result.rebase_conflicts),
+                "root_done": result.root_done,
+                "strict_exit": result.strict_exit,
+                "interrupted": interrupted,
+            }
+        ),
+    )
+
+
 def ts() -> str:
     return datetime.now(UTC).strftime("%H:%M:%S")
 
 
-__all__ = ["configure_run_logging", "ts"]
+__all__ = ["configure_run_logging", "emit_final_telemetry", "ts"]

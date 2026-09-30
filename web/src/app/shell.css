@@ -54,7 +54,7 @@ body {
 }
 
 /* rail */
-.mk-shell [data-region='rail'] {
+.mk-shell [data-region="rail"] {
   display: flex;
   flex: none;
   flex-direction: column;
@@ -112,7 +112,112 @@ body {
   font: var(--mk-type-label);
 }
 
+.mk-review-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.mk-review-row .mk-rail-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.mk-review-row .mk-rail-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-sub {
+  overflow: hidden;
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-state {
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-transform: capitalize;
+}
+
+.mk-shell .mk-agent-name {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-shell .mk-agent-name b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mk-shell .mk-node-compact .mk-node-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-wrap: balance;
+  white-space: normal;
+}
+
+.mk-shell .mk-root-switcher {
+  max-width: 216px;
+  min-height: 28px;
+  padding: 2px var(--mk-space-2);
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-raised);
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+}
+
+.mk-shell .mk-root-switcher:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
+}
+
+/* Restore the vendor default path-item truncation. */
+.mk-shell .mk-path-item {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-sidecar-description {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--mk-space-1);
+}
+
+.mk-sidecar-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.mk-sidecar-title.is-expanded {
+  display: block;
+  overflow: visible;
+}
+
 .mk-rail-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-agent-roster .mk-agent-name b {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -135,13 +240,14 @@ body {
 }
 
 .mk-rail-footer > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* main */
-.mk-shell [data-region='main'] {
+.mk-shell [data-region="main"] {
   display: flex;
   flex: 1 1 0;
   flex-direction: column;
@@ -151,7 +257,7 @@ body {
   overflow: hidden;
 }
 
-.mk-shell [data-region='header'] {
+.mk-shell [data-region="header"] {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -181,18 +287,18 @@ body {
   gap: var(--mk-space-2);
 }
 
-.mk-header-controls [role='status'],
-.mk-header-controls [role='note'] {
+.mk-header-controls [role="status"],
+.mk-header-controls [role="note"] {
   font: var(--mk-type-caption);
   color: var(--mk-ink-muted);
 }
 
-.mk-shell [data-region='toolbar'] {
+.mk-shell [data-region="toolbar"] {
   position: relative;
   z-index: var(--mk-layer-toolbar);
 }
 
-.mk-shell [data-region='canvas'] {
+.mk-shell [data-region="canvas"] {
   position: relative;
   flex: 1 1 0;
   min-height: 0;
@@ -200,14 +306,14 @@ body {
   border-radius: var(--mk-radius-lg);
 }
 
-.mk-shell [data-region='canvas-overlay'] {
+.mk-shell [data-region="canvas-overlay"] {
   position: absolute;
   top: var(--mk-space-3);
   right: var(--mk-space-3);
   z-index: var(--mk-layer-toolbar);
 }
 
-.mk-shell [data-region='banner'] > [role='alert'] {
+.mk-shell [data-region="banner"] > [role="alert"] {
   display: flex;
   flex-direction: column;
   gap: var(--mk-space-1);
@@ -219,7 +325,7 @@ body {
 }
 
 /* dock: the events console and the coordinator bar */
-.mk-shell [data-region='dock'] {
+.mk-shell [data-region="dock"] {
   display: flex;
   flex: none;
   flex-direction: column;
@@ -276,7 +382,7 @@ body {
 }
 
 /* sidecar */
-.mk-shell [data-region='sidecar'] {
+.mk-shell [data-region="sidecar"] {
   position: relative;
   z-index: var(--mk-layer-sidecar);
   display: flex;
@@ -290,13 +396,13 @@ body {
   border-left: 1px solid var(--mk-line);
 }
 
-.mk-shell [data-region='sidecar'].is-wide,
-.mk-shell [data-region='sidecar']:has(.mk-goal-review) {
+.mk-shell [data-region="sidecar"].is-wide,
+.mk-shell [data-region="sidecar"]:has(.mk-goal-review) {
   width: var(--mk-sidecar-width-review);
 }
 
-.mk-shell [data-region='sidecar-action'],
-.mk-shell [data-region='sidecar-section'] {
+.mk-shell [data-region="sidecar-action"],
+.mk-shell [data-region="sidecar-section"] {
   display: flex;
   flex-direction: column;
   gap: var(--mk-space-3);
@@ -316,6 +422,9 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--mk-space-2);
+}
+.mk-path-wrapper {
+  min-width: 0;
 }
 
 .mk-sidecar-title {
@@ -428,6 +537,11 @@ body {
   background: var(--mk-surface-sunken);
   color: var(--mk-ink);
   font: var(--mk-type-console);
+}
+.mk-permission .mk-code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 /* changes tab */
@@ -643,7 +757,7 @@ body {
 }
 
 /* toasts */
-.mk-shell [data-region='toast'] {
+.mk-shell [data-region="toast"] {
   position: absolute;
   right: var(--mk-space-4);
   bottom: var(--mk-space-4);
@@ -671,6 +785,109 @@ body {
 .mk-toast .mk-glyph {
   margin-top: 4px;
   color: var(--mk-at-risk);
+}
+
+/* Below the one-screen canvas minimum, stack detail below the graph and let
+   the page grow. This keeps every operator control reachable instead of
+   clipping the fixed desktop columns. */
+@media (max-width: 1179px) {
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .mk-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'main'
+      'sidecar'
+      'rail';
+    height: auto;
+    min-height: 100vh;
+    min-width: 0;
+    overflow: visible;
+    overflow-x: hidden;
+  }
+
+  .mk-shell [data-region='rail'] {
+    grid-area: rail;
+    width: auto;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .mk-shell [data-region='main'] {
+    grid-area: main;
+    min-height: 60vh;
+    overflow: visible;
+  }
+
+  /* Below 1180px main grows with its content, so the canvas must keep its own
+     height instead of taking what the header, toolbar, and dock leave over. */
+  .mk-shell [data-region='canvas'] {
+    flex: 0 0 auto;
+    min-height: 320px;
+    height: 50vh;
+  }
+
+  .mk-shell [data-region='sidecar'],
+  .mk-shell [data-region='sidecar'].is-wide,
+  .mk-shell [data-region='sidecar']:has(.mk-goal-review) {
+    grid-area: sidecar;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    border-top: 1px solid var(--mk-line);
+    border-left: 0;
+  }
+
+  .mk-scrim {
+    position: fixed;
+  }
+
+  .mk-shell [data-region='header'] {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .mk-goal-title {
+    flex: 1 1 100%;
+  }
+
+  .mk-goal-title h1 {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .mk-header-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .mk-shell [data-region='sidecar-tab'] {
+    flex-wrap: wrap;
+  }
+
+  .mk-shell [data-region='toast'] {
+    position: fixed;
+    width: min(var(--mk-toast-width), calc(100vw - 2 * var(--mk-space-4)));
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1179px) {
+  .mk-shell {
+    grid-template-columns: minmax(180px, 216px) minmax(0, 1fr);
+    grid-template-areas:
+      'rail main'
+      'sidecar sidecar';
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

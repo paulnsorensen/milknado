@@ -32,3 +32,10 @@ UI kit that the converter would overwrite or delete.
   `src/milknado/web/static/`; `tests/browser/test_stale_build.py` gates it.
 - Design canvas for the web UI: https://claude.ai/artifact/Gb9Yyqia1FrtZ3t5rxKaLg
   (15 artboards; uses the vendored `window.Milknado` bundle plus `mk-app.css`).
+
+## Build captures uploaded to the project
+
+- 2026-09-28: `docs/web-ui/build-2026-09-28-main-light.png` (1440x900, read-only
+  viewer, light theme) shows the dashboard as built at PR #483. Captured through a
+  temporary `milknado web --port 8765 --no-open` viewer with Playwright. Uploaded
+  as a single-file plan; the converter did not run.

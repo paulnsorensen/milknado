@@ -60,7 +60,7 @@ def validate_command(command: GraphCommand) -> str:
     return utc_iso(command.expires_at)
 
 
-def caps_json(values: tuple[str, ...]) -> str:
+def caps_json(values: object) -> str:
     return json.dumps(values, separators=(",", ":"))
 
 
@@ -75,11 +75,32 @@ def decode_strings(value: str, name: str) -> tuple[str, ...]:
     return tuple(cast(str, item) for item in items)
 
 
+def decode_pairs(value: str, name: str) -> tuple[tuple[str, str], ...]:
+    try:
+        decoded = cast(object, json.loads(value))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"stored {name} is invalid JSON") from exc
+    items = cast(list[object], decoded)
+    pairs: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, list):
+            raise ValueError(f"stored {name} must be string pairs")
+        pair = cast(list[object], item)
+        if len(pair) != 2:
+            raise ValueError(f"stored {name} must be string pairs")
+        first, second = pair
+        if not isinstance(first, str) or not isinstance(second, str):
+            raise ValueError(f"stored {name} must be string pairs")
+        pairs.append((first, second))
+    return tuple(pairs)
+
+
 def capabilities(row: sqlite3.Row | None) -> OwnerCapabilities | None:
     if row is None:
         return None
     actions = cast(tuple[SessionAction, ...], decode_strings(cast(str, row[4]), "owner actions"))
     permission_ids = decode_strings(cast(str, row[5]), "permission IDs")
+    permission_commands = decode_pairs(cast(str, row[6]), "permission commands")
     return OwnerCapabilities(
         run_id=cast(str, row[0]),
         node_id=cast(int, row[1]),
@@ -87,7 +108,8 @@ def capabilities(row: sqlite3.Row | None) -> OwnerCapabilities | None:
         owner_incarnation=cast(str, row[3]),
         actions=actions,
         permission_ids=permission_ids,
-        published_at=cast(str, row[6]),
+        published_at=cast(str, row[7]),
+        permission_commands=permission_commands,
     )
 
 
@@ -96,7 +118,8 @@ def get_capabilities(conn: sqlite3.Connection, run_id: str) -> OwnerCapabilities
         fetchone(
             conn,
             "SELECT run_id, node_id, invocation_id, owner_incarnation, actions_json, "  # pyright: ignore[reportImplicitStringConcatenation]
-            "permission_ids_json, published_at FROM owner_capabilities WHERE run_id = ?",
+            "permission_ids_json, permission_commands_json, published_at "
+            "FROM owner_capabilities WHERE run_id = ?",
             (run_id,),
         )
     )

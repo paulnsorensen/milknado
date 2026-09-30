@@ -47,6 +47,11 @@ _OBSERVER_ACTIONS = RunActionAvailability(
 )
 
 
+_TERMINAL_STATUS = {
+    "done": ExecutionRunStatus.COMPLETED,
+    "stopped": ExecutionRunStatus.STOPPED,
+}
+
 _LOG_TAIL_BYTES = 2000
 
 
@@ -100,13 +105,14 @@ class WatchSnapshotSource:
             goal=observed.goal or str(self.project_root),
             active_runs=active,
             terminal_runs=terminal,
-            completed=sum(run.status == "done" for run in runs),
-            failed=sum(run.status == "failed" for run in runs),
-            stopped=0,
+            completed=observed.completed,
+            failed=observed.failed,
+            stopped=observed.stopped,
             available=observed.available,
             event_lines=tuple(f"{run.run_id} · {run.status}" for run in reversed(runs[:20])),
             graph=observed.graph,
             node=observed.node,
+            pending_goal_reviews=observed.pending_goal_reviews,
         )
 
     def node_snapshot(  # noqa: V105 - shared source contract consumed by the watch view
@@ -142,7 +148,7 @@ class WatchSnapshotSource:
             stop_requested=False,
             actions=_OBSERVER_ACTIONS,
             output=self._output(run),
-            pending_guidance=None,
+            pending_guidance=run.pending_guidance or None,
             elapsed_seconds=self._duration(run.started_at, None),
             progress_pct=None,
             session=run.session,
@@ -153,16 +159,14 @@ class WatchSnapshotSource:
         )
 
     def _terminal_snapshot(self, run: DurableRun, description: str) -> TerminalRunSnapshot:
-        status = (
-            ExecutionRunStatus.COMPLETED if run.status == "done" else ExecutionRunStatus.FAILED
-        )
+        status = _TERMINAL_STATUS.get(run.status, ExecutionRunStatus.FAILED)
         return TerminalRunSnapshot(
             run_id=run.run_id,
             node_id=run.node_id,
             description=description,
             status=status,
             output=self._output(run),
-            pending_guidance=None,
+            pending_guidance=run.pending_guidance or None,
             session=run.session,
             duration_seconds=self._duration(run.started_at, run.ended_at),
         )

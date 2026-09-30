@@ -47,7 +47,7 @@ class OmpSession(OmpControlMixin):
             return self._response(frame)
         if frame_type == "extension_ui_request":
             return self._ui_request(frame)
-        if frame_type in {"agent_start", "agent_end", "agent_settled"}:
+        if frame_type in {"agent_start", "agent_end", "agent_settled", "session_settled"}:
             return self._agent_event(frame_type, frame)
         if frame_type in {"message_start", "message_update", "message_end"}:
             return self._message(frame_type, frame)
@@ -125,7 +125,7 @@ class OmpSession(OmpControlMixin):
                 interrupted=interrupted,
                 session_id=self._session_id,
             )
-        if frame_type == "agent_settled":
+        if frame_type in {"agent_settled", "session_settled"}:
             return ProtocolStep(
                 events=(self._status("settled", "OMP session settled", "lifecycle"),)
             )

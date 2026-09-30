@@ -1,0 +1,651 @@
+{
+  "source_revision": "7bae8d62bbd5af997727fda0f35ea60cf1ea79ce",
+  "theme": "textual-dark",
+  "clock": "12:00:00",
+  "fixture": "../agent-steering/fixture.py from 7bae8d62bbd5af997727fda0f35ea60cf1ea79ce",
+  "limits": [
+    "Synthetic snapshots, not a live worker or CLI process.",
+    "Attached watch uses an in-process synthetic command admission callback.",
+    "Submitted input uses synthetic admission; no provider transport or database persistence.",
+    "Before runtime has no durable review field; its existing review event stays identical.",
+    "Browser rendering proves Textual layout, not emulator palette fidelity."
+  ],
+  "records": [
+    {
+      "stem": "run-main-120x40",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-help-120x40",
+      "surface": "run",
+      "state": "help",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-confirmation-120x40",
+      "surface": "run",
+      "state": "confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-session-120x40",
+      "surface": "run",
+      "state": "session",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-permission-120x40",
+      "surface": "run",
+      "state": "permission",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-error-120x40",
+      "surface": "run",
+      "state": "error",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-owner-unavailable-120x40",
+      "surface": "run",
+      "state": "owner-unavailable",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-review-120x40",
+      "surface": "run",
+      "state": "review",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "watch-main-120x40",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-help-120x40",
+      "surface": "watch",
+      "state": "help",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-error-120x40",
+      "surface": "watch",
+      "state": "error",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-owner-unavailable-120x40",
+      "surface": "watch",
+      "state": "owner-unavailable",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-review-120x40",
+      "surface": "watch",
+      "state": "review",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "attached-watch-main-120x40",
+      "surface": "attached-watch",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-help-120x40",
+      "surface": "attached-watch",
+      "state": "help",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-session-120x40",
+      "surface": "attached-watch",
+      "state": "session",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-permission-120x40",
+      "surface": "attached-watch",
+      "state": "permission",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-error-120x40",
+      "surface": "attached-watch",
+      "state": "error",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-owner-unavailable-120x40",
+      "surface": "attached-watch",
+      "state": "owner-unavailable",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-review-120x40",
+      "surface": "attached-watch",
+      "state": "review",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "run-main-80x24",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-help-80x24",
+      "surface": "run",
+      "state": "help",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-confirmation-80x24",
+      "surface": "run",
+      "state": "confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-session-80x24",
+      "surface": "run",
+      "state": "session",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-permission-80x24",
+      "surface": "run",
+      "state": "permission",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-error-80x24",
+      "surface": "run",
+      "state": "error",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-owner-unavailable-80x24",
+      "surface": "run",
+      "state": "owner-unavailable",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "run-review-80x24",
+      "surface": "run",
+      "state": "review",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "watch-main-80x24",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-help-80x24",
+      "surface": "watch",
+      "state": "help",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-error-80x24",
+      "surface": "watch",
+      "state": "error",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-owner-unavailable-80x24",
+      "surface": "watch",
+      "state": "owner-unavailable",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "watch-review-80x24",
+      "surface": "watch",
+      "state": "review",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "attached-watch-main-80x24",
+      "surface": "attached-watch",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-help-80x24",
+      "surface": "attached-watch",
+      "state": "help",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "help-scroll",
+      "screen": "HelpScreen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-session-80x24",
+      "surface": "attached-watch",
+      "state": "session",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-permission-80x24",
+      "surface": "attached-watch",
+      "state": "permission",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-error-80x24",
+      "surface": "attached-watch",
+      "state": "error",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-owner-unavailable-80x24",
+      "surface": "attached-watch",
+      "state": "owner-unavailable",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0
+    },
+    {
+      "stem": "attached-watch-review-80x24",
+      "surface": "attached-watch",
+      "state": "review",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 1
+    },
+    {
+      "stem": "run-stop-confirmation-120x40",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "run-submitted-120x40",
+      "surface": "run",
+      "state": "submitted",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": ""
+    },
+    {
+      "stem": "run-no-worktree-120x40",
+      "surface": "run",
+      "state": "no-worktree",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "watch-no-worktree-120x40",
+      "surface": "watch",
+      "state": "no-worktree",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "attached-watch-submitted-120x40",
+      "surface": "attached-watch",
+      "state": "submitted",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": ""
+    },
+    {
+      "stem": "attached-watch-no-worktree-120x40",
+      "surface": "attached-watch",
+      "state": "no-worktree",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "run-stop-confirmation-80x24",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "run-submitted-80x24",
+      "surface": "run",
+      "state": "submitted",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": ""
+    },
+    {
+      "stem": "run-no-worktree-80x24",
+      "surface": "run",
+      "state": "no-worktree",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "watch-no-worktree-80x24",
+      "surface": "watch",
+      "state": "no-worktree",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    },
+    {
+      "stem": "attached-watch-submitted-80x24",
+      "surface": "attached-watch",
+      "state": "submitted",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "session-input",
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": ""
+    },
+    {
+      "stem": "attached-watch-no-worktree-80x24",
+      "surface": "attached-watch",
+      "state": "no-worktree",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "Screen",
+      "pending_goal_reviews": 0,
+      "submitted_draft": null
+    }
+  ]
+}

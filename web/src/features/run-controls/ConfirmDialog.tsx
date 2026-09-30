@@ -22,14 +22,14 @@ export function ConfirmDialog(): ReactElement | null {
       onClose={dismissConfirm}
       actions={
         <>
-          <Button onClick={dismissConfirm}>Dismiss</Button>
+          <Button onClick={dismissConfirm}>{pending.dismissLabel}</Button>
           <Button variant="primary" onClick={confirmPending}>
-            Confirm
+            {pending.confirmLabel}
           </Button>
         </>
       }
     >
-      <p className="mk-dialog-body">The action runs once. It cannot be undone from here.</p>
+      <p className="mk-dialog-body">{pending.body}</p>
     </Dialog>
   );
 }

@@ -9,10 +9,10 @@ describe('graph-view register', () => {
     resetStore();
   });
 
-  it('registers the toolbar and canvas-overlay slot contributions', () => {
+  it('registers only the graph toolbar contribution', () => {
     register();
 
     expect(getSlot('toolbar')).toHaveLength(1);
-    expect(getSlot('canvas-overlay')).toHaveLength(1);
+    expect(getSlot('canvas-overlay')).toHaveLength(0);
   });
 });

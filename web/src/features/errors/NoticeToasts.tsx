@@ -15,7 +15,7 @@ export function NoticeToasts(): ReactElement {
         <p key={notice.id} role="alert" className="mk-toast">
           <StatusGlyph state="at-risk" />
           <span>{notice.reason}</span>
-          <Button variant="ghost" className="mk-btn-sm" ariaLabel="Close notice" onClick={() => removeNotice(notice.id)}>
+          <Button variant="ghost" className="mk-btn-sm" ariaLabel="Dismiss" onClick={() => removeNotice(notice.id)}>
             Dismiss
           </Button>
         </p>

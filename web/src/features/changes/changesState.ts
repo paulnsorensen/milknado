@@ -1,6 +1,7 @@
 // Tracks the changed-file list and the selected file's diff for the run
 // associated with the currently selected node.
 import { get } from '../../app/api';
+import { pushNotice } from '../../app/store';
 import { fetchDiffText } from './diffText';
 import type { WireChangedFile } from './changesWire';
 
@@ -30,10 +31,22 @@ export function subscribeChanges(listener: () => void): () => void {
 }
 
 async function fetchFiles(runId: string): Promise<void> {
-  const files = await get<WireChangedFile[]>(`/api/runs/${runId}/changes`);
-  if (files !== null && state.runId === runId) {
-    state = { ...state, files };
-    emit();
+  try {
+    const files = await get<WireChangedFile[]>(`/api/runs/${runId}/changes`);
+    if (files !== null && state.runId === runId) {
+      state = { ...state, files };
+      emit();
+    }
+  } catch (error) {
+    const status = typeof error === 'object' && error !== null && 'status' in error ? error.status : null;
+    if (status === 404) {
+      if (state.runId === runId) {
+        state = { ...state, files: [] };
+        emit();
+      }
+      return;
+    }
+    pushNotice('Could not load changed files.');
   }
 }
 

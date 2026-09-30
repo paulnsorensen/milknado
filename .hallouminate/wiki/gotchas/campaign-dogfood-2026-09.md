@@ -74,3 +74,86 @@ Manual recovery: `milknado_todo_set_status(node, "pending")`, finalize the orpha
 The review adapter drains `result_text` and `echo_stdout` events.
 With an omp reviewer that means tool-call echoes and JSON-escaped text land in the findings file (`.cheese/age/<slug>.md`), around 65 KB for 2 KB of prose.
 The verdict still parses, and the worker copes, but the findings brief is expensive.
+
+## Pass 3: web and TUI live-run dogfood (2026-09-27)
+
+The web dashboard and `milknado watch` consume the same observer projection. Pass 3 records the presentation, read-path, scheduling, and evidence defects below.
+
+### Reproduction and evidence
+
+- External-provider attempt: `/tmp/milknado-pass3-real4`, goal node 1, task node 2, run `node-2-20260928T035512Z-8e02e257`. The configured OMP worker remained active across two waits because nested worker context stopped at `milknado_deposit_result`; the [blocker record](./evidence/pass-3-real-worker-blocker.txt) documents the observation.
+- Real deterministic run: `/tmp/milknado-pass3-real-final9`, goal node 1, task node 2, run `node-2-20260928T070051Z-0f8909e3`. `milknado web` and `milknado watch` were open before launch. The clean launching shell removed inherited `MILKNADO_*` context.
+- The deterministic OMP worker accepted the attached-watch `proof` command, called the result sink, emitted `MILKNADO_NODE_COMPLETE`, and exited. The graph reached `2/2 complete`.
+- Completion evidence: [wide web text](./evidence/pass-3-node-2-real-web-completion.txt), [wide web image](./evidence/pass-3-node-2-real-web-completion-wide.webp), [648px clipping capture](./evidence/pass-3-node-2-real-web-completion.webp), [watch](./evidence/pass-3-node-2-real-watch-completion.txt), [run summary](./evidence/pass-3-node-2-real-run.txt), and [receipts](./evidence/pass-3-node-2-real-command-receipts.txt).
+- Archive evidence: [web](./evidence/pass-3-node-2-real-web-archive.txt) and [watch](./evidence/pass-3-node-2-real-archive.txt). After `milknado graph archive 1`, both surfaces showed no visible nodes or runs. The database recorded `archived_at` for goal 1 and task 2.
+- The new final9 captures are distinct files. They use node 2 and the same run ID. The watch output contains no host hook text or personal session content.
+- The 648px capture clips the canvas between 401px and 1179px, hiding the sidecar controls and receipt; the wide 1180px capture shows the selected node, Session tab, delivered `proof`, and completion line.
+
+
+
+### PR 483 concern split and evidence limits (2026-09-29)
+
+PR 483 is divided into engine/runtime, shared session state and TUI, then web dashboard concerns.
+The latter layers depend on the preceding shared contracts.
+Historical dogfood captures keep their original revision and fixture limits; they do not verify a newly split branch.
+The historical gate below also applies only to its recorded run.
+
+The split adds 52 matched TUI pairs at 120x40 and 80x24, using fixed snapshots, theme, and clock.[^split-evidence]
+The before runtime is the engine-layer base; the after runtime is the original PR 483 source.
+All application, domain, adapter, loop, and MCP files match the session layer byte-for-byte.
+These captures use real app classes but no live worker, provider transport, or database.
+They show retained limits: standard review headers truncate identifiers, no-worktree Changes stays blank, and compact confirmation has an extra Enter hint.
+
+The historical web stop-scheduling pair shows only a scrim; it does not prove dialog copy or keyboard focus.[^split-web]
+The inspected owner-mode, permission-ownership, and narrow-control pairs remain useful historical evidence.
+Run each split branch's current gate instead of reusing the historical PASS.
+
+[^split-evidence]: [Matched TUI evidence, commands, and limits](https://github.com/paulnsorensen/milknado/blob/7fc412d555cc36232c4bae1bd24221e27cc8cad3/docs/tui-captures/pr483/README.md).
+[^split-web]: [Original PR 483](https://github.com/paulnsorensen/milknado/pull/483); `docs/web-ui/canvas-parity-before-stop-scheduling.png` and `canvas-parity-after-stop-scheduling.png`, inspected 2026-09-29.
+
+_Source: PR 483 split and visual inspection · Updated: 2026-09-29 · Supersedes: no historical result_
+
+### Durable source links
+
+- [Observer read path](../../../src/milknado/domains/graph/observer.py)
+- [Archive regression](../../../tests/test_graph_observer_snapshots.py)
+- [OMP settled mapping](../../../src/milknado/loop/sessions/_omp.py)
+- [OMP regression](../../../tests/test_session_omp.py)
+- [Agent roster component](../../../web/src/features/agent-roster/AgentRosterSection.tsx)
+- [Agent roster browser regression](../../../tests/browser/test_narrow_layout.py)
+- [TUI footer actions](../../../src/milknado/app/run_overlays.py)
+- [TUI diff path](../../../src/milknado/app/session_changes.py)
+- [TUI session input scheduling](../../../src/milknado/app/session_commands.py)
+
+### Pass-3 defect table
+
+| Defect | Found | Fixed | Deferred | Evidence and regression |
+| --- | --- | --- | --- | --- |
+| `session_settled` rendered as `Unsupported OMP RPC event` | Yes | Yes | No | `_omp.py` maps `agent_settled` and `session_settled` to read-only `settled` status events. Regression: `tests/test_session_omp.py::test_non_terminal_turn_and_settled_event_are_read_only`. |
+| Archived node runs remained in the observer run list | Yes | Yes | No | `_durable_runs` filters `n.archived_at IS NULL`. Regression: `tests/test_graph_observer_snapshots.py::test_observer_hides_runs_for_archived_nodes`. |
+| Long agent descriptions overlapped the roster row | Yes | Yes | No | The roster clamps long descriptions. Regression: `tests/browser/test_narrow_layout.py::test_long_agent_description_is_clamped_in_the_roster`. |
+| Footer action dispatch and focus behavior were reported as pass-3 fixes | No (base #473) | No (already on base) | No | Base commit `0063e632` (#473) already routes footer dispatch to the binding owner and keeps footer hints unfocusable. This pass adds no behavior change; `tests/test_execution_tui.py::test_mounted_footer_tracks_tree_selection_at_fixed_width` asserts the mounted hints cannot take focus. |
+| Stale diff responses could replace a newly selected run | No (base #473) | No (already on base) | No | Base commit `0063e632` (#473) already rejects stale results by token and resets `_pending_diff` on selection changes; this branch only reformats that line in `src/milknado/app/session_changes.py`. Regression on base: `tests/test_execution_tui.py::test_stale_diff_response_cannot_replace_newly_selected_run`. |
+| Session input could submit the widget value without updating the per-run draft revision | Yes | Yes | No | `_send_session_input` copies the widget value into the per-run draft and advances its revision before queueing. `_session_input_result` clears only the matching draft, even when the completed run is no longer selected. Regression: `tests/test_session_tui_scheduling.py::test_widget_value_is_submitted_when_draft_store_is_stale` and `::test_accepted_result_clears_draft_after_selection_changes`. |
+| Web canvas clipped at viewport widths from 401px through 1179px | Yes | No | Yes | The linked 648px final9 capture demonstrates the clipped header and hidden sidecar controls. The 1180px capture proves the wide completion view. Follow-up node `103` owns the layout gap. |
+| Real external OMP worker inherited nested context and stalled at `milknado_deposit_result` | Yes | No | Yes | The external-provider attempt remains blocked. Follow-up node `102` registers removal of the inherited nested-worker-context stall. The deterministic final9 run proves the clean worker path. |
+| Controller cancellation recovery for a dead coordinator PID remains an engine gap | Yes | No | Yes | Existing follow-up node `79` (#309) owns coordinator-cancellation recovery. No execution-engine change was made in this task. |
+| Published evidence duplicated captures or included host hook text | Yes | Yes | No | Final9 publishes distinct node-2 wide web, watch, receipt, archive, and clipping evidence. The watch fixture contains no host hook text. |
+| Web shows a global error toast for a finished run whose worktree was removed, while watch shows the error inline | Yes | No | Yes | `pass-3-node-2-real-web-completion-wide.webp` shows the toast "git session changes failed: worktree is unavailable: ..." covering the session input. `GET /api/runs/<id>/changes` answers 409 from `src/milknado/web/routes/run_changes.py`; `milknado watch` renders the same error inline in the Changes pane (`src/milknado/app/session_changes.py`). Follow-up node `108` owns the web empty-state fix and its Playwright regression. |
+
+### Residual gaps
+
+- The external-provider OMP run remains blocked at `milknado_deposit_result`. Follow-up node `102` owns the inherited nested-worker-context stall.
+- Controller-cancellation recovery for a dead coordinator remains deferred to existing follow-up node `79` (#309).
+- Web widths from 401px through 1179px remain a presentation gap. Follow-up node `103` owns the layout fix.
+- The dedicated `command_receipts` table is not a separate visual control. The wide web and watch completion views render the session receipt message; the `queued → submitted → delivered` rows are linked as durable evidence.
+
+### Gate
+
+Command: `just check-llm`
+
+Observed output:
+
+```text
+✅ check:llm PASS — lint+format clean, no dead code, tests green, project+diff coverage ≥95%, typecheck clean
+```

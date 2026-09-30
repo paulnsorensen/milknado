@@ -428,11 +428,14 @@ def _run_iteration(
     if state.status is RunStatus.STOPPED:
         return False, promise_would_complete
 
-    # A timed-out attempt is retriable while the iteration budget has room: it
-    # spends one iteration instead of ending the run the way a crashed agent
-    # command does. On the last allowed attempt it fails the run as before.
+    # A timed-out attempt is retriable while a finite budget has room: it spends
+    # one iteration instead of ending the run the way a crashed agent command
+    # does. Without an iteration or failure cap, the timeout fails the run.
     attempt_timed_out = state.timed_out_count > timed_out_before
-    retry_remains = config.max_iterations is None or state.iteration < config.max_iterations
+    if config.max_iterations is None:
+        retry_remains = config.max_consecutive_failures is not None
+    else:
+        retry_remains = state.iteration < config.max_iterations
     if not agent_succeeded and config.stop_on_error and not (attempt_timed_out and retry_remains):
         if state.try_commit_failure():
             emit.log_error("Stopping due to --stop-on-error.")

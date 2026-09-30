@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from milknado.domains.common import SessionContext, SessionInput
+from milknado.domains.common import SessionContext, SessionEvent, SessionInput
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._command_admission import admit_session_command
 from tests.graph_command_fixtures import command as _command
@@ -146,6 +146,40 @@ def test_session_view_projects_current_fence(graph: MikadoGraph) -> None:
     view = graph.sessions.view("run-1")
 
     assert (view.owner_incarnation, view.invocation_id) == ("owner-1", "invoke-1")
+
+
+def test_session_view_recovers_published_permission_ids_without_events(
+    graph: MikadoGraph,
+) -> None:
+    _ready_graph(graph)
+    graph.sessions.start("run-1", SessionContext(family="omp", cwd="/repo"))
+
+    view = graph.sessions.view("run-1")
+
+    assert view.permissions == (
+        SessionEvent(
+            kind="permission",
+            text="permission-1",
+            event_id="permission-1",
+            state="requested",
+        ),
+    )
+
+
+def test_session_view_omits_resolved_permissions(graph: MikadoGraph) -> None:
+    _ready_graph(graph)
+    graph.sessions.start("run-1", SessionContext(family="omp", cwd="/repo"))
+    graph.sessions.append(
+        "run-1",
+        SessionEvent(
+            kind="permission",
+            text="permission granted",
+            event_id="permission-1",
+            state="approved",
+        ),
+    )
+
+    assert graph.sessions.view("run-1").permissions == ()
 
 
 def test_duplicate_rejects_replacement_fences_without_mutation(graph: MikadoGraph) -> None:

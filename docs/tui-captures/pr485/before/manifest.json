@@ -1,0 +1,32 @@
+{
+  "source_revision": "1a8f305d16e74844236829c39d0d59eb7a52c72a",
+  "theme": "textual-dark",
+  "clock": "12:00:00",
+  "fixture": "../agent-steering/fixture.py through ../pr483/capture.py",
+  "records": [
+    {
+      "stem": "run-help-terminal-120x40",
+      "surface": "run",
+      "state": "help-terminal",
+      "size": [
+        120,
+        40
+      ],
+      "selected_run": "run-13",
+      "focus": "help-scroll",
+      "screen": "HelpScreen"
+    },
+    {
+      "stem": "run-help-terminal-80x24",
+      "surface": "run",
+      "state": "help-terminal",
+      "size": [
+        80,
+        24
+      ],
+      "selected_run": "run-13",
+      "focus": "help-scroll",
+      "screen": "HelpScreen"
+    }
+  ]
+}

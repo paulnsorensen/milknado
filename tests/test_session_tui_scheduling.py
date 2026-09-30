@@ -137,7 +137,10 @@ async def test_accepted_response_does_not_clear_newer_identical_draft_revision(
     )
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("i", *"same draft", "enter")
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.query_one("#session-input", Input).has_focus
+        await pilot.press(*"same draft", "enter")
         assert await asyncio.to_thread(controller.first_started.wait, 3)
         try:
             await pilot.press("end", "ctrl+u", *"other draft")
@@ -157,6 +160,58 @@ async def test_accepted_response_does_not_clear_newer_identical_draft_revision(
         assert submission.request_id == ""
         assert submission.command_id
         assert app.query_one("#session-input", Input).value == "same draft"
+
+
+@pytest.mark.asyncio
+async def test_widget_value_is_submitted_when_draft_store_is_stale(
+    tmp_path: Path,
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    controller = SnapshotController(
+        initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        message_input = app.query_one("#session-input", Input)
+        message_input.value = "widget draft"
+        assert "run-1" not in app._session_drafts  # pyright: ignore[reportPrivateUsage]
+        await pilot.press("enter")
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert [(run_id, command.text) for run_id, command in controller.submissions] == [
+            ("run-1", "widget draft")
+        ]
+        assert app._session_drafts["run-1"] == ""  # pyright: ignore[reportPrivateUsage]
+        assert message_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_accepted_result_clears_draft_after_selection_changes(
+    tmp_path: Path,
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    controller = _RevisionController(
+        initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i", *"first", "enter")
+        assert await asyncio.to_thread(controller.first_started.wait, 3)
+        await pilot.press("escape")
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.selected_run_id == "run-2"
+
+        controller.release_first.set()
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert app._session_drafts["run-1"] == ""  # pyright: ignore[reportPrivateUsage]
+        assert app.query_one("#session-input", Input).value == ""
 
 
 @pytest.mark.asyncio

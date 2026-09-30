@@ -219,6 +219,11 @@ MIGRATIONS: list[tuple[int, str]] = [
     (21, _goal_review_schema.CREATE_PENDING_GOAL_REVIEW_INDEX),
     (22, _controller_capability.CREATE_CONTROLLER_MASTER),
     (23, _controller_capability.CREATE_CONSUMED_CAPABILITY),
+    (
+        24,
+        "ALTER TABLE owner_capabilities ADD COLUMN "
+        + "permission_commands_json TEXT NOT NULL DEFAULT '[]'",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

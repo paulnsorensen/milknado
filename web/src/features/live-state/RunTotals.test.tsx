@@ -22,16 +22,14 @@ describe('RunTotals', () => {
     expect(container.children.length).toBe(0);
   });
 
-  it('shows an unknown marker for a missing total and the count for a present one', () => {
-    setSnapshot(mergeSnapshot({ ...baseSnapshot(), completed: 3 }, null));
+  it('marks omitted server totals as unknown', () => {
+    setSnapshot(mergeSnapshot(baseSnapshot(), null));
 
     render(<RunTotals />);
 
-    expect(screen.getByText(/3 completed/)).toBeTruthy();
-    expect(screen.getByText(/– failed/)).toBeTruthy();
-    expect(screen.getByText(/– stopped/)).toBeTruthy();
-    expect(screen.getByText(/– available/)).toBeTruthy();
+    expect(screen.getByText('0 active · – completed · – failed · – stopped · – available')).toBeTruthy();
   });
+
 
   it('shows a zero count when a total is present but zero', () => {
     setSnapshot(mergeSnapshot({ ...baseSnapshot(), completed: 0 }, null));
