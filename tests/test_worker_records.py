@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -127,4 +129,27 @@ def test_stale_verified_snapshot_cannot_close_newer_evidence(tmp_path: Path) -> 
         graph.runs.end_worker("inv-1", 2)
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
+        graph.close()
+
+
+def test_worker_evidence_connection_respects_one_deadline_under_writer_lock(
+    tmp_path: Path,
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+    lock = sqlite3.connect(graph.db_path)
+    try:
+        lock.execute("BEGIN IMMEDIATE")
+        lock.execute("UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?", ("inv-1",))
+        start = time.monotonic()
+        with WorkerEvidenceStore(graph.db_path, deadline=start + 0.3) as store:
+            assert len(store.live_workers(run_id="run-1")) == 1
+            with pytest.raises((sqlite3.OperationalError, TimeoutError)):
+                store.begin(ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5))
+        assert time.monotonic() - start < 0.8
+    finally:
+        lock.rollback()
+        lock.close()
         graph.close()
