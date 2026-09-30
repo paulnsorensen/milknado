@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -16,11 +17,11 @@ import pytest
 import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore, WorkerRecord
 from milknado.loop._process_contract import ProtectionContext
-from milknado.loop._process_gate import WorkerProcess
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit
-from milknado.loop._process_lifecycle import ProtectedWorker
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 
 @pytest.fixture
@@ -65,7 +66,7 @@ def protected_record(tmp_path: Path) -> Iterator[tuple[MikadoGraph, ProtectedWor
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_replacement_read_failure_preserves_open_worker(
+def test_replacement_read_failure_stops_worker_and_preserves_record(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -79,13 +80,13 @@ def test_replacement_read_failure_preserves_open_worker(
     assert protected._failed  # pyright: ignore[reportPrivateUsage]
     assert protected._replacements == 0  # pyright: ignore[reportPrivateUsage]
     assert protected._write_fd is None  # pyright: ignore[reportPrivateUsage]
-    assert protected.process.poll() is None
+    assert protected.process.poll() is not None
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_shutdown_read_failure_preserves_open_worker(
+def test_shutdown_read_failure_stops_worker_and_preserves_record(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -98,7 +99,7 @@ def test_shutdown_read_failure_preserves_open_worker(
     monkeypatch.setattr(LoopWorkerEvidence, "get_worker", fail_read)
     assert not protected.shutdown(time.monotonic() + 1)
     assert protected._write_fd is None  # pyright: ignore[reportPrivateUsage]
-    assert protected.process.poll() is None
+    assert protected.process.poll() is not None
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
 
@@ -138,7 +139,7 @@ def test_replacement_abort_uses_existing_shutdown_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     graph, protected = protected_record
-    stop_deadline = time.monotonic() + 0.2
+    stop_deadline = time.monotonic() + 1
     protected._stop_deadline = stop_deadline  # pyright: ignore[reportPrivateUsage]
     deadlines: list[float] = []
 
@@ -151,7 +152,7 @@ def test_replacement_abort_uses_existing_shutdown_deadline(
     protected._abort_replacement()  # pyright: ignore[reportPrivateUsage]
     assert deadlines == [stop_deadline]
     assert protected._failed  # pyright: ignore[reportPrivateUsage]
-    assert protected.process.poll() is None
+    assert protected.process.poll() is not None
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
 
@@ -178,7 +179,7 @@ def test_unconfirmed_replacement_aborts_owned_worker(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_shutdown_missing_evidence_does_not_signal_worker(
+def test_shutdown_missing_evidence_stops_known_worker_without_closing_record(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -190,7 +191,7 @@ def test_shutdown_missing_evidence_does_not_signal_worker(
 
     monkeypatch.setattr(LoopWorkerEvidence, "get_worker", missing_read)
     assert not protected.shutdown(time.monotonic() + 1)
-    assert protected.process.poll() is None
+    assert protected.process.poll() is not None
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
 
@@ -232,3 +233,60 @@ def test_finish_waits_for_monitor_exit_before_claiming_completion(
         release.set()
         watch.join(timeout=1)
         assert not watch.is_alive()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+@pytest.mark.parametrize("failure", ["missing", "error", "sqlite"])
+def test_dead_helper_with_unavailable_evidence_stops_owned_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    supervisor = psutil.Process()
+    owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
+    protected = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            tmp_path,
+            None,
+            True,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
+        ),
+        ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path),
+    )
+    helper = protected._helper  # pyright: ignore[reportPrivateUsage]
+    try:
+        helper.kill()
+        _ = helper.wait(timeout=2)
+
+        def unavailable(_evidence: LoopWorkerEvidence, _invocation_id: str) -> WorkerRecord | None:
+            if failure == "missing":
+                return None
+            raise RuntimeError("evidence unavailable")
+
+        def locked(_store: WorkerEvidenceStore, _invocation_id: str) -> NoReturn:
+            raise sqlite3.OperationalError("evidence locked")
+
+        if failure == "sqlite":
+            monkeypatch.setattr(WorkerEvidenceStore, "get", locked)
+        else:
+            monkeypatch.setattr(LoopWorkerEvidence, "get_worker", unavailable)
+        watch = protected._watch  # pyright: ignore[reportPrivateUsage]
+        assert watch is not None
+        watch.join(timeout=5)
+        assert not watch.is_alive()
+        assert protected._failed  # pyright: ignore[reportPrivateUsage]
+        assert protected.process.poll() is not None
+        record = graph.runs.get_worker(protected.identity.invocation_id)
+        assert record is not None and record.ended_at is None
+    finally:
+        if protected.process.poll() is None:
+            os.killpg(protected.process.pid, signal.SIGKILL)
+        _ = protected.process.wait(timeout=2)
+        if helper.poll() is None:
+            helper.kill()
+        _ = helper.wait(timeout=2)
+        graph.close()
