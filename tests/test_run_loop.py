@@ -833,7 +833,7 @@ def _run_on_fake_clock(
     def dispatch() -> tuple[int, int]:
         result = queued.pop(0)
         if not queued:
-            _scheduler(run_loop).begin_dispatch()
+            _ = _scheduler(run_loop).plan_dispatch(1, strict=False)
         return result
 
     def dispatch_any(*_args: object) -> tuple[int, int]:

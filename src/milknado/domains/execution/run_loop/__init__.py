@@ -505,22 +505,18 @@ class RunLoop:
         config: ExecutionConfig,
         concurrency_limit: int,
     ) -> tuple[int, int]:
-        self._scheduler.begin_dispatch()
-        scheduler = self._scheduler.view()
-        if self._strict and scheduler.failure_triggered:
-            return 0, 0
-        available = concurrency_limit - len(scheduler.active)
-        if available <= 0:
+        plan = self._scheduler.plan_dispatch(concurrency_limit, self._strict)
+        if plan.available == 0:
             return 0, 0
         exclusions = self._graph.dispatch_exclusions()
         dispatchable = [
             node_id
             for node_id in get_dispatchable_nodes(self._graph, self._logged_blocks)
-            if node_id not in scheduler.stopped_nodes and node_id not in exclusions
+            if node_id not in plan.stopped_nodes and node_id not in exclusions
         ]
         dispatched = 0
         failed = 0
-        for node_id in dispatchable[:available]:
+        for node_id in dispatchable[: plan.available]:
             if self._shutdown_requested is not None and self._shutdown_requested():
                 break
             node = self._graph.get_node(node_id)
@@ -572,8 +568,7 @@ class RunLoop:
                 )
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
                 failed += 1
-                if self._strict:
-                    self._scheduler.trigger_failure()
+                if self._scheduler.dispatch_failed(self._strict).stop_batch:
                     break
                 continue
             except Exception as exc:
@@ -587,8 +582,7 @@ class RunLoop:
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
                 failed += 1
-                if self._strict:
-                    self._scheduler.trigger_failure()
+                if self._scheduler.dispatch_failed(self._strict).stop_batch:
                     break
                 continue
             self._scheduler.admit_run(result.run_id, node_id, time.monotonic())
