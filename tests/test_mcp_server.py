@@ -995,7 +995,9 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 9, pid=os.getpid())
         graph, _cfg = open_graph(root)
         try:
-            assert fail_stale_running_runs(graph, 9, ProcessAdapter()) == [], "a live runner was wrongly flipped"
+            assert fail_stale_running_runs(graph, 9, ProcessAdapter()) == [], (
+                "a live runner was wrongly flipped"
+            )
             assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()

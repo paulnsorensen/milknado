@@ -125,13 +125,16 @@ def test_main_logs_terminal_event_with_run_id(
             return outcome
 
     recovered: list[_Graph] = []
-    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", recovered.append)
-    monkeypatch.setattr(project, "open_graph", _open_graph)
-    monkeypatch.setattr(adapters, "GitAdapter", _make_git)
-    monkeypatch.setattr(adapters, "LoopAdapter", _make_loop)
-    monkeypatch.setattr(execution, "Executor", _make_executor)
-    monkeypatch.setattr(execution, "ExecutionConfig", _make_execution_config)
-    monkeypatch.setattr(execution, "RunLoop", _StubRunLoop)
+    for module, name, stub in (
+        (worker_recovery, "reconcile_loop_workers", recovered.append),
+        (project, "open_graph", _open_graph),
+        (adapters, "GitAdapter", _make_git),
+        (adapters, "LoopAdapter", _make_loop),
+        (execution, "Executor", _make_executor),
+        (execution, "ExecutionConfig", _make_execution_config),
+        (execution, "RunLoop", _StubRunLoop),
+    ):
+        monkeypatch.setattr(module, name, stub)
 
     graph.finish_result = finish_result
     run_id = "node-1-20260101T000000Z-abcd"

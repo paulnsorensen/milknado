@@ -139,14 +139,18 @@ def _supervise_node(
     )
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv: list[str] | None) -> _RunnerArgs:
     parser = argparse.ArgumentParser(prog="milknado.mcp._loop_node_runner")
     _ = parser.add_argument("--node-id", type=int, required=True)
     _ = parser.add_argument("--project-root", required=True)
     _ = parser.add_argument("--run-id", required=True)
     _ = parser.add_argument("--target-branch", required=True)
     _ = parser.add_argument("--base-oid", required=True)
-    args = cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
+    return cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
 
     from milknado.adapters import CrgAdapter, FlockSlotPool, GitAdapter, LoopAdapter
     from milknado.app.project import open_graph

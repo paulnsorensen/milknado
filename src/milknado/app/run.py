@@ -1,8 +1,4 @@
-"""Application-layer policy and adapter wiring for the run and dispatch surfaces.
-
-The CLI and MCP entry points parse input and call this module. This module owns
-dispatch policy, execution configuration, worker validation, and adapter wiring.
-"""
+"""Application policy and adapter wiring for run and dispatch."""
 
 from __future__ import annotations
 
