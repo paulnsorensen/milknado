@@ -351,6 +351,7 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     before this window elapses, so the sweep never fires on a real run."""
     from datetime import UTC, datetime, timedelta
 
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
 
     _ = graph.add_node("pidless dispatch")
@@ -362,7 +363,7 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     graph.runs.start(run_id, 1, str(tmp_path / "pidless.log"), old_started, timeout)
     assert _run_record(graph, run_id)["pid"] is None
 
-    flipped = fail_stale_running_runs(graph, 1)
+    flipped = fail_stale_running_runs(graph, 1, ProcessAdapter())
     assert [f["run_id"] for f in flipped] == [run_id]
     assert _run_record(graph, run_id)["status"] == "failed"
 

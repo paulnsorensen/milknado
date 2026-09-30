@@ -27,6 +27,7 @@ from milknado.domains.dispatch.isolate import (
 from milknado.domains.dispatch.ports import (
     FinishDispatchPort,
     ProcessPort,
+    ProcessTerminationPort,
     WorkerOutcomePort,
 )
 from milknado.domains.dispatch.reconcile import (
@@ -220,13 +221,16 @@ def _maybe_merge_back(
     return result
 
 
-def reclaim_stale_node(graph: MikadoGraph, node_id: int, fence_run_id: str | None) -> None:
+def reclaim_stale_node(
+    graph: MikadoGraph, node_id: int, fence_run_id: str | None,
+    process: ProcessTerminationPort,
+) -> None:
     """Reconcile a running node before a new async dispatch.
 
     The terminal-run lookup is always scoped to the current owning run_id.
     Legacy nodes without a run_id use an explicitly unowned terminal lookup.
     """
-    _ = fail_stale_running_runs(graph, node_id)
+    _ = fail_stale_running_runs(graph, node_id, process)
     if fence_run_id is None:
         orphan = graph.runs.latest_unowned_terminal(node_id)
         if orphan is not None:

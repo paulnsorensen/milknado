@@ -12,6 +12,7 @@ import logging
 import os
 import shlex
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,6 +27,7 @@ from milknado.domains.common import (
     RunFenceLostError,
     RunResult,
     UnlandedWorkError,
+    pid_alive,
 )
 from milknado.domains.dispatch import (
     ProcessPort,
@@ -36,11 +38,18 @@ from milknado.domains.dispatch import (
     fail_stale_running_runs,
     make_run_id,
     now_iso,
+    reap_orphaned_workers,
     reconcile_node_status,
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.graph import ConcurrencyLimitReached
+from milknado.domains.dispatch.reap import ReapRequest
+from milknado.domains.graph import (
+    ConcurrencyLimitReached,
+    NodeWorkers,
+    UnassociatedWorkers,
+    default_worker_db_path,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -84,7 +93,14 @@ def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) 
         )
     stale_worktree = Path(node.worktree_path) if node.worktree_path else None
     if node.status == NodeStatus.RUNNING:
-        _ = fail_stale_running_runs(graph, request.node_id)
+        process = ProcessAdapter()
+        if node.pid is not None and not pid_alive(node.pid) and not reap_orphaned_workers(
+            graph, process, ReapRequest(NodeWorkers(request.node_id))
+        ):
+            raise RuntimeError(
+                f"node {request.node_id} worker recovery unresolved; claim and worktree preserved"
+            )
+        _ = fail_stale_running_runs(graph, request.node_id, process)
         if node.run_id is not None:
             winner = graph.runs.latest_terminal(request.node_id, node.run_id)
             if winner is not None:
@@ -212,6 +228,18 @@ def _record_start_failure(
         raise RuntimeError(detail) from persistence_error
 
 
+def reconcile_loop_workers(graph: MikadoGraph) -> None:
+    """Recover unassociated workers from known evidence stores only."""
+    deadline = time.monotonic() + 8.0
+    default_path = default_worker_db_path()
+    for path in dict.fromkeys((graph.db_path, default_path)):
+        if path != graph.db_path and not path.exists():
+            continue
+        request = ReapRequest(UnassociatedWorkers(), deadline=deadline, db_path=path)
+        if not reap_orphaned_workers(graph, ProcessAdapter(), request):
+            _logger.error("unassociated worker recovery unresolved: db_path=%s", path)
+
+
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
     """Claim a task node and spawn its detached loop; return the run state dict.
 
@@ -220,7 +248,8 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
     so the MCP tool never constructs an adapter or holds this policy inline.
     """
     graph.register_controller_master()
-    _ = reconcile_orphaned_runs(graph)
+    reconcile_loop_workers(graph)
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)

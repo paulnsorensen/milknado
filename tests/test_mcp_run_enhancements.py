@@ -819,6 +819,7 @@ class TestDispatchLifecycleGuards:
 def test_stale_sweep_logs_and_skips_malformed_started_at(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
 
     class Graph:
@@ -839,7 +840,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
             pass
 
     with caplog.at_level(logging.WARNING):
-        assert fail_stale_running_runs(Graph(), 4) == []
+        assert fail_stale_running_runs(Graph(), 4, ProcessAdapter()) == []
     assert "malformed timestamp" in caplog.text
 
 
@@ -1548,7 +1549,9 @@ class TestCancelFinalizeAndRace:
                 "node-3-20260101T000000Z-stuk",
             )
 
-    def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(self) -> None:
+    def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(
+        self, tmp_path: Path
+    ) -> None:
         from milknado.domains.dispatch.cancel import (
             _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
         )
@@ -1556,6 +1559,9 @@ class TestCancelFinalizeAndRace:
         class Graph:
             def __init__(self) -> None:
                 self.runs: Graph = self
+                self.db_path = tmp_path / "evidence.db"
+                evidence_graph = MikadoGraph(self.db_path)
+                evidence_graph.close()
 
             def finish(self, _run_id: str, _result: object) -> None:
                 pass
@@ -2004,15 +2010,19 @@ def test_cancel_finalize_adopts_late_terminal_winner() -> None:
     assert final["status"] == "done"
 
 
-def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
+def test_stale_reconcile_rejects_lost_terminal_fence(tmp_path: Path) -> None:
     from datetime import UTC, datetime, timedelta
 
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import reconcile
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
         def __init__(self) -> None:
             self.runs: Graph = self
+            self.db_path = tmp_path / "evidence.db"
+            evidence_graph = MikadoGraph(self.db_path)
+            evidence_graph.close()
 
         def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
@@ -2028,7 +2038,7 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
             raise RunFenceLostError("finish_run lost its running-row fence")
 
     with pytest.raises(RunFenceLostError, match="running-row fence"):
-        _ = reconcile.fail_stale_running_runs(Graph(), 1)
+        _ = reconcile.fail_stale_running_runs(Graph(), 1, ProcessAdapter())
 
 
 def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(

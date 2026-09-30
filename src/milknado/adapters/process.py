@@ -10,8 +10,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import BinaryIO
 
-from milknado.domains.common import pid_alive
+from milknado.domains.common import WorkerIdentity, pid_alive
 from milknado.domains.dispatch import ProcessOutcome
+from milknado.domains.dispatch.ports import Descendant, WorkerCleanupResult
+from milknado.loop._process_identity import identity_state, observe_descendants
+from milknado.loop._process_lifecycle import terminate_verified
 
 
 class ProcessAdapter:
@@ -94,18 +97,35 @@ class ProcessAdapter:
         return proc.pid
 
     def terminate_group(self, pid: int, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
         with suppress(ProcessLookupError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        deadline = time.monotonic() + timeout
-        while pid_alive(pid) and time.monotonic() < deadline:
-            time.sleep(self._poll_interval)
+        grace_deadline = min(deadline, time.monotonic() + self._termination_grace)
+        while pid_alive(pid) and time.monotonic() < grace_deadline:
+            time.sleep(max(0.0, min(self._poll_interval, grace_deadline - time.monotonic())))
         if pid_alive(pid):
             with suppress(ProcessLookupError):
                 os.killpg(os.getpgid(pid), signal.SIGKILL)
-            deadline = time.monotonic() + timeout
             while pid_alive(pid) and time.monotonic() < deadline:
-                time.sleep(self._poll_interval)
+                time.sleep(max(0.0, min(self._poll_interval, deadline - time.monotonic())))
         return not pid_alive(pid)
+
+    @staticmethod
+    def supervisor_state(pid: int, start_token: float) -> str:
+        return identity_state(pid, start_token)
+
+    @staticmethod
+    def observe_worker(worker: WorkerIdentity) -> tuple[Descendant, ...]:
+        return observe_descendants(worker)
+
+    @staticmethod
+    def terminate_worker(
+        worker: WorkerIdentity, retained: tuple[Descendant, ...], deadline: float
+    ) -> WorkerCleanupResult:
+        if time.monotonic() >= deadline:
+            return WorkerCleanupResult(False, ("worker recovery deadline expired",))
+        result = terminate_verified(worker, retained, deadline)
+        return WorkerCleanupResult(result.covered_exited, result.unresolved)
 
     @staticmethod
     def _write_stdin(stdin: BinaryIO, payload: bytes) -> None:

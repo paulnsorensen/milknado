@@ -13,6 +13,7 @@ from typing import TypedDict, cast
 import pytest
 from fastmcp import Context
 
+from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
@@ -926,7 +927,7 @@ class TestTodoAsyncRun:
         _seed_run(root, run_id=run_id, node_id=7, started_at=stale_started, timeout_seconds=10)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 7)
+            flipped = fail_stale_running_runs(graph, 7, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -942,7 +943,7 @@ class TestTodoAsyncRun:
         try:
             from milknado.domains.dispatch import fail_stale_running_runs
 
-            assert fail_stale_running_runs(graph, 8) == []
+            assert fail_stale_running_runs(graph, 8, ProcessAdapter()) == []
             assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
@@ -979,7 +980,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 9, pid=os.getpid())
         graph, _cfg = open_graph(root)
         try:
-            assert fail_stale_running_runs(graph, 9) == [], "a live runner was wrongly flipped"
+            assert fail_stale_running_runs(graph, 9, ProcessAdapter()) == [], "a live runner was wrongly flipped"
             assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
@@ -995,7 +996,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 10, pid=2**31 - 1)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 10)
+            flipped = fail_stale_running_runs(graph, 10, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -1013,7 +1014,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 11, pid=None)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 11)
+            flipped = fail_stale_running_runs(graph, 11, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -1036,7 +1037,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, dead, 12, pid=None)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 12)
+            flipped = fail_stale_running_runs(graph, 12, ProcessAdapter())
             assert [f["run_id"] for f in flipped] == [dead]
             assert _run_status(graph, live) == "running"
             assert _run_status(graph, dead) == "failed"
@@ -1321,13 +1322,13 @@ class TestTodoAsyncRun:
         )
         graph, _cfg = open_graph(root)
         try:
-            reclaim_stale_node(graph, 9, fence_run_id=None)
+            reclaim_stale_node(graph, 9, fence_run_id=None, process=ProcessAdapter())
             unowned = graph.get_node(9)
             assert unowned is not None and unowned.status.value == "done"
 
             graph.mark_pending(10)
             assert graph.claim_node(10, "owner", now=now_iso())
-            reclaim_stale_node(graph, 10, fence_run_id=None)
+            reclaim_stale_node(graph, 10, fence_run_id=None, process=ProcessAdapter())
             owned = graph.get_node(10)
             assert owned is not None and owned.status.value == "running"
         finally:

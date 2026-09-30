@@ -38,6 +38,7 @@ from milknado.domains.dispatch.ports import (
     RunWindow,
     TmuxPort,
 )
+from milknado.domains.dispatch.reap import reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     reconcile_node_status,
@@ -83,6 +84,7 @@ __all__ = [
     "now_iso",
     "poll_async_run",
     "reclaim_stale_node",
+    "reap_orphaned_workers",
     "reconcile_node_status",
     "reconcile_orphaned_runs",
     "reconcile_run_window",
