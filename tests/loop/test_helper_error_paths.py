@@ -7,20 +7,27 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
+import psutil
 import pytest
+from typing_extensions import override
 
 import milknado.loop._process_helper as process_helper
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import WorkerOwner
+from milknado.domains.graph import MikadoGraph, WorkerRecord
 from milknado.loop._process_contract import ProtectionContext
-from milknado.loop._process_gate import WorkerProcess
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_helper import (
     HelperStart,
     _await_ready,  # pyright: ignore[reportPrivateUsage]
     stop_failed_helper,
 )
+from milknado.loop._process_observation import snapshot
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX pipe semantics are required")
@@ -132,3 +139,74 @@ def test_helper_spawn_failure_closes_both_pipe_fds(
     for fd in owned:
         with pytest.raises(OSError):
             _ = os.fstat(fd)
+
+
+@dataclass(frozen=True, slots=True)
+class _AdvanceAfterReady(LoopWorkerEvidence):
+    worker: WorkerProcess = field(kw_only=True)
+
+    @override
+    def with_deadline(self, deadline: float) -> _AdvanceAfterReady:
+        return _AdvanceAfterReady(self.db_path, deadline, worker=self.worker)
+
+    @override
+    def get_worker(self, invocation_id: str) -> WorkerRecord | None:
+        _ = snapshot(self.worker, LoopWorkerEvidence(self.db_path, self.deadline))
+        return LoopWorkerEvidence.get_worker(self, invocation_id)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires inherited descriptors")
+def test_ready_rejects_snapshot_advanced_after_handshake(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    current = psutil.Process()
+    owner = WorkerOwner("run", current.pid, current.create_time(), "run", node.id)
+    marker = tmp_path / "ran"
+    command = (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()")
+    worker = spawn_gated(
+        SpawnOptions(
+            command, tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE
+        )
+    )
+    evidence = LoopWorkerEvidence(graph.db_path)
+    real_pipe = os.pipe
+    owned: list[tuple[int, int]] = []
+
+    def tracked_pipe() -> tuple[int, int]:
+        pair = real_pipe()
+        owned.append(pair)
+        return pair
+
+    try:
+        evidence.record_worker(owner, worker.identity)
+        sequence = snapshot(worker, evidence)
+        context = ProtectionContext(
+            _AdvanceAfterReady(graph.db_path, worker=worker), owner, graph.db_path
+        )
+        monkeypatch.setattr(os, "pipe", tracked_pipe)
+        with pytest.raises(RuntimeError, match="lifeline READY not durable"):
+            _ = process_helper.start_helper(
+                worker, context, HelperStart(sequence, 0, time.monotonic() + 6)
+            )
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.snapshot_seq == sequence + 1
+        assert record.ready_generation == 0
+        assert record.helper_pid is not None
+        with pytest.raises(ChildProcessError):
+            _ = os.waitpid(record.helper_pid, os.WNOHANG)
+        assert owned
+        for fd in owned[0]:
+            with pytest.raises(OSError):
+                _ = os.fstat(fd)
+        assert not marker.exists()
+    finally:
+        worker.close_gate()
+        if worker.process.poll() is None:
+            _ = worker.process.wait(timeout=3)
+        for pipe in (worker.process.stdout, worker.process.stderr):
+            if pipe is not None:
+                pipe.close()
+        graph.close()
