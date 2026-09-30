@@ -133,12 +133,12 @@ for _ in range(2):
 stage.write_text(str(os.getpid()))
 print(json.dumps({'type':'assistant','session_id':'sid','message':
     {'role':'assistant','content':[{'type':'text','text':'before'}]}}), flush=True)
+follow_up = json.loads(sys.stdin.readline())
+stage.with_name('follow-up').write_text(follow_up['message']['content'])
 while not release.exists():
     time.sleep(.02)
 print(json.dumps({'type':'result','subtype':'success','result':'native-before',
                   'session_id':'sid'}), flush=True)
-follow_up = json.loads(sys.stdin.readline())
-stage.with_name('follow-up').write_text(follow_up['message']['content'])
 print(json.dumps({'type':'result','subtype':'success','result':'native-after',
                   'session_id':'sid'}), flush=True)
 raise SystemExit(13)
@@ -183,6 +183,7 @@ def test_native_session_preserves_worker_and_result_during_replacement(tmp_path:
             after = graph.runs.get_worker(worker.identity.invocation_id)
             assert after is not None and after.pid == before.pid
             assert channel.submit(SessionInput(action="follow_up", text="after takeover"))
+            assert _until(stage.with_name("follow-up").exists)
             release.touch()
             result = future.result(timeout=10)
         assert result.returncode == 13
