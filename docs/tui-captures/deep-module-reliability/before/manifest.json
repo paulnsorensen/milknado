@@ -1,0 +1,110 @@
+{
+  "source_revision": "37e942cc9102f63d9bf93c4c21c94fdcaf8716c8",
+  "theme": "textual-dark",
+  "clock": "12:00:00",
+  "fixture": "docs/tui-captures/agent-steering/fixture.py",
+  "watch_quit_local": "q exited each watch app with zero fixture stop calls",
+  "limits": [
+    "Synthetic snapshots; no live worker, controller, CLI, provider, or database.",
+    "Fixture call evidence does not prove live-worker cleanup.",
+    "Chromium renders Textual SVG; this does not prove terminal palette fidelity."
+  ],
+  "records": [
+    {
+      "stem": "run-main-120x40",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-quit-confirmation-120x40",
+      "surface": "run",
+      "state": "quit-confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-stop-confirmation-120x40",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "watch-main-120x40",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-main-80x24",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-quit-confirmation-80x24",
+      "surface": "run",
+      "state": "quit-confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-stop-confirmation-80x24",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "watch-main-80x24",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    }
+  ]
+}
