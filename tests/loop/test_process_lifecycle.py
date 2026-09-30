@@ -13,7 +13,7 @@ import pytest
 import milknado.loop._process_identity as process_identity
 from milknado.domains.common import WorkerIdentity
 from milknado.loop._process_gate import SpawnOptions, spawn_gated
-from milknado.loop._process_lifecycle import terminate_verified
+from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX group identity is required")
@@ -48,7 +48,7 @@ def test_verified_worker_group_stops_real_child(tmp_path: Path) -> None:
     finally:
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait(timeout=1)
+            _ = proc.wait(timeout=1)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX group identity is required")
@@ -65,7 +65,7 @@ def test_mismatched_worker_token_refuses_signal() -> None:
         assert proc.poll() is None
     finally:
         os.killpg(proc.pid, signal.SIGKILL)
-        proc.wait(timeout=1)
+        _ = proc.wait(timeout=1)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
@@ -122,9 +122,16 @@ def test_verified_cleanup_never_signals_after_deadline(
         return "live"
 
     monkeypatch.setattr(process_identity, "identity_state", slow_identity)
-    monkeypatch.setattr(process_identity.os, "kill", lambda _pid, sig: signals.append(sig))
-    monkeypatch.setattr(process_identity.os, "killpg", lambda _pgid, sig: signals.append(sig))
-    monkeypatch.setattr(process_identity, "_group_state", lambda _pgid: "gone")
+
+    def record_signal(_pid: int, sig: int) -> None:
+        signals.append(sig)
+
+    def group_gone(_pgid: int) -> str:
+        return "gone"
+
+    monkeypatch.setattr(os, "kill", record_signal)
+    monkeypatch.setattr(os, "killpg", record_signal)
+    monkeypatch.setattr(process_identity, "_group_state", group_gone)
     worker = WorkerIdentity("inv-1", 2345, 2345, 123.5)
     result = terminate_verified(worker, (), time.monotonic() + 0.01)
     assert signals == []

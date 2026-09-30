@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import TextIO, cast
 
 import psutil
 import pytest
@@ -15,10 +16,17 @@ import milknado.loop._agent as agent
 import milknado.loop._process_lifecycle as lifecycle
 import milknado.loop._process_observation as observation
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.domains.common import WorkerOwner
+from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph
-from milknado.loop._agent import _ResolvedAgentRun, _run_agent_blocking, _run_agent_streaming
-from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._agent import (
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
+)
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_identity import observe_descendants
+from milknado.loop._process_lifecycle import spawn_protected
 
 
 def _context(graph: MikadoGraph, node_id: int) -> ProtectionContext:
@@ -45,7 +53,7 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
     try:
         worker = spawn_protected(options, _context(graph, node.id))
         assert worker.process.stdout is not None
-        assert worker.process.stdout.read().strip() == "ready-output"
+        assert cast(TextIO, worker.process.stdout).read().strip() == "ready-output"
         assert worker.process.wait(timeout=5) == 0
         assert worker.finish(timeout=5)
         assert graph.runs.live_workers(run_id="run-1") == ()
@@ -77,7 +85,7 @@ def test_monitor_start_failure_closes_worker_helper_and_lifeline(
     monkeypatch.setattr(lifecycle.ProtectedWorker, "start_monitor", fail_monitor)
     try:
         with pytest.raises(RuntimeError, match="monitor unavailable"):
-            spawn_protected(
+            _ = spawn_protected(
                 SpawnOptions(
                     (sys.executable, "-c", "import time; time.sleep(30)"),
                     tmp_path,
@@ -92,8 +100,8 @@ def test_monitor_start_failure_closes_worker_helper_and_lifeline(
         assert len(acquired) == 1
         protected = acquired[0]
         assert protected.process.poll() is not None
-        assert protected._helper.poll() is not None
-        assert protected._write_fd is None
+        assert protected._helper.poll() is not None  # pyright: ignore[reportPrivateUsage]
+        assert protected._write_fd is None  # pyright: ignore[reportPrivateUsage]
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         for protected in acquired:
@@ -121,9 +129,9 @@ def test_owned_worker_exit_during_observation_commits_current_marker(
         ),
         _context(graph, node.id),
     )
-    sample = observation.observe_descendants
+    sample = observe_descendants
 
-    def exit_after_sample(identity):
+    def exit_after_sample(identity: WorkerIdentity) -> tuple[tuple[int, float, int], ...]:
         descendants = sample(identity)
         worker.process.kill()
         assert worker.process.wait(timeout=2) != 0
@@ -163,7 +171,7 @@ def test_shared_owner_stops_worker_and_drains_its_pipes(tmp_path: Path) -> None:
     stdout = worker.process.stdout
     assert stdout is not None
     output: list[str] = []
-    reader = threading.Thread(target=lambda: output.append(stdout.read()))
+    reader = threading.Thread(target=lambda: output.append(cast(TextIO, stdout).read()))
     reader.start()
     try:
         assert worker.cleanup((reader,), deadline=time.monotonic() + 4)
@@ -307,7 +315,7 @@ def test_failed_observation_stops_worker_and_keeps_open_marker(
     )
     try:
 
-        def fail_observation(_identity):
+        def fail_observation(_identity: WorkerIdentity) -> None:
             raise RuntimeError("simulated observation failure")
 
         monkeypatch.setattr(observation, "observe_descendants", fail_observation)

@@ -14,7 +14,9 @@ import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
-from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
+from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 
 
@@ -63,9 +65,9 @@ def test_registry_abort_covers_popen_returning_after_stop(
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     registry = WorkerRegistry()
     entered, release = threading.Event(), threading.Event()
-    real_spawn = startup.spawn_gated
+    real_spawn = spawn_gated
 
-    def delayed_spawn(options: SpawnOptions):
+    def delayed_spawn(options: SpawnOptions) -> WorkerProcess:
         entered.set()
         assert release.wait(timeout=5)
         return real_spawn(options)
@@ -120,7 +122,7 @@ def test_registry_rejects_admission_on_scalar_intent() -> None:
     requested = True
     assert not ticket.activate(lambda: pytest.fail("released after signal"), lambda _: True)
     with pytest.raises(RuntimeError, match="admission is closed"):
-        registry.reserve()
+        _ = registry.reserve()
     ticket.close()
 
 
@@ -131,7 +133,7 @@ def test_registry_attempts_all_active_workers_with_one_deadline() -> None:
     barrier = threading.Barrier(2)
 
     def shutdown(_deadline: float) -> bool:
-        barrier.wait(timeout=0.5)
+        _ = barrier.wait(timeout=0.5)
         return True
 
     assert first.activate(lambda: None, shutdown)

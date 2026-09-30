@@ -19,8 +19,9 @@ from milknado.loop._events import (
     EventType,
     QueueEmitter,
 )
-from milknado.loop._process_contract import WorkerHandle
-from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._process_contract import ProtectionContext, WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._run_types import (
     RUN_ID_LENGTH,
     CompletionVerdict,
@@ -40,7 +41,7 @@ from tests.loop.helpers import (
 
 class _CompletedWorker:
     def __init__(self, process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
-        self.process = process
+        self.process: subprocess.Popen[bytes] | subprocess.Popen[str] = process
 
     def cleanup(
         self,

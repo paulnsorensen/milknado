@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import TextIO, cast
 
 import psutil
 import pytest
@@ -24,10 +25,10 @@ def _owner(node_id: int) -> WorkerOwner:
 def _stop_children(helper: subprocess.Popen[str] | None, worker: subprocess.Popen[bytes]) -> None:
     if helper is not None and helper.poll() is None:
         helper.kill()
-        helper.wait(timeout=1)
+        _ = helper.wait(timeout=1)
     if worker.poll() is None:
         os.killpg(worker.pid, signal.SIGKILL)
-        worker.wait(timeout=1)
+        _ = worker.wait(timeout=1)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
@@ -40,7 +41,7 @@ def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None
         [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
     )
     lifeline_read, lifeline_write = os.pipe()
-    helper = None
+    helper: subprocess.Popen[str] | None = None
     try:
         identity = WorkerIdentity(
             "inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time()
@@ -69,7 +70,7 @@ def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None
         assert helper.stdout is not None
         ready, _, _ = select.select([helper.stdout], [], [], 8)
         assert ready
-        assert helper.stdout.readline().startswith("READY ")
+        assert cast(TextIO, helper.stdout).readline().startswith("READY ")
         os.close(lifeline_write)
         lifeline_write = -1
         assert worker.wait(timeout=5) != 0
@@ -94,7 +95,7 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
         [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
     )
     read_fd, write_fd = os.pipe()
-    helper = None
+    helper: subprocess.Popen[str] | None = None
     lock = sqlite3.connect(db_path)
     try:
         graph.runs.record_worker(
@@ -126,9 +127,9 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
         assert helper.stdout is not None
         ready, _, _ = select.select([helper.stdout], [], [], 8)
         assert ready
-        assert helper.stdout.readline().startswith("READY ")
-        lock.execute("BEGIN IMMEDIATE")
-        lock.execute(
+        assert cast(TextIO, helper.stdout).readline().startswith("READY ")
+        _ = lock.execute("BEGIN IMMEDIATE")
+        _ = lock.execute(
             "UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?",
             ("inv-1",),
         )

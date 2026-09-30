@@ -14,8 +14,8 @@ import pytest
 
 from milknado.adapters import FlockSlotPool
 from milknado.adapters._loop_local_runs import (
-    _drain_review_run,  # pyright: ignore[reportPrivateUsage]
     _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
+    drain_review_run,
 )
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters.loop import LoopAdapter
@@ -893,7 +893,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         return next(clock)
 
     monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _advance_clock)
-    timed_out = _drain_review_run(
+    timed_out = drain_review_run(
         timeout_manager,
         "timeout",
         queue.Queue[Event[EventData]](),
@@ -916,7 +916,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
         return 0.0
 
     monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _zero_clock)
-    empty = _drain_review_run(
+    empty = drain_review_run(
         empty_manager,
         "empty",
         empty_events,
@@ -935,13 +935,18 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     failed_manager = Manager(RuntimeError("stop failed"))
     failed_events = FailedEvents()
     with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
-        _ = _drain_review_run(failed_manager, "failed", failed_events, 1800.0)
+        _ = drain_review_run(failed_manager, "failed", failed_events, 1800.0)
     assert failed_manager.stopped
 
     unconfirmed_manager = Manager()
-    unconfirmed_manager.stop_and_join = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+
+    def unconfirmed_stop(run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return False
+
+    unconfirmed_manager.stop_and_join = unconfirmed_stop  # type: ignore[method-assign]
     with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
-        _ = _drain_review_run(unconfirmed_manager, "running", empty_events, 1800.0)
+        _ = drain_review_run(unconfirmed_manager, "running", empty_events, 1800.0)
 
 
 def test_agent_session_parser_rejects_bad_shapes() -> None:
@@ -1081,7 +1086,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
     )
     events.put(Event(EventType.RUN_STOPPED, "r", NoData()))
     manager = RunManager()
-    result = _drain_review_run(manager, "r", events, 1800.0)
+    result = drain_review_run(manager, "r", events, 1800.0)
     assert result.approved is True
 
 

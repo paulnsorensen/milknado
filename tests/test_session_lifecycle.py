@@ -16,7 +16,9 @@ from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentRunSpec, OutputLineCallback
 from milknado.loop._events import OutputStream
-from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
 from milknado.loop.sessions import _runtime as session_runtime
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
@@ -330,7 +332,7 @@ def test_structured_session_uses_same_protected_worker(
     context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
     invoked: list[str] = []
 
-    def launch(options):
+    def launch(options: SpawnOptions) -> ProtectedWorker:
         protected = spawn_protected(options, context)
         invoked.append(protected.identity.invocation_id)
         return protected

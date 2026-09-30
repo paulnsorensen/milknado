@@ -609,13 +609,13 @@ class TestVerifySpec:
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
     def test_queue_timeout_stops_and_joins_verifier(self) -> None:
-        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
+        from milknado.adapters._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         events = MagicMock()
         events.get.side_effect = queue.Empty  # pyright: ignore[reportAny]
 
-        result = _drain_verify_run(manager, "verify-empty", events)
+        result = drain_verify_run(manager, "verify-empty", events)
 
         manager.stop_and_join.assert_called_once_with("verify-empty", timeout=5.0)  # pyright: ignore[reportAny]
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
@@ -711,7 +711,7 @@ class TestDrainVerifyRunExceptionHandler:
     ) -> None:
         import logging
 
-        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
+        from milknado.adapters._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         manager.stop_and_join.side_effect = RuntimeError("stop boom")  # pyright: ignore[reportAny]
@@ -719,7 +719,7 @@ class TestDrainVerifyRunExceptionHandler:
         events.get.side_effect = RuntimeError("drain boom")  # pyright: ignore[reportAny]
 
         with caplog.at_level(logging.ERROR):
-            result = _drain_verify_run(manager, "verify-failed", events)
+            result = drain_verify_run(manager, "verify-failed", events)
 
         assert result == VerifySpecResult(
             outcome="gaps", goal_delta="verification failed: drain boom"
