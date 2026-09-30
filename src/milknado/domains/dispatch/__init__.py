@@ -32,12 +32,14 @@ from milknado.domains.dispatch.lifecycle import (
     reclaim_stale_node,
 )
 from milknado.domains.dispatch.ports import (
+    Descendant,
     GraphSessionPort,
     ProcessOutcome,
     ProcessPort,
     ProcessTerminationPort,
     RunWindow,
     TmuxPort,
+    WorkerCleanupResult,
 )
 from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import (
@@ -66,12 +68,14 @@ __all__ = [
     "IsolateContext",
     "MergeBackResult",
     "SyncDispatchRequest",
+    "Descendant",
     "GraphSessionPort",
     "ProcessOutcome",
     "ProcessPort",
     "ProcessTerminationPort",
     "RunWindow",
     "TmuxPort",
+    "WorkerCleanupResult",
     "cancel_run",
     "clear_cancel",
     "build_worker_env",
