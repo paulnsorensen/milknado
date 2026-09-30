@@ -32,6 +32,8 @@ from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop import EventType, QueueEmitter, RunConfig
 from milknado.loop._events import Event, NoData
 
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
+
 
 @pytest.fixture
 def worker() -> Iterator[subprocess.Popen[str]]:
@@ -43,7 +45,7 @@ def worker() -> Iterator[subprocess.Popen[str]]:
     try:
         yield process
     finally:
-        with suppress(ProcessLookupError):
+        with suppress(ProcessLookupError, PermissionError):
             os.killpg(process.pid, signal.SIGKILL)
         _ = process.wait(timeout=3)
 
@@ -204,5 +206,46 @@ def test_unconfirmed_record_blocks_blocked_node_admission(
         node = graph.get_node(node_id)
         assert node is not None and node.status is NodeStatus.BLOCKED
         assert node.run_id == "owner" and node.worktree_path == str(worktree)
+    finally:
+        graph.close()
+
+
+def test_adopted_parent_preserves_actual_worker_run_id(
+    tmp_path: Path, worker: subprocess.Popen[str]
+) -> None:
+    graph, node_id, worktree = _owned_graph(tmp_path, worker)
+    assert graph.replace_run_id(node_id, "owner", "parent")
+    loop = MagicMock()
+    git = MagicMock()
+    executor = Executor(
+        graph, cast(GitPort, git), cast(LoopPort, loop), cast(CrgPort, MagicMock())
+    )
+    try:
+        with pytest.raises(PreservedWorkerRun) as preserved:
+            executor.fail(node_id)
+        assert preserved.value.run_id == "owner"
+        assert preserved.value.owner_run_id == "parent"
+        assert executor.force_stop_run(preserved.value.run_id)
+        assert loop.force_stop_run.call_args.args[0] == "owner"  # pyright: ignore[reportAny]
+        record = graph.runs.get_worker("invocation")
+        assert record is not None
+        graph.runs.commit_worker_observation(
+            ObservationKey("invocation", "supervisor", 1, -1, worker.pid, record.start_token),
+            (),
+        )
+        worker.kill()
+        _ = worker.wait(timeout=3)
+        refreshed = graph.runs.get_worker("invocation")
+        assert refreshed is not None
+        graph.runs.end_worker("invocation", refreshed.snapshot_seq)
+        executor.finish_preserved_abort(
+            node_id, preserved.value.owner_run_id, preserved.value.run_id
+        )
+        worker_run = graph.runs.get("owner")
+        assert worker_run is not None and worker_run["status"] == "failed"
+        node = graph.get_node(node_id)
+        assert node is not None and node.status is NodeStatus.FAILED
+        assert node.worktree_path == str(worktree) and worktree.exists()
+        git.remove_worktree.assert_not_called()  # pyright: ignore[reportAny]
     finally:
         graph.close()

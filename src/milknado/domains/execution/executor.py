@@ -1427,7 +1427,7 @@ class Executor:
     def _require_worker_cleanup(self, node: MikadoNode) -> None:
         records = self._graph.runs.live_workers(node_id=node.id)
         if records:
-            run_id = node.run_id or records[0].graph_run_id or records[0].runtime_run_id
+            run_id = records[0].graph_run_id or records[0].runtime_run_id
             raise PreservedWorkerRun(node.id, run_id, node.run_id)
 
     def _settle_node_slot(self, node_id: int) -> None:
