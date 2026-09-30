@@ -1,9 +1,9 @@
 # Deep-module reliability TUI evidence
 
-These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with source `605059eb6b57f98231c14692e862f9cb75e75667`.
-The after source includes the TUI change from `966c3df` and the signal rearm from `605059e`.
-Only the signal rearm changed presentation inputs after the first after capture.
-The eight after PNGs remained byte-identical.
+These eight matched pairs compare base `37e942cc9102f63d9bf93c4c21c94fdcaf8716c8` with integration `df249ca5b1cf14ddaf2c8ef5ee12cbcdf7e276be`.
+The integrated source includes the TUI change from `966c3df`, signal rearm from `605059e`, and signal exit from `275d38c`.
+The final signal exit change alters `run_tui.py` but not these captured states.
+All ten after PNGs remain byte-identical to the previous capture.
 The [after manifest](./after/manifest.json) records SHA-256 hashes for seven presentation inputs.
 
 ## Reproduce
@@ -18,7 +18,7 @@ work=$(mktemp -d)
 before="$work/before"
 after="$work/after"
 git worktree add --detach "$before" 37e942cc9102f63d9bf93c4c21c94fdcaf8716c8
-git worktree add --detach "$after" 605059eb6b57f98231c14692e862f9cb75e75667
+git worktree add --detach "$after" df249ca5b1cf14ddaf2c8ef5ee12cbcdf7e276be
 python="${PYTHON:?Set PYTHON to an installed Python environment}"
 script="$evidence/docs/tui-captures/deep-module-reliability/capture.py"
 captures="$evidence/.context/deep-module-reliability"
@@ -82,4 +82,5 @@ The fixture supplies synthetic snapshots.
 These frames do not start a live worker, controller, provider, CLI process, or database.
 The watch fixture checks local exit behavior, not remote worker state.
 The warning fixture checks stderr output after a synthetic failed result, not a real failed cleanup.
+It does not exercise the signal-specific branch added by `275d38c`.
 Chromium renders exported Textual SVGs, so the frames do not prove terminal-emulator palette fidelity.
