@@ -4,7 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.adapters._loop_local_runs import _parse_verify_output  # pyright: ignore[reportPrivateUsage]
+from milknado.adapters._loop_local_runs import (
+    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
+)
 from milknado.adapters.loop import (
     MAX_CONSECUTIVE_AGENT_FAILURES,
     MILKNADO_COMPLETION_SIGNAL,

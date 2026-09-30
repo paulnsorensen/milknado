@@ -22,6 +22,8 @@ def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> Prot
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
     return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX protected launch is required")
 def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
@@ -31,7 +33,12 @@ def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) ->
     worker = spawn_protected(
         SpawnOptions(
             (sys.executable, "-c", "import time; time.sleep(30)"),
-            tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+            tmp_path,
+            None,
+            False,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
         ),
         _context(graph, node.id, registry),
     )
@@ -48,7 +55,8 @@ def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) ->
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
 def test_registry_abort_covers_popen_returning_after_stop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
@@ -70,8 +78,17 @@ def test_registry_abort_covers_popen_returning_after_stop(
         try:
             _ = spawn_protected(
                 SpawnOptions(
-                    (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
-                    tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+                    (
+                        sys.executable,
+                        "-c",
+                        f"from pathlib import Path; Path({str(marker)!r}).touch()",
+                    ),
+                    tmp_path,
+                    None,
+                    False,
+                    subprocess.DEVNULL,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
                 ),
                 _context(graph, node.id, registry),
             )
@@ -94,6 +111,7 @@ def test_registry_abort_covers_popen_returning_after_stop(
         thread.join(timeout=5)
         graph.close()
 
+
 def test_registry_rejects_admission_on_scalar_intent() -> None:
     registry = WorkerRegistry()
     requested = False
@@ -104,6 +122,7 @@ def test_registry_rejects_admission_on_scalar_intent() -> None:
     with pytest.raises(RuntimeError, match="admission is closed"):
         registry.reserve()
     ticket.close()
+
 
 def test_registry_attempts_all_active_workers_with_one_deadline() -> None:
     registry = WorkerRegistry()

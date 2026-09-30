@@ -14,15 +14,23 @@ import pytest
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.execution import PreservedWorkerRun
 from milknado.domains.graph import (
-    MikadoGraph, NodeWorkers, WorkerEvidenceStore, default_worker_db_path,
+    MikadoGraph,
+    NodeWorkers,
+    WorkerEvidenceStore,
+    default_worker_db_path,
 )
-from milknado.loop._process_lifecycle import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, SpawnOptions
 
 
 def _options(tmp_path: Path) -> SpawnOptions:
     return SpawnOptions(
         (sys.executable, "-c", "print('worker-ok', flush=True)"),
-        tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        tmp_path,
+        None,
+        True,
+        subprocess.DEVNULL,
+        subprocess.PIPE,
+        subprocess.PIPE,
     )
 
 
@@ -35,7 +43,8 @@ def _finish(worker) -> None:
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_graphless_adapter_creates_stable_store_only_at_launch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     db_path = default_worker_db_path()
@@ -58,9 +67,7 @@ def test_node_run_resolves_real_graph_association_at_launch(tmp_path: Path) -> N
     loop_file = tmp_path / "loop.md"
     loop_file.write_text("Run fixture", encoding="utf-8")
     adapter = LoopAdapter(graph=graph)
-    run = adapter.create_run(
-        sys.executable, tmp_path, loop_file, None, run_id="run-1"
-    )
+    run = adapter.create_run(sys.executable, tmp_path, loop_file, None, run_id="run-1")
     spawn = run.config.spawn_worker
     assert spawn is not None
     try:
@@ -68,6 +75,7 @@ def test_node_run_resolves_real_graph_association_at_launch(tmp_path: Path) -> N
             spawn(_options(tmp_path))
         graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
         worker = spawn(_options(tmp_path))
+        assert isinstance(worker, ProtectedWorker)
         _finish(worker)
         record = graph.runs.get_worker(worker.identity.invocation_id)
         assert record is not None and record.ended_at is not None
@@ -90,6 +98,7 @@ def test_graph_backed_review_has_no_synthetic_run(tmp_path: Path) -> None:
     finally:
         graph.close()
 
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows retains its existing launch backend")
 def test_raw_run_manager_rejects_missing_durable_context(tmp_path: Path) -> None:
     from milknado.loop import RunManager
@@ -101,9 +110,11 @@ def test_raw_run_manager_rejects_missing_durable_context(tmp_path: Path) -> None
         manager.start_run(run.state.run_id)
     assert run.thread is None
 
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_graph_reviewer_uses_real_node_association(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)
     graph = MikadoGraph(tmp_path / "graph.db")
@@ -118,8 +129,12 @@ def test_graph_reviewer_uses_real_node_association(
     try:
         adapter = LoopAdapter(graph=graph)
         verdict = adapter.run_node_review(
-            f"{sys.executable} {script}", "review", tmp_path, tmp_path,
-            timeout_seconds=5, graph_run_id="graph-worker",
+            f"{sys.executable} {script}",
+            "review",
+            tmp_path,
+            tmp_path,
+            timeout_seconds=5,
+            graph_run_id="graph-worker",
         )
         assert verdict.approved
         with WorkerEvidenceStore(graph.db_path) as store:
@@ -142,7 +157,8 @@ def test_graph_reviewer_uses_real_node_association(
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_unconfirmed_reviewer_retains_real_node_owner_and_unrelated_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("milknado.loop.engine.validate_worker_argv", lambda _cmd: None)
     graph = MikadoGraph(tmp_path / "graph.db")
@@ -155,11 +171,17 @@ def test_unconfirmed_reviewer_retains_real_node_owner_and_unrelated_run(
     adapter = LoopAdapter(graph=graph)
     try:
         with monkeypatch.context() as patch:
-            patch.setattr("milknado.loop.manager.RunManager.stop_and_join", lambda *_a, **_k: False)
+            patch.setattr(
+                "milknado.loop.manager.RunManager.stop_and_join", lambda *_a, **_k: False
+            )
             with pytest.raises(PreservedWorkerRun) as failure:
                 adapter.run_node_review(
-                    f"{sys.executable} {script}", "review", tmp_path, tmp_path,
-                    timeout_seconds=1, graph_run_id="owner-run",
+                    f"{sys.executable} {script}",
+                    "review",
+                    tmp_path,
+                    tmp_path,
+                    timeout_seconds=1,
+                    graph_run_id="owner-run",
                 )
         assert failure.value.run_id == "owner-run"
         records = graph.runs.live_workers(node_id=owner.id)
@@ -170,9 +192,15 @@ def test_unconfirmed_reviewer_retains_real_node_owner_and_unrelated_run(
         worker = adapter._launch_worker(
             SpawnOptions(
                 (sys.executable, "-c", "import time; time.sleep(30)"),
-                tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+                tmp_path,
+                None,
+                True,
+                subprocess.DEVNULL,
+                subprocess.PIPE,
+                subprocess.PIPE,
             ),
-            "other-local", "other-run",
+            "other-local",
+            "other-run",
         )
         try:
             assert adapter.stop_run_workers("owner-run", time.monotonic() + 4)

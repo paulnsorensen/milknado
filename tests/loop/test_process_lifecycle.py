@@ -10,8 +10,8 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.domains.common import WorkerIdentity
 import milknado.loop._process_identity as process_identity
+from milknado.domains.common import WorkerIdentity
 from milknado.loop._process_lifecycle import SpawnOptions, spawn_gated, terminate_verified
 
 
@@ -24,9 +24,7 @@ def test_verified_worker_group_stops_real_child(tmp_path: Path) -> None:
         "open(sys.argv[1],'w').write(str(child.pid));"
         "time.sleep(30)"
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", script, str(marker)], start_new_session=True
-    )
+    proc = subprocess.Popen([sys.executable, "-c", script, str(marker)], start_new_session=True)
     try:
         deadline = time.monotonic() + 3
         child_pid = 0
@@ -36,11 +34,16 @@ def test_verified_worker_group_stops_real_child(tmp_path: Path) -> None:
                 break
             time.sleep(0.01)
         assert child_pid > 0
-        identity = WorkerIdentity("inv-1", proc.pid, proc.pid, psutil.Process(proc.pid).create_time())
+        identity = WorkerIdentity(
+            "inv-1", proc.pid, proc.pid, psutil.Process(proc.pid).create_time()
+        )
         result = terminate_verified(identity, (), time.monotonic() + 3, proc)
         assert result.covered_exited is True
         assert proc.wait(timeout=1) != 0
-        assert not psutil.pid_exists(child_pid) or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+        assert (
+            not psutil.pid_exists(child_pid)
+            or psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
+        )
     finally:
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGKILL)

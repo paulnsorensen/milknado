@@ -19,6 +19,17 @@ from milknado.domains.graph import MikadoGraph
 def _owner(node_id: int) -> WorkerOwner:
     supervisor = psutil.Process()
     return WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
+
+
+def _stop_children(helper: subprocess.Popen[str] | None, worker: subprocess.Popen[bytes]) -> None:
+    if helper is not None and helper.poll() is None:
+        helper.kill()
+        helper.wait(timeout=1)
+    if worker.poll() is None:
+        os.killpg(worker.pid, signal.SIGKILL)
+        worker.wait(timeout=1)
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
@@ -69,12 +80,7 @@ def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None
             os.close(lifeline_read)
         if lifeline_write != -1:
             os.close(lifeline_write)
-        if helper is not None and helper.poll() is None:
-            helper.kill()
-            helper.wait(timeout=1)
-        if worker.poll() is None:
-            os.killpg(worker.pid, signal.SIGKILL)
-            worker.wait(timeout=1)
+        _stop_children(helper, worker)
         graph.close()
 
 
@@ -92,12 +98,25 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
     lock = sqlite3.connect(db_path)
     try:
         graph.runs.record_worker(
-            _owner(node.id), WorkerIdentity("inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time())
+            _owner(node.id),
+            WorkerIdentity(
+                "inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time()
+            ),
         )
         helper = subprocess.Popen(
-            [sys.executable, "-m", "milknado.adapters._loop_lifeline", str(db_path),
-             str(read_fd), "inv-1", "0"],
-            pass_fds=(read_fd,), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            [
+                sys.executable,
+                "-m",
+                "milknado.adapters._loop_lifeline",
+                str(db_path),
+                str(read_fd),
+                "inv-1",
+                "0",
+            ],
+            pass_fds=(read_fd,),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         os.close(read_fd)
         read_fd = -1
@@ -109,7 +128,10 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
         assert ready
         assert helper.stdout.readline().startswith("READY ")
         lock.execute("BEGIN IMMEDIATE")
-        lock.execute("UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?", ("inv-1",))
+        lock.execute(
+            "UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?",
+            ("inv-1",),
+        )
         start = time.monotonic()
         os.close(write_fd)
         write_fd = -1
@@ -127,10 +149,5 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
             os.close(read_fd)
         if write_fd != -1:
             os.close(write_fd)
-        if helper is not None and helper.poll() is None:
-            helper.kill()
-            helper.wait(timeout=1)
-        if worker.poll() is None:
-            os.killpg(worker.pid, signal.SIGKILL)
-            worker.wait(timeout=1)
+        _stop_children(helper, worker)
         graph.close()
