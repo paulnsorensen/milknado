@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import sys
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Never
 
 import psutil
 import pytest
 
+import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
@@ -23,7 +26,8 @@ from milknado.loop._agent import (
     _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.loop._process_contract import ProtectionContext
-from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess
+from milknado.loop._process_helper import HelperStart
 from milknado.loop._process_identity import identity_state
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
@@ -123,6 +127,31 @@ def _kill_helper(graph: MikadoGraph, worker: ProtectedWorker) -> None:
     os.kill(record.helper_pid, signal.SIGKILL)
 
 
+def _exit_with_dead_helper(
+    graph: MikadoGraph,
+    worker: ProtectedWorker,
+    release: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    proceed = threading.Event()
+    original_wait = worker._stop.wait  # pyright: ignore[reportPrivateUsage]
+
+    def held_wait(timeout: float) -> bool:
+        entered.set()
+        assert proceed.wait(3)
+        return original_wait(timeout)
+
+    monkeypatch.setattr(worker._stop, "wait", held_wait)  # pyright: ignore[reportPrivateUsage]
+    assert entered.wait(3)
+    try:
+        release.touch()
+        assert worker.process.wait(timeout=3) == 7
+        _kill_helper(graph, worker)
+    finally:
+        proceed.set()
+
+
 @pytest.mark.parametrize(
     ("helper_dead", "overlap"),
     [(False, False), (True, False), (False, True)],
@@ -166,13 +195,13 @@ def test_normal_exit_reaps_retained_child_without_caller_cleanup(
                 assert _until(lambda: len(workers) == 1)
                 worker = workers[0]
                 child_pid, child_token = _observed_child(graph, worker, marker)
-                if overlap:
+                if helper_dead:
+                    _exit_with_dead_helper(graph, worker, release, monkeypatch)
+                elif overlap:
                     _overlap_shutdown(worker, release, monkeypatch)
                 else:
                     release.touch()
                     assert worker.process.wait(timeout=3) == 7
-                if helper_dead:
-                    _kill_helper(graph, worker)
                 result = result_future.result(timeout=5)
                 _assert_finished(graph, worker, result, (child_pid, child_token))
             finally:
@@ -187,4 +216,71 @@ def test_normal_exit_reaps_retained_child_without_caller_cleanup(
                     except ProcessLookupError:
                         pass
     finally:
+        graph.close()
+
+
+def test_normal_exit_during_failed_replacement_does_not_retry_or_reset_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    supervisor = psutil.Process()
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id),
+        graph.db_path,
+    )
+    marker, release = tmp_path / "child.pid", tmp_path / "release"
+    worker = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", _PROGRAM, str(marker), str(release)),
+            tmp_path,
+            None,
+            False,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
+        ),
+        context,
+    )
+    attempts: list[int] = []
+
+    def fail_after_exit(
+        _process: WorkerProcess, _context: ProtectionContext, request: HelperStart
+    ) -> Never:
+        attempts.append(request.generation)
+        release.touch()
+        _ = worker.process.wait(timeout=3)
+        raise RuntimeError("replacement failed after normal exit")
+
+    monkeypatch.setattr(lifecycle, "_start_helper", fail_after_exit)
+    child_pid: int | None = None
+    child_token: float | None = None
+    try:
+        child_pid, child_token = _observed_child(graph, worker, marker)
+        _kill_helper(graph, worker)
+        watch = worker._watch  # pyright: ignore[reportPrivateUsage]
+        assert watch is not None and _until(lambda: not watch.is_alive())
+        assert attempts == [1]
+        limit = worker._stop_deadline  # pyright: ignore[reportPrivateUsage]
+        assert limit is not None
+        assert worker.finish(timeout=3)
+        assert worker.shutdown(limit + 5)
+        assert worker._stop_deadline == limit  # pyright: ignore[reportPrivateUsage]
+        assert worker.process.returncode == 7
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.ended_at is not None
+        assert identity_state(child_pid, child_token) == "gone"
+    finally:
+        release.touch()
+        if (
+            child_pid is not None
+            and child_token is not None
+            and identity_state(child_pid, child_token) == "live"
+        ):
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         graph.close()

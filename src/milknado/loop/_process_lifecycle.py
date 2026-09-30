@@ -96,6 +96,9 @@ class ProtectedWorker:
             self._stop_known_worker(deadline)
 
     def _abort_replacement(self) -> None:
+        if self.process.poll() is not None:
+            self._normal_exit()
+            return
         with self._state_lock:
             stop_deadline = self._stop_deadline
         deadline = time.monotonic() + 3
@@ -105,12 +108,11 @@ class ProtectedWorker:
 
     def _replace_helper(self) -> bool:
         self.close_lifeline()
-        if self.process.poll() is not None:
-            self._normal_exit()
-            return False
         deadline = time.monotonic() + 8
         evidence = self._context.evidence.with_deadline(deadline)
         while self._replacements < 3 and time.monotonic() < deadline and not self._stop.is_set():
+            if self.process.poll() is not None:
+                break
             try:
                 record = evidence.get_worker(self.identity.invocation_id)
                 if record is None or record.ended_at is not None:
@@ -150,12 +152,16 @@ class ProtectedWorker:
         self._abort_replacement()
         return False
 
+    def _claim_deadline(self, deadline: float) -> float:
+        with self._state_lock:
+            self._stop_deadline = (
+                deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
+            )
+            return self._stop_deadline
+
     def _normal_exit(self) -> None:
         self._stop.set()
-        with self._state_lock:
-            deadline = time.monotonic() + 3
-            if self._stop_deadline is not None:
-                deadline = min(deadline, self._stop_deadline)
+        deadline = self._claim_deadline(time.monotonic() + 3)
         if not self._cleanup_lock.acquire(timeout=max(0, deadline - time.monotonic())):
             return
         try:
@@ -182,11 +188,7 @@ class ProtectedWorker:
                 return
 
     def shutdown(self, deadline: float) -> bool:
-        with self._state_lock:
-            self._stop_deadline = (
-                deadline if self._stop_deadline is None else min(deadline, self._stop_deadline)
-            )
-            deadline = self._stop_deadline
+        deadline = self._claim_deadline(deadline)
         self._stop.set()
         if not self._monitor_started.wait(timeout=max(0, deadline - time.monotonic())):
             self.close_lifeline()
@@ -258,10 +260,7 @@ class ProtectedWorker:
         """Stop the verified worker, drain readers, then close owned pipes."""
         if stop is not None:
             stop.set()
-        limit = deadline if deadline is not None else time.monotonic() + 3
-        with self._state_lock:
-            if self._stop_deadline is not None:
-                limit = min(limit, self._stop_deadline)
+        limit = self._claim_deadline(deadline if deadline is not None else time.monotonic() + 3)
         confirmed = self.shutdown(limit)
         drained = True
         for thread in threads:
