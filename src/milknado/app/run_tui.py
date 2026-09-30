@@ -101,8 +101,8 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self.spec_text: str | None = spec_text
         self.spec_path: Path | None = spec_path
         self.allow_protected: bool = allow_protected
-        self._shutdown_intent = shutdown_intent
-        self._quit_started = False
+        self._shutdown_intent: ShutdownIntent | None = shutdown_intent
+        self._quit_started: bool = False
         self._cleanup_confirmed: bool | None = None
         self._execution_worker: Worker[None] | None = None
         self._confirmation: tuple[str, str | None] | None = None
@@ -115,7 +115,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         super().on_mount()
         if self._shutdown_intent is not None:
             self._shutdown_intent.rearm()
-            self.set_interval(0.05, self._check_shutdown)
+            _ = self.set_interval(0.05, self._check_shutdown)
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()
 
@@ -176,6 +176,10 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
                 _ = self._quit_after_force_stop()
             elif action == "stop":
                 _ = self._stop_scheduling()
+
+    @property
+    def cleanup_confirmed(self) -> bool | None:
+        return self._cleanup_confirmed
 
     def _check_shutdown(self) -> None:
         if (
@@ -277,7 +281,7 @@ def run_execution_tui(
                     "Warning: force-stop cleanup did not finish; worker ownership remains.\n"
                 )
             raise ShutdownSignal(intent.signum)
-    if app._cleanup_confirmed is False:
+    if app.cleanup_confirmed is False:
         _ = sys.stderr.write(
             "Warning: force-stop cleanup did not finish; worker ownership remains.\n"
         )

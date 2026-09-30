@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_shutdown_subprocess import (  # pyright: ignore[reportPrivateUsage]
-    _output,
-    _owned_cleanup,
-    _project,
-    _start,
-    _wait_exit,
-    _wait_for,
+from tests.test_shutdown_subprocess import (
+    _output,  # pyright: ignore[reportPrivateUsage]
+    _owned_cleanup,  # pyright: ignore[reportPrivateUsage]
+    _project,  # pyright: ignore[reportPrivateUsage]
+    _start,  # pyright: ignore[reportPrivateUsage]
+    _wait_exit,  # pyright: ignore[reportPrivateUsage]
+    _wait_for,  # pyright: ignore[reportPrivateUsage]
 )
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
@@ -74,7 +74,7 @@ def test_signal_during_dispatch_barrier_rejects_new_worker(
     repo, db, pid_file = _project(tmp_path, monkeypatch)
     marker = tmp_path / f"{barrier}-entered"
     release = tmp_path / f"{barrier}-release"
-    (tmp_path / "sitecustomize.py").write_text(_DISPATCH_BARRIER, encoding="utf-8")
+    _ = (tmp_path / "sitecustomize.py").write_text(_DISPATCH_BARRIER, encoding="utf-8")
     monkeypatch.setenv("SHUTDOWN_DISPATCH_METHOD", method)
     monkeypatch.setenv("SHUTDOWN_DISPATCH_MARKER", str(marker))
     monkeypatch.setenv("SHUTDOWN_DISPATCH_RELEASE", str(release))
@@ -87,8 +87,9 @@ def test_signal_during_dispatch_barrier_rejects_new_worker(
         elapsed = time.monotonic() - started
         assert not pid_file.exists(), "launch passed the shutdown admission barrier"
         with sqlite3.connect(db) as conn:
-            running = conn.execute("SELECT 1 FROM nodes WHERE status = 'running'").fetchone()
-        assert running is None, "dispatch claimed a node after shutdown intent"
+            assert (
+                conn.execute("SELECT 1 FROM nodes WHERE status = 'running'").fetchone() is None
+            ), "dispatch claimed a node after shutdown intent"
         assert elapsed < 8.25
     finally:
         _owned_cleanup(proc, pid_file, master)

@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from threading import Thread
+from typing import cast
 
 import psutil
 import pytest
@@ -69,7 +70,7 @@ def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
     db = graph.db_path
     graph.close()
     worker_source = tmp_path / "worker.py"
-    worker_source.write_text(_WORKER, encoding="utf-8")
+    _ = worker_source.write_text(_WORKER, encoding="utf-8")
     command = install_worker_command(
         tmp_path / "bin",
         monkeypatch,
@@ -141,7 +142,7 @@ def _start(
 def _output(proc: subprocess.Popen[bytes], master: int | None) -> str:
     if master is None:
         assert proc.stdout is not None
-        return proc.stdout.read().decode(errors="replace")
+        return cast(bytes, proc.stdout.read()).decode(errors="replace")
     return bytes(_PTY_OUTPUT[master]).decode(errors="replace")
 
 
@@ -155,10 +156,13 @@ def _wait_exit(proc: subprocess.Popen[bytes], master: int | None) -> int:
 
 def _worker_state(db: Path, pid: int) -> tuple[bool, bool]:
     with sqlite3.connect(db) as conn:
-        rows = conn.execute("SELECT ended_at FROM run_workers WHERE pid = ?", (pid,)).fetchall()
+        rows = cast(
+            list[tuple[str | None]],
+            conn.execute("SELECT ended_at FROM run_workers WHERE pid = ?", (pid,)).fetchall(),
+        )
         open_record = any(ended is None for (ended,) in rows)
-        node_running = bool(
-            conn.execute("SELECT 1 FROM nodes WHERE status = 'running'").fetchone()
+        node_running = (
+            conn.execute("SELECT 1 FROM nodes WHERE status = 'running'").fetchone() is not None
         )
     return open_record, node_running
 
@@ -172,7 +176,7 @@ def _owned_cleanup(proc: subprocess.Popen[bytes], pid_file: Path, master: int | 
     if proc.poll() is None:
         proc.kill()
     try:
-        proc.wait(timeout=3)
+        _ = proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
         pass
     if pid_file.exists():
@@ -184,10 +188,10 @@ def _owned_cleanup(proc: subprocess.Popen[bytes], pid_file: Path, master: int | 
             and child.status() != psutil.STATUS_ZOMBIE
         ):
             child.kill()
-            child.wait(timeout=3)
+            _ = child.wait(timeout=3)
     if master is not None:
         os.close(master)
-        _PTY_OUTPUT.pop(master, None)
+        _ = _PTY_OUTPUT.pop(master, None)
     if proc.stdout is not None:
         proc.stdout.close()
 
@@ -272,7 +276,7 @@ def test_cli_exits_while_worker_popen_is_blocked(
     repo, db, pid_file = _project(tmp_path, monkeypatch)
     marker = tmp_path / "popen-entered"
     release = tmp_path / "popen-release"
-    (tmp_path / "sitecustomize.py").write_text(_SPAWN_BARRIER, encoding="utf-8")
+    _ = (tmp_path / "sitecustomize.py").write_text(_SPAWN_BARRIER, encoding="utf-8")
     monkeypatch.setenv("SHUTDOWN_SPAWN_MARKER", str(marker))
     monkeypatch.setenv("SHUTDOWN_SPAWN_RELEASE", str(release))
     proc, master = _start(repo, pid_file, interactive=interactive, injection=tmp_path)

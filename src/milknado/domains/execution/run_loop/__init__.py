@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from milknado.domains.common import (
     ProgressEvent,
     SessionInput,
@@ -109,7 +111,7 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
         self._idle_sleep: Callable[[float], None] = time.sleep
         self._completion_wait_started: float = 0.0
         self._scheduling_stopped: bool = False
-        self._shutdown_requested = shutdown_requested
+        self._shutdown_requested: Callable[[], bool] | None = shutdown_requested
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
         self._spec: tuple[str | None, Path | None] = (None, None)
@@ -185,6 +187,7 @@ class RunLoop(NodeDriverMixin, StopControlMixin):
             session=self._loop.get_run_session(run_id),
         )
 
+    @override
     def _publish_state(self) -> None:
         listener = self._state_listener
         if listener is None:

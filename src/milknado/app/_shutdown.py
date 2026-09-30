@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import logging
 import signal
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager, nullcontext
 from queue import Empty, Queue
 from threading import Thread, current_thread, main_thread
 from time import monotonic
 from types import FrameType
-from typing import TypeVar
+from typing import TypeVar, cast
 
 STOP_TIMEOUT_SECONDS = 8.0
 
 
 class ShutdownSignal(RuntimeError):
     def __init__(self, signum: int) -> None:
-        self.signum = signum
+        self.signum: int = signum
         super().__init__(f"received signal {signum}")
 
 
@@ -26,7 +26,7 @@ class ShutdownIntent:
         self.signum: int | None = None
         self.started_at: float | None = None
         self.cleanup_confirmed: bool | None = None
-        self._installed = False
+        self._installed: bool = False
 
     @property
     def requested(self) -> bool:
@@ -46,12 +46,12 @@ class ShutdownIntent:
             return
         for signum in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGHUP", None)):
             if signum is not None:
-                signal.signal(signum, self.record)
+                _ = signal.signal(signum, self.record)
 
     @contextmanager
-    def installed(self) -> Iterator[None]:
+    def installed(self) -> Generator[None]:
         signals = [signal.SIGINT, signal.SIGTERM]
-        if hangup := getattr(signal, "SIGHUP", None):
+        if hangup := cast(signal.Signals | None, getattr(signal, "SIGHUP", None)):
             signals.append(hangup)
         previous = {signum: signal.getsignal(signum) for signum in signals}
         try:
@@ -61,7 +61,7 @@ class ShutdownIntent:
         finally:
             self._installed = False
             for signum, handler in previous.items():
-                signal.signal(signum, handler)
+                _ = signal.signal(signum, handler)
 
 
 def bounded_stop(stop: Callable[[float], bool], deadline: float) -> bool:

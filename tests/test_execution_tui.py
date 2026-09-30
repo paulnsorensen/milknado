@@ -125,6 +125,7 @@ class FakeController:
             raise self.control_error
 
     def force_stop_all(self, timeout: float = 8.0) -> bool:
+        del timeout
         self.force_stop_all_requests += 1
         return self.force_stop_all_result
 
@@ -1089,7 +1090,7 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
     expected = object()
 
     class FakeApp:
-        _cleanup_confirmed: bool | None = None
+        cleanup_confirmed: bool | None = None
 
         def __init__(self, controller: FakeController, **kwargs: object) -> None:
             assert controller is expected_controller
@@ -1137,6 +1138,7 @@ def test_tui_signal_finishes_cleanup_after_display_exit(
     calls: list[str] = []
 
     def run(self: ExecutionApp) -> None:
+        del self
         calls.append("display-exit")
         controller.shutdown_intent.record(signal.SIGHUP, None)
 

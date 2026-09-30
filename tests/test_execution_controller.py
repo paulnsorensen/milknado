@@ -238,6 +238,7 @@ def test_force_stop_all_returns_at_deadline_when_cleanup_blocks() -> None:
     release = Event()
 
     class BlockedStop(FakeLoop):
+        @override
         def force_stop_active(self, deadline: float) -> bool:
             self.force_stop_deadlines.append(deadline)
             _ = release.wait(0.3)
@@ -261,6 +262,7 @@ def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
     intent = ShutdownIntent()
 
     class BlockedLoop(FakeLoop):
+        @override
         def run(self, **kwargs: object) -> str:
             del kwargs
             started.set()
