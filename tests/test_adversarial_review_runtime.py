@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -48,7 +47,7 @@ from milknado.domains.execution import (
 from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
-from milknado.domains.execution.run_loop._completion import handle_completion
+from milknado.domains.execution.run_loop._completion import CompletionContext, handle_completion
 from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop._events import (
     Event,
@@ -120,25 +119,26 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
     def _complete(_node_id: int, _branch: str) -> CompletionResult:
         return result
 
-    loop = SimpleNamespace(
-        _active={"run-1": 1},
-        _dispatched_at={"run-1": 0.0},
-        _progress_by_run={},
-        _input=SimpleNamespace(overlay_state=None),
-        _graph=SimpleNamespace(get_node=_get_node),
-        _executor=SimpleNamespace(complete=_complete),
-        _completion_durations=deque[float](),
-        _logs=deque[str](),
-        _attempts={},
-        _strict=True,
-        _failure_triggered=False,
-        _stopped_nodes=set(),
-        _stopped=0,
-        _terminal_runs=deque(),
-        _loop=_ReviewLoop([]),
+    loop = RunLoop(
+        executor=cast(Executor, cast(object, SimpleNamespace(complete=_complete))),
+        graph=cast(MikadoGraph, cast(object, SimpleNamespace(get_node=_get_node))),
+        loop=cast(LoopPort, cast(object, _ReviewLoop([]))),
     )
-    # The test double implements only the fields used by the completion handler.
-    return cast(RunLoop, cast(object, loop))
+    loop._strict = True  # pyright: ignore[reportPrivateUsage]
+    loop._scheduler.admit_run("run-1", 1, 0.0)  # pyright: ignore[reportPrivateUsage]
+    return loop
+
+
+def _completion_context(loop: RunLoop) -> CompletionContext:
+    return CompletionContext(
+        loop._scheduler,  # pyright: ignore[reportPrivateUsage]
+        loop._graph,  # pyright: ignore[reportPrivateUsage]
+        loop._executor,  # pyright: ignore[reportPrivateUsage]
+        loop._loop,  # pyright: ignore[reportPrivateUsage]
+        loop._input,  # pyright: ignore[reportPrivateUsage]
+        loop._logs,  # pyright: ignore[reportPrivateUsage]
+        loop._strict,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 class _ReviewLoop:
@@ -1175,18 +1175,22 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", TerminalRunOutcome("completed"), "main") == (0, 0, [])
-    assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
+    assert handle_completion(
+        _completion_context(loop), "run-1", TerminalRunOutcome("completed"), "main"
+    ) == (0, 0, [])
+    assert [run.run_id for run in loop._scheduler.view().active] == ["run-2"]  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", "completed", "main")[1] == 1
+    assert handle_completion(_completion_context(blocked), "run-1", "completed", "main")[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = _handler_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", "completed", "main")[2] == [conflict]
+    assert handle_completion(_completion_context(failed), "run-1", "completed", "main")[2] == [
+        conflict
+    ]
     passed = _handler_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", "completed", "main")[0] == 1
+    assert handle_completion(_completion_context(passed), "run-1", "completed", "main")[0] == 1
 
 
 def test_completion_handler_surfaces_review_notification_failure() -> None:
@@ -1198,7 +1202,9 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     # The node still completes normally — the notice does not change the outcome.
     assert (completed, failed, conflicts) == (1, 0, [])
@@ -1211,7 +1217,9 @@ def test_completion_handler_surfaces_review_audit_failure() -> None:
     )
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     assert (completed, failed, conflicts) == (0, 1, [])
     assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]

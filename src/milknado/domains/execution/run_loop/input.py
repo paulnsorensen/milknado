@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 _logger = logging.getLogger(__name__)
@@ -66,7 +67,7 @@ def stop_input_thread(state: InputState) -> None:
         state.input_thread = None
 
 
-def handle_key(state: InputState, key: str, active: dict[str, int]) -> None:
+def handle_key(state: InputState, key: str, active: Mapping[str, int]) -> None:
     if key == "\x1b":
         state.overlay_state = None
         state.awaiting_node_digits = False
@@ -90,7 +91,7 @@ def handle_key(state: InputState, key: str, active: dict[str, int]) -> None:
             state.key_buffer = ""
 
 
-def drain_input(state: InputState, active: dict[str, int]) -> None:
+def drain_input(state: InputState, active: Mapping[str, int]) -> None:
     try:
         while True:
             handle_key(state, state.input_queue.get_nowait(), active)

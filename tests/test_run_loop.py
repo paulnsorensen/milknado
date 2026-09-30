@@ -1,4 +1,3 @@
-import collections
 import json
 import subprocess
 import sys
@@ -37,11 +36,8 @@ from milknado.domains.execution._models import (
     RebaseConflict,
 )
 from milknado.domains.execution.executor import WorktreeManager
-from milknado.domains.execution.run_loop.state import (
-    RunLoopState,
-    TerminalRunState,
-    summarize_description,
-)
+from milknado.domains.execution.run_loop._scheduler import Scheduler
+from milknado.domains.execution.run_loop.state import RunLoopState, summarize_description
 from milknado.domains.graph import (
     ConcurrencyLimitReached,
     GoalReviewDecision,
@@ -54,32 +50,8 @@ from milknado.loop import RunStatus
 T = TypeVar("T")
 
 
-def _active(loop: RunLoop) -> dict[str, int]:
-    return cast(dict[str, int], attrgetter("_active")(loop))
-
-
-def _progress_by_run(loop: RunLoop) -> dict[str, ProgressEvent]:
-    return cast(dict[str, ProgressEvent], attrgetter("_progress_by_run")(loop))
-
-
-def _dispatched_at(loop: RunLoop) -> dict[str, float]:
-    return cast(dict[str, float], attrgetter("_dispatched_at")(loop))
-
-
-def _completion_durations(loop: RunLoop) -> collections.deque[float]:
-    return cast(collections.deque[float], attrgetter("_completion_durations")(loop))
-
-
-def _attempts(loop: RunLoop) -> dict[int, int]:
-    return cast(dict[int, int], attrgetter("_attempts")(loop))
-
-
-def _stopped_nodes(loop: RunLoop) -> set[int]:
-    return cast(set[int], attrgetter("_stopped_nodes")(loop))
-
-
-def _terminal_runs(loop: RunLoop) -> collections.deque[TerminalRunState]:
-    return cast(collections.deque[TerminalRunState], attrgetter("_terminal_runs")(loop))
+def _scheduler(loop: RunLoop) -> Scheduler:
+    return cast(Scheduler, attrgetter("_scheduler")(loop))
 
 
 def _success(loop: object) -> dict[str, bool]:
@@ -540,7 +512,7 @@ def test_force_stop_active_closes_admission_without_scheduling_lock(
         worker.start()
         assert finished.wait(0.5)
         assert fake_loop.stop_active_deadlines == [deadline]
-        assert run_loop._scheduling_stopped is True  # pyright: ignore[reportPrivateUsage]
+        assert _scheduler(run_loop).view().scheduling_stopped is True
     finally:
         lock.release()
 
@@ -556,9 +528,9 @@ def test_state_is_bounded_and_published(
     _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", stop_requested=True))
     fake_loop.output["run-1"] = [f"line {index}" for index in range(35)]
     fake_loop.guidance["run-1"] = ("use domain barrels",)
-    _active(run_loop)["run-1"] = leaf.id
-    _progress_by_run(run_loop)["run-1"] = ProgressEvent(
-        run_id="run-1", work=1, total=2, message="building"
+    _scheduler(run_loop).admit_run("run-1", leaf.id, monotonic())
+    _scheduler(run_loop).record_progress(
+        ProgressEvent(run_id="run-1", work=1, total=2, message="building")
     )
     received: list[RunLoopState] = []
     run_loop.set_state_listener(received.append)
@@ -592,11 +564,12 @@ def test_state_collects_configured_projection_facts(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    _active(run_loop)["run-1"] = leaf.id
-    _attempts(run_loop)[leaf.id] = 1
-    _dispatched_at(run_loop)["run-1"] = 100.0
-    _completion_durations(run_loop).extend([10.0, 20.0, 30.0])
-    _progress_by_run(run_loop)["run-1"] = ProgressEvent(run_id="run-1", work=3, total=4)
+    scheduler = _scheduler(run_loop)
+    scheduler.admit_run("run-1", leaf.id, 100.0)
+    scheduler.record_failure(leaf.id, strict=False)
+    for duration in (10.0, 20.0, 30.0):
+        scheduler.record_completion(duration)
+    scheduler.record_progress(ProgressEvent(run_id="run-1", work=3, total=4))
 
     with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=105.0):
         snapshot = run_loop.state().active_runs[0]
@@ -621,8 +594,7 @@ def test_state_uses_configured_stall_threshold(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    _active(run_loop)["run-1"] = leaf.id
-    _dispatched_at(run_loop)["run-1"] = 100.0
+    _scheduler(run_loop).admit_run("run-1", leaf.id, 100.0)
 
     with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=159.0):
         before = run_loop.state().active_runs[0]
@@ -638,22 +610,33 @@ def test_state_uses_configured_stall_threshold(
 def test_terminal_run_duration_seconds_from_stopped_completion(
     run_loop: RunLoop, graph: MikadoGraph, fake_loop: FakeLoop
 ) -> None:
-    from milknado.domains.execution.run_loop._completion import handle_completion
+    from milknado.domains.execution.run_loop._completion import (
+        CompletionContext,
+        handle_completion,
+    )
 
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     graph.mark_running(leaf.id)
-    _active(run_loop)["run-1"] = leaf.id
-    _dispatched_at(run_loop)["run-1"] = 100.0
+    _scheduler(run_loop).admit_run("run-1", leaf.id, 100.0)
     _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1"))
 
     with patch(
         "milknado.domains.execution.run_loop._completion.time.monotonic",
         return_value=142.0,
     ):
-        _ = handle_completion(run_loop, "run-1", "stopped", "main")
+        context = CompletionContext(
+            _scheduler(run_loop),
+            graph,
+            run_loop._executor,  # pyright: ignore[reportPrivateUsage]
+            run_loop._loop,  # pyright: ignore[reportPrivateUsage]
+            run_loop._input,  # pyright: ignore[reportPrivateUsage]
+            run_loop._logs,  # pyright: ignore[reportPrivateUsage]
+            run_loop._strict,  # pyright: ignore[reportPrivateUsage]
+        )
+        _ = handle_completion(context, "run-1", "stopped", "main")
 
-    assert _terminal_runs(run_loop)[-1].duration_seconds == 42.0
+    assert run_loop.state().terminal_runs[-1].duration_seconds == 42.0
 
 
 @pytest.mark.parametrize(
@@ -673,7 +656,7 @@ def test_terminal_active_run_disables_all_controls(
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
     _runs(fake_loop)["run-1"] = FakeRun(state=FakeRunState(run_id="run-1", status=status))
-    _active(run_loop)["run-1"] = leaf.id
+    _scheduler(run_loop).admit_run("run-1", leaf.id, monotonic())
 
     active = run_loop.state().active_runs[0]
 
@@ -691,7 +674,7 @@ def test_control_queue_applies_cancel_and_force_stop(
     leaf = graph.add_node("stop worker", parent_id=root.id)
     graph.mark_running(leaf.id)
     _runs(fake_loop)["run-1"] = FakeRun()
-    _active(run_loop)["run-1"] = leaf.id
+    _scheduler(run_loop).admit_run("run-1", leaf.id, monotonic())
 
     run_loop.cancel("run-1")
     assert fake_loop.requested_stops == ["run-1"]
@@ -789,7 +772,7 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
 
     node = graph.add_node("active")
     graph.mark_running(node.id)
-    _active(run_loop)["run-1"] = node.id
+    _scheduler(run_loop).admit_run("run-1", node.id, monotonic())
     _set_attr(run_loop, "_dispatch_if_scheduling_open", MagicMock(return_value=(0, 0)))
     _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
     control_calls = 0
@@ -798,7 +781,7 @@ def test_completion_deadline_starts_before_the_first_short_control_poll(
         nonlocal control_calls
         control_calls += 1
         if control_calls == 3:
-            _active(run_loop).clear()
+            _ = _scheduler(run_loop).abandon_run("run-1")
 
     def short_poll_timeout(
         active_run_ids: set[str], timeout: float | None = None
@@ -843,14 +826,14 @@ def _run_on_fake_clock(
 
     node = graph.add_node("active")
     graph.mark_running(node.id)
-    _active(run_loop)["run-1"] = node.id
-    _set_attr(run_loop, "_capacity_deferred", True)
+    _scheduler(run_loop).admit_run("run-1", node.id, monotonic())
+    _scheduler(run_loop).defer_capacity()
     queued = list(dispatches)
 
     def dispatch() -> tuple[int, int]:
         result = queued.pop(0)
         if not queued:
-            _set_attr(run_loop, "_capacity_deferred", False)
+            _scheduler(run_loop).begin_dispatch()
         return result
 
     def dispatch_any(*_args: object) -> tuple[int, int]:
@@ -875,7 +858,7 @@ def _run_on_fake_clock(
         advance, event = pending.pop(0)
         clock[0] += advance
         if not pending:
-            _active(run_loop).clear()
+            _ = _scheduler(run_loop).abandon_run("run-1")
         if event is not None:
             return "run-1", event
         raise CompletionTimeout(waited_seconds=advance, active_run_ids=active_run_ids)
@@ -964,7 +947,7 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
 
     node = graph.add_node("active")
     graph.mark_running(node.id)
-    _active(run_loop)["run-1"] = node.id
+    _scheduler(run_loop).admit_run("run-1", node.id, monotonic())
     _set_attr(run_loop, "_dispatch_if_scheduling_open", MagicMock(return_value=(0, 0)))
     _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
     observed_timeouts: list[float | None] = []
@@ -974,7 +957,7 @@ def test_unset_completion_timeout_polls_controls_without_timing_out(
         nonlocal control_calls
         control_calls += 1
         if control_calls >= 4:
-            _active(run_loop).clear()
+            _ = _scheduler(run_loop).abandon_run("run-1")
 
     def short_poll_timeout(
         active_run_ids: set[str], timeout: float | None = None
@@ -1131,8 +1114,8 @@ class TestRunLoopStoppedOutcome:
         assert node is not None
         assert node.status is NodeStatus.PENDING
         assert (result.dispatched_total, result.completed_total, result.failed_total) == (1, 0, 0)
-        assert _stopped_nodes(loop) == {leaf.id}
-        assert _active(loop) == {}
+        assert _scheduler(loop).view().stopped_nodes == {leaf.id}
+        assert _scheduler(loop).view().active == ()
         state = loop.state()
         assert state.stopped == 1
         assert state.available == 0
@@ -1244,7 +1227,7 @@ class TestRunLoopConcurrencyLimit:
         assert (dispatched, failed) == (0, 0)
         node = graph.get_node(task.id)
         assert node is not None and node.status is NodeStatus.PENDING
-        assert not _active(run_loop)
+        assert not _scheduler(run_loop).view().active
 
     def test_post_start_dispatch_error_keeps_cli_worker_owned(
         self,
@@ -1284,7 +1267,7 @@ class TestRunLoopConcurrencyLimit:
         assert node is not None
         assert node.status is NodeStatus.RUNNING
         assert node.run_id == "other-owner"
-        assert not _active(run_loop)
+        assert not _scheduler(run_loop).view().active
 
     def test_invalid_worktree_pattern_releases_claim(
         self, graph: MikadoGraph, executor: Executor, config: ExecutionConfig
@@ -2181,14 +2164,16 @@ class TestHandleCompletionTimeout:
         executor.force_stop_run = MagicMock(return_value=False)
         loop_adapter = FakeLoop()
         loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter)
-        _set_attr(loop, "_active", {"run-1": 7})
+        _scheduler(loop).admit_run("run-1", 7, monotonic())
 
         failed = _handle_completion_timeout(
             loop, CompletionTimeout(waited_seconds=60.0, active_run_ids={"run-1"})
         )
 
         assert failed == 0
-        assert _active(loop) == {"run-1": 7}
+        assert [(run.run_id, run.node_id) for run in _scheduler(loop).view().active] == [
+            ("run-1", 7)
+        ]
         _mock_attr(executor, "fail").assert_not_called()
         _mock_attr(executor, "force_stop_run").assert_called_once_with("run-1", timeout=10.0)
 
@@ -2313,7 +2298,7 @@ class TestDispatchBatchDirectGuards:
 
         loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         _set_attr(loop, "_strict", True)
-        _set_attr(loop, "_failure_triggered", True)
+        _scheduler(loop).trigger_failure()
 
         result = _dispatch_batch(loop, config, 4)
 
@@ -2329,7 +2314,8 @@ class TestDispatchBatchDirectGuards:
 
         loop = RunLoop(executor=executor, graph=graph, loop=fake_loop)
         # Fill active to the limit
-        _set_attr(loop, "_active", {"run-1": 1, "run-2": 2, "run-3": 3, "run-4": 4})
+        for node_id in range(1, 5):
+            _scheduler(loop).admit_run(f"run-{node_id}", node_id, monotonic())
 
         result = _dispatch_batch(loop, config, 4)
 
@@ -2374,7 +2360,7 @@ class TestDispatchBatchDirectGuards:
         _ = _dispatch_batch(loop, config, 4)
 
         assert _mock_attr(executor, "dispatch").call_count == 1
-        assert cast(bool, attrgetter("_failure_triggered")(loop)) is True
+        assert _scheduler(loop).view().failure_triggered is True
 
 
 class TestDispatchBatchFlavoredGates:
@@ -2513,7 +2499,7 @@ class TestOwnerIdleWait:
         assert _wait_for_owner_work(loop, config, 4) == 1
         assert sleeps == [1.0], "the loop must sleep once before the node became ready"
         assert _mock_attr(executor, "dispatch").call_count == 1
-        assert list(_active(loop).values()) == [root.id + 1]
+        assert [run.node_id for run in _scheduler(loop).view().active] == [root.id + 1]
 
     def test_stops_waiting_when_the_owner_closes_scheduling(
         self, graph: MikadoGraph, fake_loop: FakeLoop, config: ExecutionConfig
