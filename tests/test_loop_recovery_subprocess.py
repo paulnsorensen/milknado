@@ -18,15 +18,19 @@ from milknado.domains.common import NodeSpec, ObservationKey, pid_alive
 from milknado.domains.dispatch import cancel_run, fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, WorkerRecord
 
+if os.name != "posix":
+    pytest.skip("POSIX process signals are required", allow_module_level=True)
 
-def _wait_for_worker(graph: MikadoGraph, node_id: int) -> WorkerRecord:
+
+def _wait_for_worker(graph: MikadoGraph, node_id: int, marker: Path) -> WorkerRecord:
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         workers = graph.runs.live_workers(node_id=node_id)
-        if workers:
+        if workers and marker.exists() and marker.read_text() == str(workers[0].pid):
+            assert pid_alive(workers[0].pid)
             return workers[0]
         time.sleep(0.05)
-    raise AssertionError("actual loop runner did not register a worker")
+    raise AssertionError("actual fixture agent did not stay alive")
 
 
 def _wait_for_exit(pid: int) -> None:
@@ -68,12 +72,11 @@ def running_project(
         f"#!{sys.executable}\n"
         "import os, time\n"
         "from pathlib import Path\n"
-        "Path(os.environ['FAKE_AGENT_PID_FILE']).write_text(str(os.getpid()))\n"
+        f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
         "while True: time.sleep(1)\n"
     )
     agent.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("FAKE_AGENT_PID_FILE", str(tmp_path / "agent.pid"))
     (root / "milknado.toml").write_text(
         '[milknado]\nagent_family = "claude"\n'
         'execution_agent = "claude -p"\nquality_gates = ["true"]\n'
@@ -124,7 +127,7 @@ def test_actual_runner_cancel_waits_for_worker_exit(
 ) -> None:
     root, graph, node_id, groups = running_project
     run = _start(root, graph, node_id, groups)
-    worker = _wait_for_worker(graph, node_id)
+    worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pgid)
     assert pid_alive(worker.pid)
     result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, str(run["run_id"]))
@@ -140,7 +143,7 @@ def test_start_reclaims_only_after_actual_old_worker_exits(
 ) -> None:
     root, graph, node_id, groups = running_project
     old_run = _start(root, graph, node_id, groups)
-    old_worker = _wait_for_worker(graph, node_id)
+    old_worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(old_worker.pid)
     assert pid_alive(old_worker.pid)
     _freeze_after_snapshot(graph, old_worker, int(old_run["pid"]))
@@ -158,7 +161,7 @@ def test_stale_sweep_waits_for_actual_old_worker_exit(
 ) -> None:
     root, graph, node_id, groups = running_project
     run = _start(root, graph, node_id, groups)
-    worker = _wait_for_worker(graph, node_id)
+    worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
     assert pid_alive(worker.pid)
     _freeze_after_snapshot(graph, worker, int(run["pid"]))
@@ -177,7 +180,7 @@ def test_dead_owner_cancel_recovers_actual_worker(
 ) -> None:
     root, graph, node_id, groups = running_project
     run = _start(root, graph, node_id, groups)
-    worker = _wait_for_worker(graph, node_id)
+    worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
     _freeze_after_snapshot(graph, worker, int(run["pid"]))
     os.kill(int(run["pid"]), signal.SIGKILL)
@@ -195,7 +198,7 @@ def test_start_preserves_actual_worker_with_interrupted_observation(
 ) -> None:
     root, graph, node_id, groups = running_project
     run = _start(root, graph, node_id, groups)
-    worker = _wait_for_worker(graph, node_id)
+    worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
     frozen = _freeze_after_snapshot(graph, worker, int(run["pid"]))
     key = ObservationKey(

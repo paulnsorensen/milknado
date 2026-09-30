@@ -15,6 +15,9 @@ from milknado.domains.common import NodeSpec, pid_alive
 from milknado.domains.dispatch import make_run_id, now_iso
 from milknado.domains.graph import MikadoGraph, WorkerRecord
 
+if os.name != "posix":
+    pytest.skip("POSIX process signals are required", allow_module_level=True)
+
 
 @pytest.fixture
 def signal_project(
@@ -29,7 +32,7 @@ def signal_project(
         f"#!{sys.executable}\n"
         "import os, time\n"
         "from pathlib import Path\n"
-        "Path(os.environ['FAKE_AGENT_PID_FILE']).write_text(str(os.getpid()))\n"
+        f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
         "while True: time.sleep(1)\n"
     )
     agent.chmod(0o755)
@@ -59,7 +62,6 @@ def signal_project(
     env = {
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_AGENT_PID_FILE": str(tmp_path / "agent.pid"),
     }
     try:
         yield root, graph, node.id, env
@@ -70,14 +72,15 @@ def signal_project(
         graph.close()
 
 
-def _wait_for_worker(graph: MikadoGraph, node_id: int) -> WorkerRecord:
+def _wait_for_worker(graph: MikadoGraph, node_id: int, marker: Path) -> WorkerRecord:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         workers = graph.runs.live_workers(node_id=node_id)
-        if workers:
+        if workers and marker.exists() and marker.read_text() == str(workers[0].pid):
+            assert pid_alive(workers[0].pid)
             return workers[0]
         time.sleep(0.05)
-    raise AssertionError("actual runner did not launch the fixture worker")
+    raise AssertionError("actual fixture agent did not stay alive")
 
 
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGHUP, signal.SIGINT])
@@ -117,7 +120,7 @@ def test_actual_runner_handles_signal_before_exiting(
             start_new_session=True,
         )
     try:
-        worker = _wait_for_worker(graph, node_id)
+        worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
         assert pid_alive(worker.pid)
         os.kill(proc.pid, signum)
         returncode = proc.wait(timeout=8)
