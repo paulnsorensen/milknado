@@ -45,6 +45,7 @@ from milknado.domains.execution import (
     RunLoop,
 )
 from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
 from milknado.domains.execution.run_loop._completion import CompletionContext, handle_completion
@@ -357,6 +358,28 @@ def _executor(
     )
 
 
+def _seed_context(
+    executor: Executor,
+    node_id: int,
+    root: Path,
+    worker_run_id: str,
+    *,
+    owner_fence: str | None = None,
+    base_oid: str = "base-oid",
+) -> None:
+    executor._context_by_node[node_id] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+        worker_run_id=worker_run_id,
+        owner_fence=owner_fence,
+        worktree=root,
+        session=None,
+        target_branch="main",
+        target_oid=base_oid,
+        base_oid=base_oid,
+        review_round=0,
+        config=_config(root),
+    )
+
+
 def test_reject_redispatches_pinned_worktree_and_resumes_session(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
@@ -596,6 +619,7 @@ def test_capture_session_handles_nested_json_and_failures(
     ]
     executor = _executor(graph, tmp_path, loop)
     node = MikadoNode(id=9, description="session", run_id="worker", worktree_path=str(tmp_path))
+    _seed_context(executor, 9, tmp_path, "worker")
     session = executor._capture_session(  # pyright: ignore[reportPrivateUsage]
         node, _config(tmp_path, agent_family="codex")
     )
@@ -628,8 +652,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     git = FakeGit()
     executor = _executor(graph, tmp_path, loop, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
-    executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
-    executor._worker_run_id_by_node[node.id] = "fixture-run-12"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, node.id, tmp_path, "fixture-run-12", base_oid="base-oid")
     _ = (tmp_path / "LOOP.md").write_text("generated context", encoding="utf-8")
     prompt = build_review_prompt(
         node,
@@ -644,7 +667,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
         node, tmp_path, _config(tmp_path, session_mode="fresh")
     )
     assert "diff from base-oid" in loop.reviews[0][1]
-    _ = executor._worker_run_id_by_node.pop(node.id)  # pyright: ignore[reportPrivateUsage]
+    _ = executor._context_by_node.pop(node.id)  # pyright: ignore[reportPrivateUsage]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="reject", findings_md="finding"
     )
@@ -758,8 +781,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
     from milknado.domains.dispatch._runstate import now_iso
 
     assert node is not None
-    executor._worker_run_id_by_node[1] = "worker-1"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[1] = "base-1"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 1, tmp_path, "worker-1", base_oid="base-1")
     monkeypatch.setattr(graph, "replace_run_id", MagicMock(return_value=False))
     with pytest.raises(ValueError, match="fence lost"):
         _ = executor._redispatch_review_round(  # pyright: ignore[reportPrivateUsage]
@@ -768,9 +790,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
 
     _ = graph.add_node("adopted fence")
     assert graph.claim_node(2, "parent-fence", now=now_iso())
-    executor._owner_fence_by_node[2] = "parent-fence"  # pyright: ignore[reportPrivateUsage]
-    executor._worker_run_id_by_node[2] = "worker-2"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[2] = "base-2"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 2, tmp_path, "worker-2", owner_fence="parent-fence", base_oid="base-2")
     original_get_node = graph.get_node
 
     def changed_fence(node_id: int) -> MikadoNode | None:
@@ -1275,7 +1295,7 @@ def test_rejection_audit_failure_blocks_before_merge(
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
-    executor._review_round_by_node[1] = 1  # pyright: ignore[reportPrivateUsage]
+    executor._context_by_node[1].review_round = 1  # pyright: ignore[reportPrivateUsage]
     result = executor.complete(1, "main")
 
     assert result.blocked is True
@@ -1336,7 +1356,7 @@ def test_invalid_review_blocks_without_worker_revision(
     assert result.redispatch is None
     assert len(loop.created) == 1
     assert not git.rebases
-    assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
+    assert executor._context_by_node[1].review_round == 0  # pyright: ignore[reportPrivateUsage]
     rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"

@@ -84,10 +84,6 @@ def _finalize_worker_run(executor: Executor, run_id: str | None, result: object)
     method(run_id, result)
 
 
-def _owner_fences(executor: Executor) -> dict[int, str]:
-    return cast(dict[int, str], attrgetter("_owner_fence_by_node")(executor))
-
-
 def _stop_events(loop: object) -> dict[str, threading.Event]:
     return cast(dict[str, threading.Event], attrgetter("_stop_events")(loop))
 
@@ -1996,7 +1992,7 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An aborted run whose stop was unconfirmed has no completion-path owner
-    (its id never enters _worker_run_id_by_node). When the wedged loop later
+    (its id never enters the node context). When the wedged loop later
     exits on its own, the still-observing cancel watcher must finalize the
     row with a neutral marker instead of letting it zombie 'running'
     forever."""
@@ -2217,7 +2213,7 @@ def test_review_redispatch_adopted_owner_fence_loss_stops_fresh_run(
     result = executor.dispatch(1, config)
     node = graph.get_node(1)
     assert node is not None
-    _owner_fences(executor)[1] = "other-owner-fence"
+    executor._context_by_node[1].owner_fence = "other-owner-fence"  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match="adopted owner fence lost"):
         _ = _redispatch_review_round(executor, node, config, result.worktree)
     assert len(loop.runs_started) == 2

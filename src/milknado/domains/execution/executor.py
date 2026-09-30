@@ -58,11 +58,14 @@ from milknado.domains.execution._models import (
     PreservedWorkerRun,
     RebaseConflict,
 )
+from milknado.domains.execution._node_context import ExecutionConfig as ExecutionConfig
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import (
     ReviewNotification,
     build_review_prompt,
     persist_review_findings,
 )
+from milknado.domains.execution._review_policy import ReviewDecision, ReviewPolicy, decide_review
 from milknado.domains.execution._stop import (
     LOOP_CANCEL_STOP_TIMEOUT_SECS,
     force_stop_graph_run,
@@ -110,28 +113,6 @@ class _ReviewCallable(Protocol):
         timeout_seconds: float,
         graph_run_id: str,
     ) -> ReviewResult: ...
-
-
-@dataclass(frozen=True)
-class ExecutionConfig:
-    execution_agent: str
-    quality_gates: tuple[Gate, ...] | None
-    worktree_pattern: str
-    project_root: Path
-    brief_prepend: str | None = None
-    dispatch_max_retries: int = 2
-    dispatch_backoff_seconds: float = 5.0
-    commit_footer: str | None = None
-    agent_family: str = "claude"
-    review: bool = False
-    review_agent: str | None = None
-    review_max_rounds: int = 0
-    review_timeout_seconds: int = 1800
-    on_reject: str = "warn"
-    session_mode: str = "fresh"
-    completion_timeout_seconds: int | None = None
-    attempt_timeout_seconds: float | None = None
-    max_iterations: int | None = None
 
 
 @dataclass(frozen=True)
@@ -432,24 +413,17 @@ class Executor:
         crg: CrgPort,
     ) -> None:
 
-        self._base_oid_by_node: dict[int, str | None] = {}
-        self._worker_run_id_by_node: dict[int, str] = {}
-        self._owner_fence_by_node: dict[int, str] = {}
+        self._context_by_node: dict[int, NodeExecutionContext] = {}
         # Runs whose dispatch-abort force-stop was never confirmed: the cancel
         # watcher finalizes their rows when the wedged loop later self-exits
         # (no completion path owns these ids — they never enter
-        # _worker_run_id_by_node).
+        # _context_by_node).
         self._unconfirmed_stop_run_ids: set[str] = set()
         self._git: GitPort = git
-        self._target_branch_by_node: dict[int, str] = {}
-        self._target_oid_by_node: dict[int, str] = {}
         self._graph: MikadoGraph = graph
         self._wt: WorktreeManager = WorktreeManager(git)
         self._loop: LoopPort = loop
         self._crg: CrgPort = crg
-        self._config_by_node: dict[int, ExecutionConfig] = {}
-        self._session_by_node: dict[int, NodeAgentSession] = {}
-        self._review_round_by_node: dict[int, int] = {}
         self._slots: SlotLedger = SlotLedger()
 
     def use_host_capacity(self, port: HostCapacityPort) -> None:
@@ -492,13 +466,17 @@ class Executor:
             result = self._dispatch_once(
                 node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
             )
-            self._base_oid_by_node[node_id] = target_oid
-            self._worker_run_id_by_node[node_id] = result.run_id
-            if parent_run_id is not None:
-                self._owner_fence_by_node[node_id] = parent_run_id
-            self._target_branch_by_node[node_id] = target_branch
-            self._target_oid_by_node[node_id] = target_oid
-            self._config_by_node[node_id] = config
+            self._context_by_node[node_id] = NodeExecutionContext(
+                worker_run_id=result.run_id,
+                owner_fence=parent_run_id,
+                worktree=result.worktree,
+                session=None,
+                target_branch=target_branch,
+                target_oid=target_oid,
+                base_oid=target_oid,
+                review_round=0,
+                config=config,
+            )
             return result
 
         return retryer(_attempt)
@@ -734,7 +712,8 @@ class Executor:
             _logger.exception("runs-row finalize failed for loop run %s", run_id)
 
     def _finish_node_worker_run(self, node_id: int, result: RunResult) -> None:
-        self._finalize_worker_run(self._worker_run_id_by_node.get(node_id), result)
+        context = self._context_by_node.get(node_id)
+        self._finalize_worker_run(context.worker_run_id if context else None, result)
 
     def _spawn_loop_cancel_watcher(self, run_id: str, project_root: Path) -> None:
         """Watch the on-disk cancel sentinel for a pid-less loop run.
@@ -891,10 +870,10 @@ class Executor:
     ) -> NodeAgentSession | None:
         if config.session_mode != "resume":
             return None
-        existing = self._session_by_node.get(node.id)
-        if existing is not None:
-            return existing
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        if context is not None and context.session is not None:
+            return context.session
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             raise ValueError(f"node {node.id} has no worker run id to resume")
         family, session_id = self._session_identity(worker_run_id, config.agent_family)
@@ -913,7 +892,8 @@ class Executor:
         path = config.project_root / ".milknado" / "sessions" / f"node-{node.id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
-        self._session_by_node[node.id] = session
+        if context is not None:
+            context.session = session
         return session
 
     def _notify_review(
@@ -930,7 +910,8 @@ class Executor:
         except Exception:
             audit_succeeded = False
             _logger.exception("node_review_table_write_failed node_id=%d", node.id)
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             _logger.error("node_review_notification_missing_run node_id=%d", node.id)
             return ReviewNotification(audit_succeeded, False)
@@ -962,11 +943,11 @@ class Executor:
         )
         if reviewer is None or config.review_agent is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
-        if not (base_oid := self._base_oid_by_node.get(node.id)):
+        context = self._context_by_node.get(node.id)
+        if context is None or not context.base_oid:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
-        graph_run_id = self._worker_run_id_by_node.get(node.id)
-        if graph_run_id is None:
-            raise RuntimeError(f"node {node.id} has no running worker run for review")
+        base_oid = context.base_oid
+        graph_run_id = context.worker_run_id
         diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
         result: ReviewResult = reviewer(
             config.review_agent,
@@ -990,8 +971,9 @@ class Executor:
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> DispatchResult:
-        owner_fence = self._owner_fence_by_node.get(node.id)
-        prior_worker_run_id = self._worker_run_id_by_node.get(node.id)
+        context = self._context_by_node.get(node.id)
+        owner_fence = context.owner_fence if context else None
+        prior_worker_run_id = context.worker_run_id if context else None
         old_worker_run_id = prior_worker_run_id or node.run_id
         if not old_worker_run_id:
             raise ValueError(
@@ -1004,7 +986,7 @@ class Executor:
         # leave it zombied 'running'. Only the recorded worker run id is
         # finalized — never the node.run_id fence fallback, which can be a
         # live parent run's row.
-        review_round = self._review_round_by_node.get(node.id, 0)
+        review_round = context.review_round if context else 0
         self._finalize_worker_run(
             prior_worker_run_id,
             RunResult(
@@ -1015,10 +997,10 @@ class Executor:
                 detail=f"superseded by review round {review_round} redispatch",
             ),
         )
-        base_oid = self._base_oid_by_node.get(node.id)
+        base_oid = context.base_oid if context else None
         if base_oid is None:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
-        session = self._session_by_node.get(node.id)
+        session = context.session if context else None
         try:
             run_id = self._create_loop_run(
                 node,
@@ -1048,7 +1030,8 @@ class Executor:
                 ):
                     raise PreservedWorkerRun(node.id, run_id, owner_fence)
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
-        self._worker_run_id_by_node[node.id] = run_id
+        if context is not None:
+            context.worker_run_id = run_id
 
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
@@ -1138,12 +1121,13 @@ class Executor:
         return force_stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
-        target_branch = self._target_branch_by_node.get(node_id)
+        context = self._context_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         if target_branch is None:
             return
         current_branch = self._git.current_branch()
         if feature_branch != target_branch or current_branch != target_branch:
-            target_oid = self._target_oid_by_node.get(node_id, "(unknown)")
+            target_oid = context.target_oid if context else "(unknown)"
             raise GitOperationError(
                 "dispatch-time merge target",
                 f"dispatch captured {target_branch!r} at {target_oid}; "
@@ -1259,71 +1243,49 @@ class Executor:
             review_audit_failed=not notification.audit_succeeded,
         )
 
-    def _handle_review_rejection(
+    def _apply_review_decision(
         self,
         node: MikadoNode,
         worktree: Path,
         config: ExecutionConfig,
         findings: str,
-        review_error: bool,
-    ) -> tuple[CompletionResult | None, ReviewNotification]:
-        node_id = node.id
-        round_number = self._review_round_by_node.get(node_id, 0)
-        review_round = round_number + 1
-        verdict = "error" if review_error else "reject"
-        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
-        if not notification.notification_succeeded:
-            _logger.error(
-                "node_review_notification_degraded node_id=%d policy=%s",
-                node_id,
-                config.on_reject,
-            )
-        if not notification.audit_succeeded:
-            blocked = self._block_review(
-                node, worktree, notification, "review blocked after audit failure"
-            )
-            return blocked, notification
-        if review_error:
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after reviewer error: {findings}"
-            )
-            return blocked, notification
-        if round_number < config.review_max_rounds:
-            self._review_round_by_node[node_id] = review_round
+        notification: ReviewNotification,
+        decision: ReviewDecision,
+    ) -> CompletionResult | None:
+        if decision.action == "block":
+            detail = {
+                "approval_audit_failed": "review approval audit failed",
+                "rejection_audit_failed": "review blocked after audit failure",
+                "reviewer_error": f"review blocked after reviewer error: {findings}",
+                "round_limit": f"review blocked after round {decision.next_round}",
+            }[decision.reason]
+            return self._block_review(node, worktree, notification, detail)
+        if decision.action == "redispatch":
+            context = self._context_by_node[node.id]
+            context.review_round = decision.next_round
             redispatch = self._redispatch_review_round(
-                node,
-                config,
-                worktree,
-                prior_findings=findings,
-                findings_round=review_round,
+                node, config, worktree, prior_findings=findings, findings_round=decision.next_round
             )
             _logger.warning(
                 "node_review_rejected node_id=%d round=%d/%d; redispatching",
-                node_id,
-                review_round,
+                node.id,
+                decision.next_round,
                 config.review_max_rounds,
             )
-            return (
-                CompletionResult(
-                    node_id=node_id,
-                    rebased=False,
-                    newly_ready=[],
-                    redispatch=redispatch,
-                    review_notification_failed=not notification.notification_succeeded,
-                ),
-                notification,
+            return CompletionResult(
+                node_id=node.id,
+                rebased=False,
+                newly_ready=[],
+                redispatch=redispatch,
+                review_notification_failed=not notification.notification_succeeded,
             )
-        if config.on_reject == "block":
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after round {review_round}"
+        if decision.reason == "round_limit_warn":
+            _logger.warning(
+                "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
+                node.id,
+                config.review_max_rounds,
             )
-            return blocked, notification
-        _logger.warning(
-            "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
-            node_id,
-            config.review_max_rounds,
-        )
-        return None, notification
+        return None
 
     def _gate_review(
         self, node: MikadoNode, worktree: Path, config: ExecutionConfig
@@ -1340,19 +1302,28 @@ class Executor:
                 persist_review_findings(node, worktree, findings)
             except OSError:
                 _logger.exception(
-                    "adversarial review findings recovery failed for node %d",
-                    node.id,
+                    "adversarial review findings recovery failed for node %d", node.id
                 )
             _logger.exception("adversarial review failed for node %d", node.id)
-        if approved and not review_error:
-            notification = self._notify_review(node, verdict="approve", findings_md=findings)
-            if not notification.audit_succeeded:
-                blocked = self._block_review(
-                    node, worktree, notification, "review approval audit failed"
-                )
-                return blocked, notification
-            return None, notification
-        return self._handle_review_rejection(node, worktree, config, findings, review_error)
+        verdict = "error" if review_error else "approve" if approved else "reject"
+        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
+        if not notification.notification_succeeded and verdict != "approve":
+            _logger.error(
+                "node_review_notification_degraded node_id=%d policy=%s",
+                node.id,
+                config.on_reject,
+            )
+        context = self._context_by_node.get(node.id)
+        decision = decide_review(
+            verdict,
+            notification.audit_succeeded,
+            context.review_round if context else 0,
+            ReviewPolicy(config.review_max_rounds, config.on_reject),
+        )
+        return (
+            self._apply_review_decision(node, worktree, config, findings, notification, decision),
+            notification,
+        )
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         try:
@@ -1384,14 +1355,15 @@ class Executor:
         self._require_worker_cleanup(node)
         self._validate_completion_target(node_id, feature_branch)
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        config = self._config_by_node.get(node_id)
+        context = self._context_by_node.get(node_id)
+        config = context.config if context else None
         notification = ReviewNotification(True, True)
         if worktree is not None and config is not None and self._review_enabled(config):
             early, notification = self._gate_review(node, worktree, config)
             if early is not None:
                 return early
 
-        target_branch = self._target_branch_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
         result = self._finalize_completion(node, rebase_result)
         return replace(
