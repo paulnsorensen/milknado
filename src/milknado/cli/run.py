@@ -184,6 +184,7 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
 def _run(options: RunCommandOptions) -> None:
     """Execute a run command after parsing its grouped options."""
     project_root, strict, allow_protected, web, port, no_open = options
+    from milknado.app._shutdown import ShutdownSignal
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
@@ -263,6 +264,8 @@ def _run(options: RunCommandOptions) -> None:
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)
+    except ShutdownSignal as shutdown:
+        raise typer.Exit(code=128 + shutdown.signum) from None
     except ProtectedBranchRefusal as refusal:
         if refusal.reason == "detached":
             console.print(

@@ -231,6 +231,27 @@ def test_force_stop_all_calls_loop_without_control_queue() -> None:
     assert start + 1.0 <= loop.force_stop_deadlines[0] <= monotonic() + 1.0
 
 
+def test_force_stop_all_returns_at_deadline_when_cleanup_blocks() -> None:
+    release = Event()
+
+    class BlockedStop(FakeLoop):
+        def force_stop_active(self, deadline: float) -> bool:
+            self.force_stop_deadlines.append(deadline)
+            _ = release.wait(0.3)
+            return True
+
+    loop = BlockedStop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    start = monotonic()
+    try:
+        assert controller.force_stop_all(timeout=0.05) is False
+        assert monotonic() - start < 0.2
+    finally:
+        release.set()
+
+
 def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
     started = Event()
     release = Event()
@@ -321,7 +342,7 @@ def test_controller_refuses_protected_branch_before_run() -> None:
 def test_controller_waits_for_worker_cleanup_before_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import milknado.app.run as run_module
+    import milknado.app._shutdown as shutdown_module
 
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
@@ -348,7 +369,7 @@ def test_controller_waits_for_worker_cleanup_before_return(
                 outcome_ready.set()
                 _ = release_worker.wait(timeout=1)
 
-    monkeypatch.setattr(run_module, "Queue", GatedQueue)
+    monkeypatch.setattr(shutdown_module, "Queue", GatedQueue)
 
     def run_first() -> None:
         first_result.append(controller.run(feature_branch="feature"))

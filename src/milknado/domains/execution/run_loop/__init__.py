@@ -35,6 +35,7 @@ from milknado.domains.execution.run_loop._result import (
     RunLoopResult,
     VerifyOutcome,
 )
+from milknado.domains.execution.run_loop._stop import StopControlMixin
 from milknado.domains.execution.run_loop.input import (
     InputState,
     drain_input,
@@ -68,7 +69,7 @@ _ETA_SAMPLE_SIZE_DEFAULT = 10
 _STALL_THRESHOLD_DEFAULT = 300
 
 
-class RunLoop(NodeDriverMixin):
+class RunLoop(NodeDriverMixin, StopControlMixin):
     def __init__(
         self,
         executor: Executor,
@@ -211,30 +212,6 @@ class RunLoop(NodeDriverMixin):
         self._loop.request_stop_run(run_id)
         self._publish_state()
 
-    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
-        stopped = self._executor.force_stop_run(run_id, timeout)
-        self._publish_state()
-        return stopped
-
-    def force_stop_active(self, deadline: float) -> bool:
-        self._scheduling_stopped = True
-        stopped = self._loop.stop_active_workers(deadline)
-        for run_id in tuple(self._active):
-            remaining = max(0.0, deadline - time.monotonic())
-            stopped = self._executor.force_stop_run(run_id, remaining) and stopped
-        return stopped
-
-    def admit_stop_scheduling(self) -> None:
-        """Atomically close scheduling admission before a control is queued."""
-        with self._scheduling_lock:
-            self._scheduling_stopped = True
-
-    def stop_scheduling(self) -> None:
-        """Prevent redispatch and ask every currently active run to stop."""
-        self.admit_stop_scheduling()
-        for run_id in self._active:
-            self._loop.request_stop_run(run_id)
-        self._publish_state()
 
     def run(
         self,

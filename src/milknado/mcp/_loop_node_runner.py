@@ -13,12 +13,17 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal, supervise
 from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
 from milknado.domains.graph import RunFenceLostError
+
+if TYPE_CHECKING:
+    from milknado.domains.execution import NodeLoopOutcome, RunLoop
 
 _logger = logging.getLogger("milknado")
 
@@ -63,6 +68,12 @@ def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bo
     return False
 
 
+def _supervise_node(
+    driver: RunLoop, intent: ShutdownIntent, run_node: Callable[[], NodeLoopOutcome]
+) -> NodeLoopOutcome:
+    return supervise(run_node, intent, lambda deadline: driver.force_stop_active(deadline), "milknado-node")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="milknado.mcp._loop_node_runner")
     _ = parser.add_argument("--node-id", type=int, required=True)
@@ -100,7 +111,9 @@ def main(argv: list[str] | None = None) -> int:
         node = graph.get_node(args.node_id)
         profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
         git = GitAdapter(root)
+        intent = ShutdownIntent()
         loop = LoopAdapter(graph=graph)
+        loop.bind_shutdown_intent(lambda: intent.requested)
         executor = Executor(graph=graph, git=git, loop=loop, crg=CrgAdapter(root))
         exec_config = ExecutionConfig(
             execution_agent=profile.execution_agent,
@@ -121,14 +134,24 @@ def main(argv: list[str] | None = None) -> int:
             attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
             max_iterations=profile.max_iterations,
         )
-        driver = RunLoop(executor=executor, graph=graph, loop=loop, config=cfg)
-        outcome = driver.run_node(
-            args.node_id,
-            exec_config,
-            args.target_branch,
-            float(profile.attempt_timeout_seconds),
-            base_oid=args.base_oid,
-            parent_run_id=args.run_id,
+        driver = RunLoop(
+            executor=executor,
+            graph=graph,
+            loop=loop,
+            config=cfg,
+            shutdown_requested=lambda: intent.requested,
+        )
+        outcome = _supervise_node(
+            driver,
+            intent,
+            lambda: driver.run_node(
+                args.node_id,
+                exec_config,
+                args.target_branch,
+                float(profile.attempt_timeout_seconds),
+                base_oid=args.base_oid,
+                parent_run_id=args.run_id,
+            ),
         )
         outcome = driver.confirm_preserved_stop(outcome)
         terminal_written = _finish_run(
@@ -154,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
             outcome.detail,
         )
         return 0 if outcome.success else 1
+    except ShutdownSignal as shutdown:
+        return 128 + shutdown.signum
     except Exception as exc:
         _logger.exception(
             "loop runner failed: run_id=%s node_id=%d",

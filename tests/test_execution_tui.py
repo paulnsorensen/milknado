@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -19,6 +20,7 @@ from textual.screen import ModalScreen
 from textual.widgets import DataTable, Input, Static, Tree
 from typing_extensions import override
 
+from milknado.app._shutdown import ShutdownIntent
 from milknado.app.run import (
     ActiveRunSnapshot,
     ExecutionController,
@@ -96,6 +98,7 @@ class FakeController:
     force_stops: list[str] = field(default_factory=list)
     force_stop_all_requests: int = 0
     force_stop_all_result: bool = True
+    shutdown_intent: ShutdownIntent = field(default_factory=ShutdownIntent)
     listener: Callable[[ExecutionSnapshot], None] | None = None
     stop_requests: int = 0
     run_result: object = "run-result"
@@ -340,6 +343,21 @@ async def test_force_confirmation_cancel_restores_view_and_focus(
         assert app.selected_run_id == selected
         assert app.route == route
         assert app.screen.focused is focus_target
+
+
+@pytest.mark.asyncio
+async def test_external_signal_forces_quit_without_confirmation() -> None:
+    controller = FakeController()
+    intent = ShutdownIntent()
+    app = ExecutionApp(_as_execution_controller(controller), shutdown_intent=intent)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        intent.record(signal.SIGTERM, None)
+        await asyncio.sleep(0.1)
+        await pilot.pause()
+
+    assert controller.force_stop_all_requests == 1
+    assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -716,7 +734,7 @@ async def test_events_height_budget_yields_to_workspace_at_small_terminal() -> N
 
 
 @pytest.mark.asyncio
-async def test_quit_stops_future_scheduling_before_waiting_for_run_result() -> None:
+async def test_quit_force_stops_before_waiting_for_run_result() -> None:
 
     controller = FakeController()
     app = _execution_app(controller)
@@ -725,7 +743,8 @@ async def test_quit_stops_future_scheduling_before_waiting_for_run_result() -> N
         await pilot.press("q", "y")
         await _wait_for_workers(app).wait_for_complete()
 
-        assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -918,14 +937,15 @@ async def test_guidance_composer_stays_on_screen_on_a_short_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quit_graceful_stop_keeps_force_stop_escalation_available() -> None:
+async def test_s_graceful_stop_keeps_force_stop_escalation_available() -> None:
     controller = FakeController()
     app = _execution_app(controller)
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.press("q", "y")
+        await pilot.press("s", "y")
         await _wait_for_workers(app).wait_for_complete()
         assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 0
 
         app.action_force()
         await pilot.press("y")
@@ -962,19 +982,21 @@ async def test_navigation_actions_and_resume_auto_follow() -> None:
 async def test_quit_keys_wait_for_confirmed_execution_shutdown(quit_key: str) -> None:
     class RunningController(FakeController):
         started: Event = Event()
-        stopped: Event = Event()
-        release: Event = Event()
+        stop_started: Event = Event()
+        release_stop: Event = Event()
+        release_run: Event = Event()
 
         @override
         def run(self, **kwargs: object) -> object:
             self.started.set()
-            assert self.release.wait(timeout=10)
+            assert self.release_run.wait(timeout=10)
             return super().run(**kwargs)
 
         @override
-        def stop_scheduling(self) -> None:
-            super().stop_scheduling()
-            self.stopped.set()
+        def force_stop_all(self, timeout: float = 8.0) -> bool:
+            self.stop_started.set()
+            assert self.release_stop.wait(timeout=10)
+            return super().force_stop_all(timeout)
 
     controller = RunningController()
     app = ExecutionApp(_as_execution_controller(controller), feature_branch="feature")
@@ -990,15 +1012,18 @@ async def test_quit_keys_wait_for_confirmed_execution_shutdown(quit_key: str) ->
             assert not app.screen.is_modal
             assert controller.stop_requests == 0
             await pilot.press(quit_key, "y")
-            assert await asyncio.to_thread(controller.stopped.wait, 2)
-            assert app.return_value is None
+            assert await asyncio.to_thread(controller.stop_started.wait, 2)
+            assert app._cleanup_confirmed is None  # pyright: ignore[reportPrivateUsage]
+            controller.release_stop.set()
+            async with asyncio.timeout(2):
+                while app._cleanup_confirmed is None:  # pyright: ignore[reportPrivateUsage]
+                    await asyncio.sleep(0.01)
+            assert app._cleanup_confirmed is True  # pyright: ignore[reportPrivateUsage]
         finally:
-            controller.release.set()
-        async with asyncio.timeout(2):
-            while app.return_value is None:
-                await asyncio.sleep(0.01)
-        assert app.return_value == controller.run_result
-        assert controller.stop_requests == 1
+            controller.release_stop.set()
+            controller.release_run.set()
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -1064,6 +1089,8 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
     expected = object()
 
     class FakeApp:
+        _cleanup_confirmed: bool | None = None
+
         def __init__(self, controller: FakeController, **kwargs: object) -> None:
             assert controller is expected_controller
             assert kwargs["feature_branch"] == "feature"
@@ -1080,6 +1107,20 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
         )
         is expected
     )
+
+
+def test_tui_entry_prints_unresolved_cleanup_after_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import milknado.app.run_tui as run_tui
+
+    def run(self: ExecutionApp) -> None:
+        self._cleanup_confirmed = False  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(run_tui.ExecutionApp, "run", run)
+
+    assert run_tui.run_execution_tui(_as_execution_controller(FakeController()), feature_branch="feature") is None
+    assert "force-stop cleanup did not finish" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio

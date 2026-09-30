@@ -10,18 +10,22 @@ import logging
 import shlex
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from importlib import import_module
 from pathlib import Path
-from queue import Empty, Queue
-from threading import Event, Lock, Thread, current_thread, main_thread
+from queue import Queue
+from threading import Event, Lock
 from typing import TYPE_CHECKING, cast, final
 
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter, TmuxAdapter
-from milknado.app._shutdown import STOP_TIMEOUT_SECONDS, ShutdownIntent, ShutdownSignal
+from milknado.app._shutdown import (
+    STOP_TIMEOUT_SECONDS,
+    ShutdownIntent,
+    bounded_stop,
+    supervise,
+)
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -148,57 +152,31 @@ class ExecutionController:
             if self._running:
                 raise RuntimeError("execution controller is already running")
             self._running = True
-        outcomes: Queue[RunLoopResult | BaseException] = Queue(maxsize=1)
 
-        def execute() -> None:
+        def execute() -> RunLoopResult:
             try:
-                outcomes.put(
-                    self._loop.run(
-                        config=self._execution_config,
-                        feature_branch=feature_branch,
-                        concurrency_limit=self._concurrency_limit,
-                        strict=strict,
-                        spec_text=spec_text,
-                        spec_path=spec_path,
-                        process_controls=self._drain_controls,
-                        interactive=False,
-                        await_owner_work=await_owner_work,
-                    )
+                return self._loop.run(
+                    config=self._execution_config,
+                    feature_branch=feature_branch,
+                    concurrency_limit=self._concurrency_limit,
+                    strict=strict,
+                    spec_text=spec_text,
+                    spec_path=spec_path,
+                    process_controls=self._drain_controls,
+                    interactive=False,
+                    await_owner_work=await_owner_work,
                 )
-            except BaseException as exc:
-                outcomes.put(exc)
             finally:
                 with self._state_lock:
                     self._running = False
                     self._reject_pending_controls()
 
-        handlers = (
-            self.shutdown_intent.installed()
-            if current_thread() is main_thread()
-            else nullcontext()
+        return supervise(
+            execute,
+            self.shutdown_intent,
+            lambda deadline: self._loop.force_stop_active(deadline),
+            "milknado-execution",
         )
-        with handlers:
-            worker = Thread(target=execute, name="milknado-execution", daemon=True)
-            worker.start()
-            return self._await_execution(outcomes)
-
-    def _await_execution(self, outcomes: Queue[RunLoopResult | BaseException]) -> RunLoopResult:
-        while True:
-            if signum := self.shutdown_intent.signum:
-                deadline = self.shutdown_intent.deadline(STOP_TIMEOUT_SECONDS)
-                assert deadline is not None
-                if not self._force_stop_until(deadline):
-                    _logger.warning("shutdown cleanup remains unresolved after signal %d", signum)
-                raise ShutdownSignal(signum)
-            try:
-                outcome = outcomes.get(timeout=0.05)
-            except Empty:
-                continue
-            if self.shutdown_intent.requested:
-                continue
-            if isinstance(outcome, BaseException):
-                raise outcome
-            return outcome
 
     def snapshot(self, request: NodeSnapshotRequest | None = None) -> ExecutionSnapshot:
         """Return the controller's current immutable presentation snapshot."""
@@ -355,25 +333,10 @@ class ExecutionController:
         return bool(self._control("force_stop", run_id, timeout))
 
     def force_stop_all(self, timeout: float = STOP_TIMEOUT_SECONDS) -> bool:
-        return self._force_stop_until(time.monotonic() + timeout)
-
-    def _force_stop_until(self, deadline: float) -> bool:
-        outcomes: Queue[bool | BaseException] = Queue(maxsize=1)
-
-        def stop() -> None:
-            try:
-                outcomes.put(self._loop.force_stop_active(deadline))
-            except BaseException as exc:
-                outcomes.put(exc)
-
-        Thread(target=stop, name="milknado-force-stop", daemon=True).start()
-        try:
-            outcome = outcomes.get(timeout=max(0.0, deadline - time.monotonic()))
-        except Empty:
-            return False
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
+        deadline = self.shutdown_intent.deadline(STOP_TIMEOUT_SECONDS)
+        if deadline is None:
+            deadline = time.monotonic() + timeout
+        return bounded_stop(self._loop.force_stop_active, deadline)
 
     def stop_scheduling(self) -> None:
         """Stop admitting new work and request terminal completion of active runs."""
@@ -424,20 +387,29 @@ def build_execution_controller(
     from milknado.domains.execution import Executor, RunLoop
 
     _ = reconcile_orphaned_runs(graph, ProcessAdapter())
+    shutdown_intent = ShutdownIntent()
     loop_adapter = LoopAdapter(graph=graph)
+    loop_adapter.bind_shutdown_intent(lambda: shutdown_intent.requested)
     executor = Executor(
         graph=graph,
         git=GitAdapter(project_root),
         loop=loop_adapter,
         crg=CrgAdapter(project_root),
     )
-    loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
+    loop = RunLoop(
+        executor=executor,
+        graph=graph,
+        loop=loop_adapter,
+        config=config,
+        shutdown_requested=lambda: shutdown_intent.requested,
+    )
     return ExecutionController(
         loop,
         execution_config=build_exec_config(config, project_root),
         concurrency_limit=config.concurrency_limit,
         config=config,
         graph=graph,
+        shutdown_intent=shutdown_intent,
     )
 
 
@@ -451,23 +423,11 @@ def run_execution_loop(
 ) -> RunLoopResult:
     """Wire the executor + run loop and drive it to completion."""
     ensure_dispatch_allowed(config, feature_branch, allow_protected)
-    graph.register_controller_master()
-    from milknado.adapters import CrgAdapter, GitAdapter, LoopAdapter
-    from milknado.domains.dispatch import reconcile_orphaned_runs
-    from milknado.domains.execution import Executor, RunLoop
-
-    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
-    git = GitAdapter(project_root)
-    loop_adapter = LoopAdapter(graph=graph)
-    crg = CrgAdapter(project_root)
-    executor = Executor(graph=graph, git=git, loop=loop_adapter, crg=crg)
-    loop = RunLoop(executor=executor, graph=graph, loop=loop_adapter, config=config)
-    return loop.run(
-        config=build_exec_config(config, project_root),
+    controller = build_execution_controller(graph, config, project_root)
+    return controller.run(
         feature_branch=feature_branch,
-        concurrency_limit=config.concurrency_limit,
         strict=strict,
-        interactive=False,
+        allow_protected=allow_protected,
     )
 
 

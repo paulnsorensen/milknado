@@ -78,6 +78,9 @@ def test_main_logs_terminal_event_with_run_id(
             return "main"
 
     class _StubLoop:
+        def bind_shutdown_intent(self, _requested: object) -> None:
+            pass
+
         def poll_progress_events(self) -> list[object]:
             return []
 

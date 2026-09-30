@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import signal
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, nullcontext
+from queue import Empty, Queue
+from threading import Thread, current_thread, main_thread
 from time import monotonic
 from types import FrameType
-
+from typing import TypeVar
 
 STOP_TIMEOUT_SECONDS = 8.0
 
@@ -49,3 +52,72 @@ class ShutdownIntent:
         finally:
             for signum, handler in previous.items():
                 signal.signal(signum, handler)
+
+
+def bounded_stop(stop: Callable[[float], bool], deadline: float) -> bool:
+    outcomes: Queue[bool | Exception] = Queue(maxsize=1)
+
+    def execute() -> None:
+        try:
+            outcomes.put(stop(deadline))
+        except Exception as exc:  # noqa: BLE001 - Transfer the stop failure to the caller.
+            outcomes.put(exc)
+
+    Thread(target=execute, name="milknado-force-stop", daemon=True).start()
+    try:
+        outcome = outcomes.get(timeout=max(0.0, deadline - monotonic()))
+    except Empty:
+        return False
+    if isinstance(outcome, Exception):
+        raise outcome
+    return outcome
+
+
+_T = TypeVar("_T")
+
+
+def supervise(
+    run: Callable[[], _T],
+    intent: ShutdownIntent,
+    stop: Callable[[float], bool],
+    thread_name: str,
+) -> _T:
+    outcomes: Queue[_T | Exception] = Queue(maxsize=1)
+
+    def execute() -> None:
+        try:
+            outcomes.put(run())
+        except Exception as exc:  # noqa: BLE001 - Transfer the run failure to the caller.
+            outcomes.put(exc)
+
+    handlers = intent.installed() if current_thread() is main_thread() else nullcontext()
+    with handlers:
+        worker = Thread(target=execute, name=thread_name, daemon=True)
+        worker.start()
+        while True:
+            if signum := intent.signum:
+                deadline = intent.deadline(STOP_TIMEOUT_SECONDS)
+                assert deadline is not None
+                try:
+                    confirmed = bounded_stop(stop, deadline)
+                except Exception:
+                    logging.getLogger("milknado").exception(
+                        "shutdown cleanup failed after signal %d", signum
+                    )
+                    confirmed = False
+                if not confirmed:
+                    logging.getLogger("milknado").warning(
+                        "shutdown cleanup remains unresolved after signal %d", signum
+                    )
+                raise ShutdownSignal(signum)
+            try:
+                outcome = outcomes.get(timeout=0.05)
+            except Empty:
+                continue
+            while worker.is_alive() and not intent.requested:
+                worker.join(timeout=0.05)
+            if intent.requested:
+                continue
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome

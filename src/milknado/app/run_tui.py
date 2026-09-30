@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -12,6 +14,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Static
 from typing_extensions import override
 
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal
 from milknado.app.run import ExecutionController, ExecutionSnapshot
 from milknado.app.run_commands import ExecutionCommandsMixin
 from milknado.app.run_source import ExecutionSnapshotSource
@@ -20,6 +23,7 @@ from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.domains.execution import RunLoopResult
 
 __all__ = ["ExecutionApp", "run_execution_tui"]
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -86,6 +90,7 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         spec_text: str | None = None,
         spec_path: Path | None = None,
         allow_protected: bool = False,
+        shutdown_intent: ShutdownIntent | None = None,
     ) -> None:
         self.controller: ExecutionController = controller
         self.attached_source: ExecutionSnapshotSource = cast(
@@ -96,6 +101,9 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
         self.spec_text: str | None = spec_text
         self.spec_path: Path | None = spec_path
         self.allow_protected: bool = allow_protected
+        self._shutdown_intent = shutdown_intent
+        self._quit_started = False
+        self._cleanup_confirmed: bool | None = None
         self._execution_worker: Worker[None] | None = None
         self._confirmation: tuple[str, str | None] | None = None
         self._confirmation_run_ids: frozenset[str] = frozenset()
@@ -105,6 +113,8 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
     @override
     def on_mount(self) -> None:
         super().on_mount()
+        if self._shutdown_intent is not None:
+            self.set_interval(0.05, self._check_shutdown)
         if self.feature_branch is not None:
             self._execution_worker = self._run_execution()
 
@@ -161,17 +171,27 @@ class ExecutionApp(ExecutionCommandsMixin, ExecutionSnapshotApp):
             if action == "force" and run_id is not None:
                 _ = self._force_stop(run_id)
             elif action == "quit":
+                self._quit_started = True
                 _ = self._quit_after_force_stop()
             elif action == "stop":
                 _ = self._stop_scheduling()
 
+    def _check_shutdown(self) -> None:
+        if (
+            self._shutdown_intent is not None
+            and self._shutdown_intent.requested
+            and not self._quit_started
+        ):
+            self._quit_started = True
+            _ = self._quit_after_force_stop()
+
     @work(thread=True, group="controls", exclusive=False)
     def _quit_after_force_stop(self) -> None:
-        confirmed = self.controller.force_stop_all()
-        if not confirmed:
-            _ = self.call_from_thread(
-                self.notify, "Force-stop cleanup did not finish in time.", severity="warning"
-            )
+        try:
+            self._cleanup_confirmed = self.controller.force_stop_all()
+        except Exception:
+            _logger.exception("force-stop cleanup failed")
+            self._cleanup_confirmed = False
         _ = self.call_from_thread(self.exit)
 
     def action_stop_scheduling(self) -> None:  # noqa: V105 - Textual binding action
@@ -231,11 +251,22 @@ def run_execution_tui(
     allow_protected: bool = False,
 ) -> RunLoopResult | None:
     """Run the controller-backed Textual adapter and return its terminal result."""
-    return ExecutionApp(
+    intent = controller.shutdown_intent
+    app = ExecutionApp(
         controller,
         feature_branch=feature_branch,
         strict=strict,
         spec_text=spec_text,
         spec_path=spec_path,
         allow_protected=allow_protected,
-    ).run()
+        shutdown_intent=intent,
+    )
+    with intent.installed():
+        result = app.run()
+    if app._cleanup_confirmed is False:
+        _ = sys.stderr.write(
+            "Warning: force-stop cleanup did not finish; worker ownership remains.\n"
+        )
+    if intent.signum is not None:
+        raise ShutdownSignal(intent.signum)
+    return result

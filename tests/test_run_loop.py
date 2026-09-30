@@ -440,8 +440,9 @@ class FakeLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> _FakeReview:
-        _ = (agent, prompt, worktree, project_root, timeout_seconds)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds, graph_run_id)
         return _FakeReview()
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
@@ -527,7 +528,7 @@ def test_force_stop_active_closes_admission_without_scheduling_lock(
     lock = run_loop._scheduling_lock  # pyright: ignore[reportPrivateUsage]
     finished = Event()
     deadline = monotonic() + 1.0
-    lock.acquire()
+    _ = lock.acquire()
     try:
         worker = Thread(target=lambda: (run_loop.force_stop_active(deadline), finished.set()), daemon=True)
         worker.start()
