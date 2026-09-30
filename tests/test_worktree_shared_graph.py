@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -259,7 +260,9 @@ class TestDispatchRefusalUnderClaimedGoal:
         with pytest.raises(ValueError, match="goal.*claimed|claimed.*goal"):
             _ = milknado_run_loop_start(task_id, project_root=str(root), use_tmux=False)
 
-    def test_dispatch_allowed_when_goal_not_claimed(self, tmp_path: Path) -> None:
+    def test_dispatch_allowed_when_goal_not_claimed(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         """No claimed goal → dispatch proceeds normally (kind check error, not goal error)."""
         root, graph, _goal_id, task_id = _seed_goal_task_repo(tmp_path)
         graph.close()
@@ -272,6 +275,7 @@ class TestDispatchRefusalUnderClaimedGoal:
                 task_id,
                 worktree=WorktreeMode.THIS_BRANCH,
                 project_root=str(root),
+                worker_cmd=worker_stub("true"),
                 allow_protected=True,
             )
         except ValueError as exc:
@@ -279,7 +283,9 @@ class TestDispatchRefusalUnderClaimedGoal:
                 f"unexpected goal-claim refusal with no goal claimed: {exc}"
             )
 
-    def test_dispatch_allowed_after_dead_claimant_reclaim(self, tmp_path: Path) -> None:
+    def test_dispatch_allowed_after_dead_claimant_reclaim(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         """Dead claimant → reclaimed → dispatch no longer blocked."""
         root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         _ = graph.claim_or_reclaim_goal(goal_id, "run-coord-A", _DEAD_PID, now=now_iso())
@@ -293,6 +299,7 @@ class TestDispatchRefusalUnderClaimedGoal:
                 task_id,
                 worktree=WorktreeMode.THIS_BRANCH,
                 project_root=str(root),
+                worker_cmd=worker_stub("true"),
                 allow_protected=True,
             )
         except ValueError as exc:
@@ -671,7 +678,9 @@ class TestProductionClaimPath:
                 allow_protected=True,
             )
 
-    def test_dead_claimant_allows_second_run_via_production_path(self, tmp_path: Path) -> None:
+    def test_dead_claimant_allows_second_run_via_production_path(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
         """Dead claimant pid → inline reclaim → second run's dispatch is no longer blocked."""
         root, graph, goal_id, task_id = _seed_goal_task_repo(tmp_path)
         # Run A claims, then set a dead pid to simulate coordinator crash.
@@ -687,6 +696,7 @@ class TestProductionClaimPath:
                 task_id,
                 worktree=WorktreeMode.THIS_BRANCH,
                 project_root=str(root),
+                worker_cmd=worker_stub("true"),
                 allow_protected=True,
             )
         except ValueError as exc:

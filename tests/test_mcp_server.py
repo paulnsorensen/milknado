@@ -20,6 +20,7 @@ from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import GraphNodeSummary, mcp
 from milknado.mcp.follow_up import milknado_track_follow_up
 from milknado.mcp.run import (
+    milknado_run_cancel,
     milknado_run_inline,
     milknado_run_inline_poll,
     milknado_run_inline_start,
@@ -106,6 +107,20 @@ def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> 
             return last
         time.sleep(0.05)
     raise AssertionError(f"run {run_id} did not finish; last state={last}")
+
+
+def _cancel_after_spawn(run_id: str, project_root: str, timeout: float = 10.0) -> None:
+    """Wait until the async worker has a pid, then cancel it (cancel needs the pid)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = _call(milknado_run_inline_poll, run_id=run_id, project_root=project_root)
+        if (
+            cast(dict[str, object], cast(object, state)).get("pid") is not None
+            or state["status"] != "running"
+        ):
+            break
+        time.sleep(0.05)
+    _ = _call(milknado_run_cancel, run_id=run_id, project_root=project_root)
 
 
 def _call(tool: object, **kwargs: object) -> _McpResponse:
@@ -1143,6 +1158,10 @@ class TestTodoAsyncRun:
         for t in threads:
             t.join(timeout=10)
 
+        # The winner's worker spawns from a background thread. Cancel it once
+        # spawned so it cannot outlive this test and resolve PATH after teardown.
+        for started in results:
+            _cancel_after_spawn(started["run_id"], root)
         assert len(results) == 1, (
             f"expected exactly 1 successful dispatch, got {len(results)} "
             f"(race: duplicate workers spawned). errors={errors}"
