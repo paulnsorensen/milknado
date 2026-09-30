@@ -1563,7 +1563,7 @@ class TestCancelFinalizeAndRace:
         class Graph:
             def __init__(self) -> None:
                 self.runs: Graph = self
-                self.db_path = tmp_path / "evidence.db"
+                self.db_path: Path = tmp_path / "evidence.db"
                 evidence_graph = MikadoGraph(self.db_path)
                 evidence_graph.close()
 
@@ -2024,7 +2024,7 @@ def test_stale_reconcile_rejects_lost_terminal_fence(tmp_path: Path) -> None:
     class Graph:
         def __init__(self) -> None:
             self.runs: Graph = self
-            self.db_path = tmp_path / "evidence.db"
+            self.db_path: Path = tmp_path / "evidence.db"
             evidence_graph = MikadoGraph(self.db_path)
             evidence_graph.close()
 

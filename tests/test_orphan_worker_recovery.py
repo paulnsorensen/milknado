@@ -6,9 +6,10 @@ import sqlite3
 import subprocess
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from typing import cast
 
 import psutil
 import pytest
@@ -25,19 +26,21 @@ from milknado.domains.graph import MikadoGraph, NodeWorkers, RunWorkers
 
 @pytest.fixture
 def worker() -> Iterator[int]:
-    launcher = subprocess.Popen(
+    launcher: subprocess.Popen[str] = subprocess.Popen(
         [
             sys.executable,
             "-c",
             "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c',"
-            "'import time; time.sleep(60)'],start_new_session=True,"
-            "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid,flush=True)",
+            + "'import time; time.sleep(60)'],start_new_session=True,"
+            + "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid,flush=True)",
         ],
         stdout=subprocess.PIPE,
         text=True,
     )
     assert launcher.stdout is not None
-    pid = int(launcher.stdout.readline())
+    pid_text = cast(object, launcher.stdout.readline())
+    assert isinstance(pid_text, str)
+    pid = int(pid_text)
     assert launcher.wait(timeout=3) == 0
     try:
         yield pid
@@ -93,15 +96,17 @@ def test_reap_refuses_mismatched_leader_without_signal(tmp_path: Path, worker: i
 
 
 @contextmanager
-def _orphan_descendant(separate_session: bool) -> Iterator[tuple[int, float, int, float, int]]:
-    leader = subprocess.Popen(
+def _orphan_descendant(
+    separate_session: bool,
+) -> Generator[tuple[int, float, int, float, int], None, None]:
+    leader: subprocess.Popen[str] = subprocess.Popen(
         [
             sys.executable,
             "-c",
             "import subprocess,sys; sys.stdin.readline(); "
-            "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
-            "start_new_session=bool(int(sys.argv[1])),stdout=subprocess.DEVNULL); "
-            "print(p.pid,flush=True)",
+            + "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+            + "start_new_session=bool(int(sys.argv[1])),stdout=subprocess.DEVNULL); "
+            + "print(p.pid,flush=True)",
             str(int(separate_session)),
         ],
         start_new_session=True,
@@ -111,9 +116,11 @@ def _orphan_descendant(separate_session: bool) -> Iterator[tuple[int, float, int
     )
     token = psutil.Process(leader.pid).create_time()
     assert leader.stdin is not None and leader.stdout is not None
-    leader.stdin.write("\n")
+    _ = leader.stdin.write("\n")
     leader.stdin.flush()
-    child = int(leader.stdout.readline())
+    child_text = cast(object, leader.stdout.readline())
+    assert isinstance(child_text, str)
+    child = int(child_text)
     assert leader.wait(timeout=3) == 0
     child_token = psutil.Process(child).create_time()
     child_group = os.getpgid(child)
@@ -211,7 +218,7 @@ def test_dead_owner_cancel_preserves_unresolved_worker(tmp_path: Path, worker: i
     graph = _graph(tmp_path, worker, psutil.Process(worker).create_time() - 100)
     try:
         with pytest.raises(RuntimeError, match="worker recovery unresolved"):
-            cancel_run(graph, GitAdapter(tmp_path), ProcessAdapter(), tmp_path, "run-1")
+            _ = cancel_run(graph, GitAdapter(tmp_path), ProcessAdapter(), tmp_path, "run-1")
         run = graph.runs.get("run-1")
         assert run is not None and run["status"] == "running"
         assert graph.runs.live_workers(node_id=1)
@@ -244,7 +251,7 @@ def test_dispatch_refuses_reclaim_with_unresolved_identity(tmp_path: Path, worke
     request = LoopStartRequest(1, None, 30, False, tmp_path)
     try:
         with pytest.raises(RuntimeError, match="worker recovery unresolved"):
-            _claim_loop(graph, GitAdapter(tmp_path), request)
+            _ = _claim_loop(graph, GitAdapter(tmp_path), request)
         node = graph.get_node(1)
         assert node is not None and node.status is NodeStatus.RUNNING
         run = graph.runs.get("run-1")
@@ -264,7 +271,7 @@ def test_dispatch_reclaims_only_after_worker_exit(tmp_path: Path, worker: int) -
         ("git", "-C", str(tmp_path), "config", "user.name", "Test"),
         ("git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "base"),
     ):
-        subprocess.run(command, check=True, capture_output=True)
+        _ = subprocess.run(command, check=True, capture_output=True)
     try:
         claim = _claim_loop(graph, GitAdapter(tmp_path), request)
         assert claim.run_id != "run-1"
@@ -279,7 +286,7 @@ def test_dispatch_reclaims_only_after_worker_exit(tmp_path: Path, worker: int) -
 def test_locked_evidence_database_expires_without_signal(tmp_path: Path, worker: int) -> None:
     graph = _graph(tmp_path, worker, psutil.Process(worker).create_time())
     blocker = sqlite3.connect(graph.db_path)
-    blocker.execute("BEGIN IMMEDIATE")
+    _ = blocker.execute("BEGIN IMMEDIATE")
     try:
         started = time.monotonic()
         assert not reap_orphaned_workers(

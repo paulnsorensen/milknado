@@ -37,7 +37,7 @@ class _RecoveryNode:
 
 class _RecoveryGraph:
     def __init__(self, *, pid: int | None, db_path: Path, finish_succeeds: bool = True) -> None:
-        self.db_path = db_path
+        self.db_path: Path = db_path
         evidence_graph = MikadoGraph(db_path)
         evidence_graph.close()
         self.node: _RecoveryNode = _RecoveryNode(
@@ -192,8 +192,8 @@ def _detached_worker() -> int:
             sys.executable,
             "-c",
             "import subprocess,sys; p=subprocess.Popen([sys.executable,'-c',"
-            "'import time; time.sleep(60)'],start_new_session=True,"
-            "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)",
+            + "'import time; time.sleep(60)'],start_new_session=True,"
+            + "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); print(p.pid)",
         ],
         check=True,
         capture_output=True,

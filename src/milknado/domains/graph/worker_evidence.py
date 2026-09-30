@@ -15,7 +15,7 @@ from filelock import FileLock
 import milknado.domains.graph._worker_persistence as _worker_persistence
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph._persistence import SCHEMA_VERSION, create_tables, migrate
-from milknado.domains.graph._sqlite_rows import fetchone
+from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,14 +113,19 @@ class WorkerEvidenceStore:
             raise TimeoutError("worker evidence deadline expired")
         uri = f"{db_path.resolve().as_uri()}?mode=rw"
         conn = sqlite3.connect(uri, uri=True, timeout=min(1, remaining))
-        self._conn = conn
-        self._db_path = db_path
-        self._deadline = deadline
+        self._conn: sqlite3.Connection = conn
+        self._db_path: Path = db_path
+        self._deadline: float | None = deadline
         try:
             conn.row_factory = sqlite3.Row
             self._limit_wait()
             row = fetchone(conn, "PRAGMA user_version")
-            columns = {item[1] for item in conn.execute("PRAGMA table_info(run_workers)")}
+            columns: set[str] = set()
+            for item in fetchall(conn, "PRAGMA table_info(run_workers)"):
+                name = cast(object, item[1])
+                if not isinstance(name, str):
+                    raise RuntimeError("invalid worker evidence schema")
+                columns.add(name)
             if (
                 row is None
                 or cast(int, row[0]) != SCHEMA_VERSION
@@ -168,9 +173,9 @@ class WorkerEvidenceStore:
             return _worker_persistence.live_workers(self._conn, node_id=selection.node_id)
         if isinstance(selection, RunWorkers):
             return _worker_persistence.live_workers(self._conn, run_id=selection.graph_run_id)
-        if isinstance(selection, UnassociatedWorkers):
-            return _worker_persistence.live_workers(self._conn, unassociated=True)
-        raise TypeError("worker selection required")
+        if type(selection) is not UnassociatedWorkers:
+            raise TypeError("worker selection required")
+        return _worker_persistence.live_workers(self._conn, unassociated=True)
 
     def get(self, invocation_id: str) -> _worker_persistence.WorkerRecord | None:
         self._limit_wait()

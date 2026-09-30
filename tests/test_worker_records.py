@@ -5,6 +5,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
+from typing import cast
 
 import pytest
 
@@ -17,6 +18,7 @@ from milknado.domains.graph import (
     existing_standalone_worker_db,
     open_standalone_worker_evidence,
 )
+from milknado.domains.graph._sqlite_rows import fetchall
 
 
 def test_worker_record_persists_and_blocks_reclaim(tmp_path: Path) -> None:
@@ -171,8 +173,8 @@ def test_worker_evidence_connection_respects_one_deadline_under_writer_lock(
     )
     lock = sqlite3.connect(graph.db_path)
     try:
-        lock.execute("BEGIN IMMEDIATE")
-        lock.execute(
+        _ = lock.execute("BEGIN IMMEDIATE")
+        _ = lock.execute(
             "UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?",
             ("inv-1",),
         )
@@ -214,9 +216,12 @@ def test_concurrent_first_open_uses_complete_current_schema(tmp_path: Path) -> N
         for future in futures:
             future.result()
     with sqlite3.connect(path) as conn:
-        tables = {
-            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
+        conn.row_factory = sqlite3.Row
+        tables: set[str] = set()
+        for row in fetchall(conn, "SELECT name FROM sqlite_master WHERE type='table'"):
+            name = cast(object, row[0])
+            assert isinstance(name, str)
+            tables.add(name)
         assert {"run_workers", "runs", "nodes"} <= tables
 
 
@@ -229,8 +234,8 @@ def test_graph_worker_admission_rechecks_run_after_writer_lock(tmp_path: Path) -
 
         def finish_run() -> None:
             with sqlite3.connect(graph.db_path) as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                conn.execute("UPDATE runs SET status='failed' WHERE run_id='run-1'")
+                _ = conn.execute("BEGIN IMMEDIATE")
+                _ = conn.execute("UPDATE runs SET status='failed' WHERE run_id='run-1'")
                 locked.set()
                 time.sleep(0.1)
 
@@ -256,12 +261,12 @@ def test_missing_standalone_store_is_not_created(tmp_path: Path) -> None:
 
 def test_existing_standalone_store_rejects_symlink_and_corruption(tmp_path: Path) -> None:
     path = tmp_path / "workers.db"
-    path.write_bytes(b"not sqlite")
+    _ = path.write_bytes(b"not sqlite")
     path.chmod(0o600)
     with pytest.raises(sqlite3.DatabaseError):
-        open_standalone_worker_evidence(path)
+        _ = open_standalone_worker_evidence(path)
     assert path.read_bytes() == b"not sqlite"
     link = tmp_path / "link.db"
     link.symlink_to(path)
     with pytest.raises(RuntimeError, match="symlink"):
-        existing_standalone_worker_db(link)
+        _ = existing_standalone_worker_db(link)

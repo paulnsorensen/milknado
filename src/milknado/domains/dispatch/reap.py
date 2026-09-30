@@ -167,7 +167,7 @@ def reap_orphaned_workers(
                     complete = False
                     _logger.error(
                         "worker recovery unresolved: invocation_id=%s graph_run_id=%s "
-                        "node_id=%s identities=%s",
+                        + "node_id=%s identities=%s",
                         record.invocation_id,
                         record.graph_run_id,
                         record.node_id,

@@ -13,7 +13,7 @@ from typing import BinaryIO
 from milknado.domains.common import WorkerIdentity, pid_alive
 from milknado.domains.dispatch import Descendant, ProcessOutcome, WorkerCleanupResult
 from milknado.loop._process_identity import identity_state, observe_descendants
-from milknado.loop._process_lifecycle import terminate_verified
+from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
 
 class ProcessAdapter:

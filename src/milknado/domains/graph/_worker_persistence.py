@@ -110,8 +110,9 @@ def record_worker(conn: sqlite3.Connection, owner: WorkerOwner, worker: WorkerId
         )
     else:
         cur = conn.execute(
-            columns + "SELECT ?, ?, ?, run_id, node_id, ?, ?, ?, ?, ? FROM runs "
-            "WHERE run_id = ? AND node_id = ? AND status = 'running'",
+            columns
+            + """SELECT ?, ?, ?, run_id, node_id, ?, ?, ?, ?, ? FROM runs
+            WHERE run_id = ? AND node_id = ? AND status = 'running'""",
             (*values, owner.graph_run_id, owner.node_id),
         )
     conn.commit()
@@ -128,25 +129,25 @@ def live_workers(
 ) -> tuple[WorkerRecord, ...]:
     rows = fetchall(
         conn,
-        "SELECT * FROM run_workers WHERE ended_at IS NULL "
-        "AND (? IS NULL OR node_id = ?) AND (? IS NULL OR graph_run_id = ?) "
-        "AND (? = 0 OR graph_run_id IS NULL) "
-        "ORDER BY started_at, invocation_id",
+        """SELECT * FROM run_workers WHERE ended_at IS NULL
+        AND (? IS NULL OR node_id = ?) AND (? IS NULL OR graph_run_id = ?)
+        AND (? = 0 OR graph_run_id IS NULL)
+        ORDER BY started_at, invocation_id""",
         (node_id, node_id, run_id, run_id, int(unassociated)),
     )
-    return tuple(_record(cast(sqlite3.Row, row)) for row in rows)
+    return tuple(_record(row) for row in rows)
 
 
 def get_worker(conn: sqlite3.Connection, invocation_id: str) -> WorkerRecord | None:
     row = fetchone(conn, "SELECT * FROM run_workers WHERE invocation_id = ?", (invocation_id,))
-    return None if row is None else _record(cast(sqlite3.Row, row))
+    return None if row is None else _record(row)
 
 
 def record_helper(conn: sqlite3.Connection, helper: HelperIdentity) -> None:
     cur = conn.execute(
-        "UPDATE run_workers SET helper_pid = ?, helper_start_token = ?, "
-        "helper_generation = ?, ready_generation = -1 "
-        "WHERE invocation_id = ? AND ended_at IS NULL AND helper_generation = ?",
+        """UPDATE run_workers SET helper_pid = ?, helper_start_token = ?,
+        helper_generation = ?, ready_generation = -1
+        WHERE invocation_id = ? AND ended_at IS NULL AND helper_generation = ?""",
         (
             helper.pid,
             helper.start_token,
@@ -164,12 +165,12 @@ def begin_observation(conn: sqlite3.Connection, key: ObservationKey) -> None:
     if key.owner not in ("supervisor", "helper"):
         raise ValueError("invalid worker observer")
     cur = conn.execute(
-        "UPDATE run_workers SET observation_owner = ?, observation_seq = ?, "
-        "observation_generation = ?, observation_pid = ?, observation_token = ? "
-        "WHERE invocation_id = ? AND ended_at IS NULL AND observation_owner IS NULL "
-        "AND snapshot_seq + 1 = ? AND "
-        "(? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
-        "AND helper_start_token = ?))",
+        """UPDATE run_workers SET observation_owner = ?, observation_seq = ?,
+        observation_generation = ?, observation_pid = ?, observation_token = ?
+        WHERE invocation_id = ? AND ended_at IS NULL AND observation_owner IS NULL
+        AND snapshot_seq + 1 = ? AND
+        (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ?
+        AND helper_start_token = ?))""",
         (
             key.owner,
             key.sequence,
@@ -194,11 +195,11 @@ def commit_observation(
 ) -> None:
     row = fetchone(
         conn,
-        "SELECT descendants_json FROM run_workers WHERE invocation_id = ? "
-        "AND ended_at IS NULL AND observation_owner = ? AND observation_seq = ? "
-        "AND observation_generation = ? AND observation_pid = ? AND observation_token = ? "
-        "AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
-        "AND helper_start_token = ?))",
+        """SELECT descendants_json FROM run_workers WHERE invocation_id = ?
+        AND ended_at IS NULL AND observation_owner = ? AND observation_seq = ?
+        AND observation_generation = ? AND observation_pid = ? AND observation_token = ?
+        AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ?
+        AND helper_start_token = ?))""",
         (
             key.invocation_id,
             key.owner,
@@ -217,13 +218,13 @@ def commit_observation(
     retained = msgspec.json.decode(cast(str, row[0]), type=list[Descendant])
     merged = sorted(set(retained) | set(descendants))
     cur = conn.execute(
-        "UPDATE run_workers SET descendants_json = ?, snapshot_seq = ?, "
-        "observation_owner = NULL, observation_seq = NULL, observation_generation = NULL, "
-        "observation_pid = NULL, observation_token = NULL "
-        "WHERE invocation_id = ? AND observation_owner = ? AND observation_seq = ? "
-        "AND observation_generation = ? AND observation_pid = ? AND observation_token = ? "
-        "AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ? "
-        "AND helper_start_token = ?))",
+        """UPDATE run_workers SET descendants_json = ?, snapshot_seq = ?,
+        observation_owner = NULL, observation_seq = NULL, observation_generation = NULL,
+        observation_pid = NULL, observation_token = NULL
+        WHERE invocation_id = ? AND observation_owner = ? AND observation_seq = ?
+        AND observation_generation = ? AND observation_pid = ? AND observation_token = ?
+        AND (? = 'supervisor' OR (helper_generation = ? AND helper_pid = ?
+        AND helper_start_token = ?))""",
         (
             msgspec.json.encode(merged).decode(),
             key.sequence,
@@ -246,10 +247,10 @@ def commit_observation(
 
 def ready_helper(conn: sqlite3.Connection, helper: HelperIdentity, sequence: int) -> bool:
     cur = conn.execute(
-        "UPDATE run_workers SET ready_generation = ? "
-        "WHERE invocation_id = ? AND ended_at IS NULL "
-        "AND helper_generation = ? AND helper_pid = ? AND helper_start_token = ? "
-        "AND snapshot_seq = ? AND observation_owner IS NULL",
+        """UPDATE run_workers SET ready_generation = ?
+        WHERE invocation_id = ? AND ended_at IS NULL
+        AND helper_generation = ? AND helper_pid = ? AND helper_start_token = ?
+        AND snapshot_seq = ? AND observation_owner IS NULL""",
         (
             helper.generation,
             helper.invocation_id,
@@ -270,9 +271,9 @@ def end_worker(
     helper_generation: int | None = None,
 ) -> None:
     cur = conn.execute(
-        "UPDATE run_workers SET ended_at = ? WHERE invocation_id = ? "
-        "AND snapshot_seq = ? AND ended_at IS NULL AND observation_owner IS NULL "
-        "AND (? IS NULL OR helper_generation = ?)",
+        """UPDATE run_workers SET ended_at = ? WHERE invocation_id = ?
+        AND snapshot_seq = ? AND ended_at IS NULL AND observation_owner IS NULL
+        AND (? IS NULL OR helper_generation = ?)""",
         (
             datetime.now(UTC).isoformat(),
             invocation_id,
