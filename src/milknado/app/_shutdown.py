@@ -92,12 +92,12 @@ def supervise(
     stop: Callable[[float], bool],
     thread_name: str,
 ) -> _T:
-    outcomes: Queue[_T | Exception] = Queue(maxsize=1)
+    outcomes: Queue[_T | BaseException] = Queue(maxsize=1)
 
     def execute() -> None:
         try:
             outcomes.put(run())
-        except Exception as exc:  # noqa: BLE001 - Transfer the run failure to the caller.
+        except BaseException as exc:  # noqa: BLE001 - Transfer the run failure to the caller.
             outcomes.put(exc)
 
     handlers = intent.installed() if current_thread() is main_thread() else nullcontext()
@@ -129,6 +129,6 @@ def supervise(
                 worker.join(timeout=0.05)
             if intent.requested:
                 continue
-            if isinstance(outcome, Exception):
+            if isinstance(outcome, BaseException):
                 raise outcome
             return outcome
