@@ -40,7 +40,11 @@ def record(self, signum, frame):
 
 def stop_after_admission(stop, deadline):
     confirmed = original_bounded_stop(stop, deadline)
-    while not resumed.exists() and time.monotonic() < deadline:
+    while (
+        not os.getenv("SHUTDOWN_BLOCKED_EXIT")
+        and not resumed.exists()
+        and time.monotonic() < deadline
+    ):
         time.sleep(0.02)
     return confirmed
 
@@ -128,6 +132,63 @@ def test_signal_during_dispatch_barrier_rejects_new_worker(
         assert _wait_exit(proc, master) == 128 + signum, _output(proc, master)
         elapsed = time.monotonic() - started
         assert elapsed < 8.25
+    finally:
+        _owned_cleanup(proc, pid_file, master)
+        release.touch()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        (False, signal.SIGTERM),
+        (False, _SIGHUP),
+        (True, signal.SIGTERM),
+        (True, _SIGHUP),
+    ],
+    ids=["headless-term", "headless-hup", "controller-term", "controller-hup"],
+)
+@pytest.mark.parametrize(
+    "barrier_case",
+    [
+        ("_dispatch_if_scheduling_open", "before-admission"),
+        ("_dispatch_batch", "inside-scheduling-lock"),
+    ],
+    ids=["before-admission", "inside-scheduling-lock"],
+)
+def test_signal_exits_while_dispatch_remains_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: tuple[bool, int],
+    barrier_case: tuple[str, str],
+) -> None:
+    interactive, signum = mode
+    method, barrier = barrier_case
+    repo, db, pid_file = _project(tmp_path, monkeypatch)
+    marker = tmp_path / f"{barrier}-entered"
+    release = tmp_path / f"{barrier}-release"
+    resumed = tmp_path / f"{barrier}-resumed"
+    _ = (tmp_path / "sitecustomize.py").write_text(_DISPATCH_BARRIER, encoding="utf-8")
+    monkeypatch.setenv("SHUTDOWN_DISPATCH_METHOD", method)
+    monkeypatch.setenv("SHUTDOWN_DISPATCH_MARKER", str(marker))
+    monkeypatch.setenv("SHUTDOWN_DISPATCH_RELEASE", str(release))
+    monkeypatch.setenv("SHUTDOWN_SIGNAL_RECORDED", str(tmp_path / "signal-recorded"))
+    monkeypatch.setenv("SHUTDOWN_DISPATCH_RESUMED", str(resumed))
+    monkeypatch.setenv("SHUTDOWN_DISPATCH_ADMITTED", str(tmp_path / "admitted"))
+    monkeypatch.setenv("SHUTDOWN_BLOCKED_EXIT", "1")
+    proc, master = _start(repo, pid_file, interactive=interactive, injection=tmp_path)
+    try:
+        _wait_for(marker)
+        started = time.monotonic()
+        os.kill(proc.pid, signum)
+        assert _wait_exit(proc, master) == 128 + signum, _output(proc, master)
+        assert not release.exists(), "dispatch barrier released before CLI exit"
+        assert not resumed.exists(), "admission resumed before CLI exit"
+        assert not pid_file.exists(), "launch passed the shutdown admission barrier"
+        with sqlite3.connect(db) as conn:
+            assert (
+                conn.execute("SELECT 1 FROM nodes WHERE status = 'running'").fetchone() is None
+            ), "dispatch claimed a node after shutdown intent"
+        assert time.monotonic() - started < 8.25
     finally:
         _owned_cleanup(proc, pid_file, master)
         release.touch()

@@ -34,6 +34,7 @@ def test_bounded_stop_propagates_callback_failure() -> None:
 
 def test_supervise_transfers_system_exit_from_run_thread() -> None:
     failure = SystemExit(23)
+    intent = ShutdownIntent()
     outcomes: Queue[BaseException] = Queue(maxsize=1)
 
     def fail_run() -> None:
@@ -41,15 +42,20 @@ def test_supervise_transfers_system_exit_from_run_thread() -> None:
 
     def invoke() -> None:
         try:
-            _ = supervise(fail_run, ShutdownIntent(), lambda deadline: True, "exit-run")
+            _ = supervise(fail_run, intent, lambda deadline: True, "exit-run")
         except BaseException as exc:
             outcomes.put(exc)
 
     caller = Thread(target=invoke, daemon=True)
     caller.start()
-    caller.join(timeout=1)
-    assert not caller.is_alive(), "supervisor waited for an unpublished outcome"
-    assert outcomes.get_nowait() is failure
+    try:
+        caller.join(timeout=1)
+        assert not caller.is_alive(), "supervisor waited for an unpublished outcome"
+        assert outcomes.get_nowait() is failure
+    finally:
+        if caller.is_alive():
+            intent.record(signal.SIGTERM, None)
+            caller.join(timeout=1)
 
 
 def test_supervise_preserves_signal_when_cleanup_raises() -> None:
