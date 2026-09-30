@@ -24,8 +24,8 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_helper import (
     HelperStart,
-    _await_ready,  # pyright: ignore[reportPrivateUsage]
     UnconfirmedHelperExit,
+    _await_ready,  # pyright: ignore[reportPrivateUsage]
     stop_failed_helper,
 )
 from milknado.loop._process_observation import snapshot
@@ -118,8 +118,8 @@ def test_expired_deadline_still_signals_failed_helper(tmp_path: Path) -> None:
             sys.executable,
             "-c",
             "import signal,sys,time; from pathlib import Path; "
-            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
-            "Path(sys.argv[1]).touch(); time.sleep(30)",
+            + "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            + "Path(sys.argv[1]).touch(); time.sleep(30)",
             str(ready),
         ],
         stdout=subprocess.PIPE,

@@ -191,16 +191,20 @@ def test_shutdown_during_takeover_uses_first_deadline(
         after = graph.runs.get_worker(worker.identity.invocation_id)
         assert after is not None and after.ended_at is None
         assert after.ready_generation != after.helper_generation
-        assert after.helper_pid is not None and after.helper_pid != before.helper_pid
+        replacement_pid = after.helper_pid
+        assert replacement_pid is not None and replacement_pid != before.helper_pid
         assert _until(
-            lambda: not psutil.pid_exists(after.helper_pid)
-            or psutil.Process(after.helper_pid).status() == psutil.STATUS_ZOMBIE
+            lambda: (
+                not psutil.pid_exists(replacement_pid)
+                or psutil.Process(replacement_pid).status() == psutil.STATUS_ZOMBIE
+            )
         )
         assert worker.ticket in registry.tickets
     finally:
         release.set()
         if worker.process.poll() is None:
-            _ = worker.shutdown(time.monotonic() + 3)
+            os.killpg(worker.process.pid, signal.SIGKILL)
+        _ = worker.process.wait(timeout=2)
         graph.close()
 
 
