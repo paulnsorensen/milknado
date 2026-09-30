@@ -220,6 +220,13 @@ def test_stale_ready_generation_cannot_replace_current_helper(tmp_path: Path) ->
         after = graph.runs.get_worker(worker.identity.invocation_id)
         assert after is not None and after.ready_generation == 1
         assert after.helper_pid != first.helper_pid
+        assert first.helper_start_token is not None
+        assert not graph.runs.ready_helper(
+            HelperIdentity(
+                worker.identity.invocation_id, 0, first.helper_pid, first.helper_start_token
+            ),
+            after.snapshot_seq,
+        )
         assert worker.process.poll() is None
     finally:
         worker.shutdown(time.monotonic() + 3)
