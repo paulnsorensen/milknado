@@ -183,3 +183,78 @@ def test_shutdown_during_takeover_uses_first_deadline(
         if worker.process.poll() is None:
             worker.shutdown(time.monotonic() + 3)
         graph.close()
+
+
+def test_worker_does_not_execute_before_initial_helper_ready(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, node_id = _graph(tmp_path)
+    marker = tmp_path / "worked"
+    entered, release = threading.Event(), threading.Event()
+    real_start = lifecycle._start_helper
+    owned = []
+
+    def held_start(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_start(*args, **kwargs)
+
+    def launch() -> None:
+        options = SpawnOptions(
+            (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
+            tmp_path,
+            None,
+            False,
+            subprocess.DEVNULL,
+            subprocess.PIPE,
+            subprocess.PIPE,
+        )
+        owned.append(spawn_protected(options, _context(graph, "run-1", node_id)))
+
+    monkeypatch.setattr(lifecycle, "_start_helper", held_start)
+    thread = threading.Thread(target=launch)
+    try:
+        thread.start()
+        assert entered.wait(timeout=4)
+        assert not marker.exists()
+        records = graph.runs.live_workers(run_id="run-1")
+        assert len(records) == 1 and records[0].ready_generation == -1
+        release.set()
+        thread.join(timeout=6)
+        assert not thread.is_alive() and len(owned) == 1
+        assert _until(marker.exists)
+        assert owned[0].process.wait(timeout=3) == 0
+        assert owned[0].finish(timeout=3)
+    finally:
+        release.set()
+        thread.join(timeout=6)
+        for worker in owned:
+            if worker.process.poll() is None:
+                worker.shutdown(time.monotonic() + 3)
+        graph.close()
+
+
+def test_repeated_pre_ready_helper_crashes_use_three_replacements(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, node_id = _graph(tmp_path)
+    worker = spawn_protected(_options(tmp_path), _context(graph, "run-1", node_id))
+    fake = tmp_path / "crashing-helper"
+    fake.write_text("#!/bin/sh\nexit 7\n")
+    fake.chmod(0o700)
+    try:
+        before = graph.runs.get_worker(worker.identity.invocation_id)
+        assert before is not None and before.helper_pid is not None
+        monkeypatch.setattr(lifecycle.sys, "executable", str(fake))
+        os.kill(before.helper_pid, signal.SIGKILL)
+        assert _until(lambda: worker.process.poll() is not None)
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.helper_generation == 3
+        assert record.ready_generation != 3
+        assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
+    finally:
+        if worker.process.poll() is None:
+            worker.shutdown(time.monotonic() + 3)
+        graph.close()
