@@ -97,6 +97,7 @@ class _ReviewCallable(Protocol):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str,
     ) -> ReviewResult: ...
 
 
@@ -938,6 +939,9 @@ class Executor:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
         if not (base_oid := self._base_oid_by_node.get(node.id)):
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
+        graph_run_id = self._worker_run_id_by_node.get(node.id)
+        if graph_run_id is None:
+            raise RuntimeError(f"node {node.id} has no running worker run for review")
         diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
         result: ReviewResult = reviewer(
             config.review_agent,
@@ -945,6 +949,7 @@ class Executor:
             worktree,
             config.project_root,
             timeout_seconds=float(config.review_timeout_seconds),
+            graph_run_id=graph_run_id,
         )
         approved = result.approved
         findings, review_error = result.findings_md.strip(), result.error

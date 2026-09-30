@@ -158,6 +158,10 @@ class _FakeLoop:
         _ = (run_id, timeout)
         return True
 
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
     def list_runs(self) -> list[_FakeRun]:
         return []
 
@@ -213,8 +217,9 @@ class _FakeLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> _FakeReview:
-        _ = (agent, prompt, worktree, project_root, timeout_seconds)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds, graph_run_id)
         return _FakeReview()
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:

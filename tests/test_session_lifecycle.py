@@ -8,12 +8,14 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+import psutil
 import pytest
 
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentRunSpec, OutputLineCallback
 from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
-from milknado.loop._events import OutputStream
 from milknado.loop.sessions import SessionChannel, run_session
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
 
@@ -313,7 +315,9 @@ def test_structured_session_uses_same_protected_worker(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-    context = ProtectionContext(graph.runs, "run-1", graph.db_path)
+    supervisor = psutil.Process()
+    owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
+    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
     invoked: list[str] = []
 
     def launch(options):

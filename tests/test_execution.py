@@ -327,6 +327,10 @@ class FakeLoop:
             self._kill(run_id)
         return self.force_stop_result
 
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
     def list_runs(self) -> list[FakeRun]:
         return []
 
@@ -388,8 +392,9 @@ class FakeLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> FakeReview:
-        _ = (agent, prompt, worktree, project_root, timeout_seconds)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds, graph_run_id)
         return FakeReview()
 
     def generate_loop_md(

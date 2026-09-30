@@ -7,13 +7,21 @@ import sys
 import time
 from pathlib import Path
 
+import psutil
 import pytest
 
 import milknado.loop._process_lifecycle as lifecycle
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import _ResolvedAgentRun, _run_agent_blocking, _run_agent_streaming
 from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
 
+
+def _context(graph: MikadoGraph, node_id: int) -> ProtectionContext:
+    supervisor = psutil.Process()
+    owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
+    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path) -> None:
@@ -26,7 +34,7 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
         tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
     )
     try:
-        worker = spawn_protected(options, ProtectionContext(graph.runs, "run-1", db_path))
+        worker = spawn_protected(options, _context(graph, node.id))
         assert worker.process.stdout is not None
         assert worker.process.stdout.read().strip() == "ready-output"
         assert worker.process.wait(timeout=5) == 0
@@ -41,7 +49,7 @@ def test_blocking_agent_uses_protected_worker_without_changing_output(tmp_path: 
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-    context = ProtectionContext(graph.runs, "run-1", graph.db_path)
+    context = _context(graph, node.id)
     try:
         result = _run_agent_blocking(
             _ResolvedAgentRun(
@@ -62,7 +70,7 @@ def test_streaming_agent_preserves_json_framing(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-    context = ProtectionContext(graph.runs, "run-1", graph.db_path)
+    context = _context(graph, node.id)
     try:
         result = _run_agent_streaming(
             _ResolvedAgentRun(
@@ -88,7 +96,7 @@ def test_dead_lifeline_is_replaced_without_restarting_worker(tmp_path: Path) -> 
             (sys.executable, "-c", "import time; time.sleep(30)"),
             tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
         ),
-        ProtectionContext(graph.runs, "run-1", graph.db_path),
+        _context(graph, node.id),
     )
     try:
         before = graph.runs.get_worker(worker.identity.invocation_id)
@@ -127,7 +135,7 @@ def test_failed_observation_stops_worker_and_keeps_open_marker(
             (sys.executable, "-c", "import time; time.sleep(30)"),
             tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
         ),
-        ProtectionContext(graph.runs, "run-1", graph.db_path),
+        _context(graph, node.id),
     )
     try:
         def fail_observation(_identity):

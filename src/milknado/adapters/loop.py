@@ -10,8 +10,11 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
+import psutil
+
 from milknado.adapters._loop_session import LoopSessionMixin
 from milknado.adapters._loop_types import ReviewVerdict
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
     build_verify_prompt as _build_verify_prompt_impl,
@@ -24,11 +27,13 @@ from milknado.domains.common import (
     ProgressEvent,
     TerminalRunOutcome,
     VerifySpecResult,
+    WorkerOwner,
     build_resume_command,
 )
 from milknado.domains.execution import build_completion_verifier
+from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
-from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
+from milknado.loop._process_lifecycle import ProtectedWorker, ProtectionContext, SpawnOptions, spawn_protected
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData
@@ -42,6 +47,34 @@ _logger = logging.getLogger(__name__)
 
 
 class LoopAdapter(LoopSessionMixin):
+    def _launch_worker(
+        self, options: SpawnOptions, runtime_run_id: str, graph_run_id: str | None
+    ) -> ProtectedWorker:
+        graph = self._graph
+        if graph_run_id is not None:
+            if graph is None:
+                raise RuntimeError("graph run requires graph evidence")
+            run = graph.runs.get(graph_run_id)
+            if run is None or run["status"] != "running":
+                raise RuntimeError("running graph run is required before worker launch")
+            node_id = run["node_id"]
+        else:
+            node_id = None
+        if graph is None:
+            db_path = default_worker_db_path()
+            with open_standalone_worker_evidence(db_path):
+                pass
+        else:
+            db_path = graph.db_path
+        supervisor = psutil.Process()
+        owner = WorkerOwner(
+            runtime_run_id, supervisor.pid, supervisor.create_time(), graph_run_id, node_id
+        )
+        protection = ProtectionContext(
+            LoopWorkerEvidence(db_path), owner, db_path, self._worker_registry
+        )
+        return spawn_protected(options, protection)
+
     def create_run(
         self,
         agent: str,
@@ -84,9 +117,6 @@ class LoopAdapter(LoopSessionMixin):
             timeout=timeout,
             env=env,
         )
-        if self._graph is not None and run_id is not None and os.name != "nt":
-            protection = ProtectionContext(self._graph.runs, run_id, self._graph.db_path, self._worker_registry)
-            config.spawn_worker = lambda options: spawn_protected(options, protection)
         if context is not None:
             config.session_context = context
             if run_id is not None:
@@ -98,6 +128,12 @@ class LoopAdapter(LoopSessionMixin):
                 loop_dir, quality_gates, base_oid=base_oid
             )
         run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
+        if os.name != "nt":
+            if self._graph is not None and run_id is None:
+                raise RuntimeError("graph node run requires a graph run ID")
+            config.spawn_worker = lambda options: self._launch_worker(
+                options, run.state.run_id, run_id
+            )
         if context is not None:
             self._attach_session_sink(run)
         return run
@@ -249,6 +285,8 @@ class LoopAdapter(LoopSessionMixin):
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id
+            if os.name != "nt":
+                config.spawn_worker = lambda options: self._launch_worker(options, run_id, None)
             ev_queue = cast(
                 QueueEmitter,
                 cast(object, local_run.emitter),
@@ -264,9 +302,12 @@ class LoopAdapter(LoopSessionMixin):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
         """Run one bounded, read-only reviewer turn in the pinned worktree."""
         del project_root
+        if self._graph is not None and graph_run_id is None:
+            raise RuntimeError("graph node review requires its running worker run ID")
         import tempfile
 
         with tempfile.TemporaryDirectory(prefix="milknado-review-") as tmpdir:
@@ -288,6 +329,10 @@ class LoopAdapter(LoopSessionMixin):
                 log_dir=worktree / ".loop-logs" / "review",
             )
             run = local_manager.create_run(config, emitter=local_emitter)
+            if os.name != "nt":
+                config.spawn_worker = lambda options: self._launch_worker(
+                    options, run.state.run_id, graph_run_id
+                )
             local_manager.start_run(run.state.run_id)
             return _drain_review_run(local_manager, run.state.run_id, local_queue, timeout_seconds)
 

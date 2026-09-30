@@ -7,14 +7,21 @@ import threading
 import time
 from pathlib import Path
 
+import psutil
 import pytest
 
 import milknado.loop._process_lifecycle as lifecycle
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 
 
+def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> ProtectionContext:
+    supervisor = psutil.Process()
+    owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
+    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
 @pytest.mark.skipif(os.name == "nt", reason="POSIX protected launch is required")
 def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
@@ -26,7 +33,7 @@ def test_registry_stops_active_worker_without_dispatch_thread(tmp_path: Path) ->
             (sys.executable, "-c", "import time; time.sleep(30)"),
             tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
         ),
-        ProtectionContext(graph.runs, "run-1", graph.db_path, registry),
+        _context(graph, node.id, registry),
     )
     try:
         assert registry.stop_all(time.monotonic() + 4)
@@ -66,7 +73,7 @@ def test_registry_abort_covers_popen_returning_after_stop(
                     (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
                     tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
                 ),
-                ProtectionContext(graph.runs, "run-1", graph.db_path, registry),
+                _context(graph, node.id, registry),
             )
         except Exception as exc:
             errors.append(exc)

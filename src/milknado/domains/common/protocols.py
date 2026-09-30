@@ -197,6 +197,7 @@ class LoopPort(Protocol):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewResult: ...
     def verify_spec(
         self,

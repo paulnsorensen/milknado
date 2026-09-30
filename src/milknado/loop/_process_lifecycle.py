@@ -10,16 +10,15 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Protocol
 
 import psutil
 
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
+from milknado.loop._process_contract import ProtectionContext, WorkerEvidence
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
 from milknado.loop._process_identity import terminate_verified as _terminate_verified
-from milknado.loop._process_registry import LaunchTicket, WorkerRegistry
+from milknado.loop._process_registry import LaunchTicket
 
 _log = logging.getLogger(__name__)
 
@@ -40,37 +39,6 @@ def terminate_verified(
     return CleanupResult(not unresolved, unresolved)
 
 
-
-
-class WorkerRecordView(Protocol):
-    invocation_id: str
-    snapshot_seq: int
-    ready_generation: int
-    helper_generation: int
-    helper_pid: int | None
-    helper_start_token: float | None
-    observation_owner: str | None
-    descendants: tuple[Descendant, ...]
-    ended_at: str | None
-
-
-class WorkerEvidence(Protocol):
-    def record_worker(self, run_id: str, worker: WorkerIdentity) -> None: ...
-    def get_worker(self, invocation_id: str) -> WorkerRecordView | None: ...
-    def record_helper(self, helper: HelperIdentity) -> None: ...
-    def begin_worker_observation(self, key: ObservationKey) -> None: ...
-    def commit_worker_observation(
-        self, key: ObservationKey, descendants: tuple[Descendant, ...]
-    ) -> None: ...
-    def end_worker(self, invocation_id: str, snapshot_seq: int) -> None: ...
-
-
-@dataclass(frozen=True, slots=True)
-class ProtectionContext:
-    evidence: WorkerEvidence
-    run_id: str
-    db_path: Path
-    registry: WorkerRegistry | None = None
 
 
 class ProtectedWorker:
@@ -104,37 +72,41 @@ class ProtectedWorker:
     def _abort_protection(self, deadline: float) -> None:
         self._failed = True
         self._close_lifeline()
+        evidence = self._context.evidence.with_deadline(deadline)
         try:
-            record = self._context.evidence.get_worker(self.identity.invocation_id)
+            record = evidence.get_worker(self.identity.invocation_id)
             if record is None or record.ended_at is not None:
                 return
             if record.observation_owner is None and identity_state(
                 self.identity.pid, self.identity.start_token
             ) == "live":
                 try:
-                    _snapshot(self.worker, self._context.evidence)
+                    _snapshot(self.worker, evidence)
                 except (OSError, RuntimeError):
                     pass
-                record = self._context.evidence.get_worker(self.identity.invocation_id)
+                record = evidence.get_worker(self.identity.invocation_id)
                 if record is None:
                     return
             result = terminate_verified(self.identity, record.descendants, deadline, self.process)
             if result.covered_exited and record.observation_owner is None:
-                self._context.evidence.end_worker(self.identity.invocation_id, record.snapshot_seq)
+                evidence.end_worker(
+                    self.identity.invocation_id, record.snapshot_seq, record.helper_generation
+                )
         except (OSError, RuntimeError):
             _log.exception("worker protection cleanup unresolved invocation=%s", self.identity.invocation_id)
 
     def _replace_helper(self) -> bool:
         self._close_lifeline()
         deadline = time.monotonic() + 8
+        evidence = self._context.evidence.with_deadline(deadline)
         while self._launches < 3 and time.monotonic() < deadline and not self._stop.is_set():
             try:
-                record = self._context.evidence.get_worker(self.identity.invocation_id)
+                record = evidence.get_worker(self.identity.invocation_id)
                 if record is None or record.ended_at is not None:
                     return False
                 sequence = record.snapshot_seq
                 if identity_state(self.identity.pid, self.identity.start_token) == "live":
-                    sequence = _snapshot(self.worker, self._context.evidence)
+                    sequence = _snapshot(self.worker, evidence)
                 self._launches += 1
                 helper, write_fd = _start_helper(
                     self.worker, self._context, sequence, record.helper_generation + 1, deadline
@@ -173,20 +145,25 @@ class ProtectedWorker:
             if self._watch.is_alive():
                 self._close_lifeline()
                 return False
+        evidence = self._context.evidence.with_deadline(deadline)
         try:
-            record = self._context.evidence.get_worker(self.identity.invocation_id)
-            if record is None or record.observation_owner is not None:
+            record = evidence.get_worker(self.identity.invocation_id)
+            if record is None:
                 return False
             if record.ended_at is None:
-                if identity_state(self.identity.pid, self.identity.start_token) == "live":
-                    _snapshot(self.worker, self._context.evidence)
-                record = self._context.evidence.get_worker(self.identity.invocation_id)
-                if record is None or record.observation_owner is not None:
+                if record.observation_owner is None and identity_state(
+                    self.identity.pid, self.identity.start_token
+                ) == "live":
+                    _snapshot(self.worker, evidence)
+                record = evidence.get_worker(self.identity.invocation_id)
+                if record is None:
                     return False
                 result = terminate_verified(self.identity, record.descendants, deadline, self.process)
-                if not result.covered_exited:
+                if not result.covered_exited or record.observation_owner is not None:
                     return False
-                self._context.evidence.end_worker(self.identity.invocation_id, record.snapshot_seq)
+                evidence.end_worker(
+                    self.identity.invocation_id, record.snapshot_seq, record.helper_generation
+                )
             if self._ticket is not None:
                 self._ticket.close()
             return True
@@ -208,7 +185,9 @@ class ProtectedWorker:
             _ = self._helper.wait(timeout=max(0, deadline - time.monotonic()))
         except subprocess.TimeoutExpired:
             return False
-        record = self._context.evidence.get_worker(self.identity.invocation_id)
+        record = self._context.evidence.with_deadline(deadline).get_worker(
+            self.identity.invocation_id
+        )
         confirmed = record is not None and record.ended_at is not None
         if confirmed and self._ticket is not None:
             self._ticket.close()
@@ -255,7 +234,8 @@ def _start_helper(
         identity = HelperIdentity(
             worker.identity.invocation_id, generation, helper.pid, psutil.Process(helper.pid).create_time()
         )
-        context.evidence.record_helper(identity)
+        evidence = context.evidence.with_deadline(limit)
+        evidence.record_helper(identity)
         if helper.stdout is None:
             raise RuntimeError("lifeline READY stream missing")
         wait = max(0, limit - time.monotonic())
@@ -266,7 +246,7 @@ def _start_helper(
         )
         if not ready or helper.stdout.readline().strip() != expected:
             raise RuntimeError("lifeline READY mismatch")
-        record = context.evidence.get_worker(worker.identity.invocation_id)
+        record = evidence.get_worker(worker.identity.invocation_id)
         if (
             record is None or record.ended_at is not None
             or record.observation_owner is not None or record.snapshot_seq != sequence
@@ -299,11 +279,13 @@ def spawn_protected(options: SpawnOptions, context: ProtectionContext) -> Protec
         ticket.close()
         raise RuntimeError("worker admission closed during launch")
     recorded = False
+    deadline = time.monotonic() + 8
+    evidence = context.evidence.with_deadline(deadline)
     try:
-        context.evidence.record_worker(context.run_id, worker.identity)
+        evidence.record_worker(context.owner, worker.identity)
         recorded = True
-        sequence = _snapshot(worker, context.evidence)
-        helper, write_fd = _start_helper(worker, context, sequence)
+        sequence = _snapshot(worker, evidence)
+        helper, write_fd = _start_helper(worker, context, sequence, deadline=deadline)
         protected = ProtectedWorker(worker, helper, write_fd, context)
         protected._ticket = ticket
         if ticket is not None:
@@ -316,13 +298,13 @@ def spawn_protected(options: SpawnOptions, context: ProtectionContext) -> Protec
     except Exception:
         worker.close_gate()
         if recorded:
-            record = context.evidence.get_worker(worker.identity.invocation_id)
-            if record is not None and record.observation_owner is None and record.ended_at is None:
-                result = terminate_verified(
-                    worker.identity, record.descendants, time.monotonic() + 3, worker.process
-                )
-                if result.covered_exited:
-                    context.evidence.end_worker(worker.identity.invocation_id, record.snapshot_seq)
+            record = evidence.get_worker(worker.identity.invocation_id)
+            if record is not None and record.ended_at is None:
+                result = terminate_verified(worker.identity, record.descendants, deadline, worker.process)
+                if result.covered_exited and record.observation_owner is None:
+                    evidence.end_worker(
+                        worker.identity.invocation_id, record.snapshot_seq, record.helper_generation
+                    )
         if worker.process.poll() is None:
             _ = worker.process.wait(timeout=3)
         if ticket is not None:

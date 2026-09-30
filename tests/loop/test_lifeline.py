@@ -12,10 +12,13 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.domains.common import HelperIdentity, WorkerIdentity
+from milknado.domains.common import HelperIdentity, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph
 
 
+def _owner(node_id: int) -> WorkerOwner:
+    supervisor = psutil.Process()
+    return WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
 def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
@@ -31,7 +34,7 @@ def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None
         identity = WorkerIdentity(
             "inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time()
         )
-        graph.runs.record_worker("run-1", identity)
+        graph.runs.record_worker(_owner(node.id), identity)
         helper = subprocess.Popen(
             [
                 sys.executable,
@@ -89,7 +92,7 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
     lock = sqlite3.connect(db_path)
     try:
         graph.runs.record_worker(
-            "run-1", WorkerIdentity("inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time())
+            _owner(node.id), WorkerIdentity("inv-1", worker.pid, worker.pid, psutil.Process(worker.pid).create_time())
         )
         helper = subprocess.Popen(
             [sys.executable, "-m", "milknado.adapters._loop_lifeline", str(db_path),

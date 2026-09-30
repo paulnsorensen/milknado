@@ -261,8 +261,9 @@ class _ReviewLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str,
     ) -> ReviewVerdict:
-        _ = project_root
+        _ = project_root, graph_run_id
         self.timeout_seconds_seen.append(timeout_seconds)
         self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
@@ -619,6 +620,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     executor = _executor(graph, tmp_path, loop, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
     executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
+    executor._worker_run_id_by_node[node.id] = "fixture-run-12"  # pyright: ignore[reportPrivateUsage]
     _ = (tmp_path / "LOOP.md").write_text("generated context", encoding="utf-8")
     prompt = build_review_prompt(
         node,
@@ -633,6 +635,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
         node, tmp_path, _config(tmp_path, session_mode="fresh")
     )
     assert "diff from base-oid" in loop.reviews[0][1]
+    _ = executor._worker_run_id_by_node.pop(node.id)  # pyright: ignore[reportPrivateUsage]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="reject", findings_md="finding"
     )
@@ -788,7 +791,9 @@ def test_review_failure_blocks_without_redispatch(
             project_root: Path,
             *,
             timeout_seconds: float,
+            graph_run_id: str,
         ) -> ReviewVerdict:
+            _ = graph_run_id
             raise RuntimeError("review process failed")
 
     executor = _executor(graph, tmp_path, FailingReviewLoop([True]))
@@ -1253,8 +1258,9 @@ class _MalformedReviewLoop(_ReviewLoop):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str,
     ) -> ReviewVerdict:
-        _ = agent, prompt, worktree, project_root, timeout_seconds
+        _ = agent, prompt, worktree, project_root, timeout_seconds, graph_run_id
         return _parse_review_verdict("progress only")
 
 
