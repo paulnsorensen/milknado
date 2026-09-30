@@ -147,6 +147,7 @@ describe('handleShortcutKey', () => {
       graph: null,
       capabilities: capabilities({
         cancel: { available: true, reason: null },
+        host_owner: { available: true, reason: null },
         owner: { available: true, run_id: 'run-1', node_id: 5 },
       }),
     });

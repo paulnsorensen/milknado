@@ -1,22 +1,19 @@
 import type { ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
 import { ownerLabel } from '../../shared/ownerLabel';
+import { ancestorPath } from '../../shared/ancestorPath';
 import type { StreamSnapshot } from '../../features/live-state/runtimeSnapshot';
 import { getState, subscribe } from '../store';
 import type { WireNode } from '../wire';
 
 function rootForNode(nodes: WireNode[], nodeId: number): WireNode | null {
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  const visited = new Set<number>();
-  let node = byId.get(nodeId) ?? null;
-  while (node !== null && node.parent_id !== null) {
-    if (visited.has(node.id)) {
-      return null;
-    }
-    visited.add(node.id);
-    node = byId.get(node.parent_id) ?? null;
-  }
-  return node;
+  const path = ancestorPath(
+    nodes,
+    nodeId,
+    (node) => node.id,
+    (node) => node.parent_id,
+  );
+  return path?.[0] ?? null;
 }
 
 /** The mode kicker and the active root goal title, with a visible root switcher when needed. */

@@ -147,17 +147,21 @@ body {
   text-transform: capitalize;
 }
 
+/* Design-system overrides: adjust vendored component defaults for this
+   shell's layout and truncation needs. */
 .mk-shell .mk-agent-name {
   min-width: 0;
   overflow: hidden;
 }
 
-.mk-shell .mk-agent-name b {
+.mk-shell .mk-agent-name b,
+.mk-agent-roster .mk-agent-name b {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .mk-shell .mk-node-compact .mk-node-title {
   display: -webkit-box;
   overflow: hidden;
@@ -165,6 +169,13 @@ body {
   -webkit-line-clamp: 2;
   text-wrap: balance;
   white-space: normal;
+}
+
+.mk-shell .mk-path-item {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mk-shell .mk-root-switcher {
@@ -181,14 +192,6 @@ body {
 .mk-shell .mk-root-switcher:focus-visible {
   outline: 2px solid var(--mk-accent);
   outline-offset: 2px;
-}
-
-/* Restore the vendor default path-item truncation. */
-.mk-shell .mk-path-item {
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .mk-sidecar-description {
@@ -211,13 +214,6 @@ body {
 }
 
 .mk-rail-row > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mk-agent-roster .mk-agent-name b {
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

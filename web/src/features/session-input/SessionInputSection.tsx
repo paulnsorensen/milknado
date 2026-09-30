@@ -23,13 +23,13 @@ export function SessionInputSection(): ReactElement | null {
   const activeAction = actions.includes(selectedAction) ? selectedAction : firstAllowedAction;
 
   function sendMessage(action: MessageAction): void {
-const text = draft;
-void sendSessionCommand(action, { text }).then((sent) => {
-  if (sent && getDraft() === text) {
-    setDraft('');
+    const text = draft;
+    void sendSessionCommand(action, { text }).then((sent) => {
+      if (sent && getDraft() === text) {
+        setDraft('');
+      }
+    });
   }
-});
-}
 
   function sendSelectedAction(): void {
     if (activeAction === 'interrupt') {

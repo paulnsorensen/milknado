@@ -55,12 +55,12 @@ The empty-state interaction loads the dashboard before selecting a node. The pat
 
 ## Capture protocol
 
-1. Seed the graph with `uv run python tests/browser/seed_dogfood.py --root /tmp/milknado-web-round2`.
+1. Seed the graph with `uv run python scripts/seed_dogfood.py --root /tmp/milknado-web-round2`.
 2. Start `milknado web --project-root /tmp/milknado-web-round2 --port 8787 --no-open`.
 3. Open the printed token URL in Chromium at `1440x900`.
 4. Edit goal node 87 through `milknado_edit_node` and confirm the title and card update without navigation.
-5. Edit failed node 89 through `milknado_edit_node` with the long description used by `tests/browser/capture_dogfood.py`.
-6. Run `uv run python tests/browser/capture_dogfood.py <printed-auth-url>`.
+5. Edit failed node 89 through `milknado_edit_node` with the long description used by `scripts/capture_dogfood.py`.
+6. Run `uv run python scripts/capture_dogfood.py <printed-auth-url>`.
 7. The capture selects root 43, selects the active run, selects failed worker 1, opens Changes, and expands the long description.
 
 ## Additional state checks

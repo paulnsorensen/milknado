@@ -8,6 +8,7 @@ export const SLOT_IDS = [
   'rail-action',
   'rail-section',
   'header-control',
+  'permission-status',
   'status',
   'banner',
   'toolbar',

@@ -8,9 +8,43 @@ import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { ownerLabel } from '../../shared/ownerLabel';
 
+interface StopSchedulingButtonProps {
+  stopAvailable: boolean;
+  stopReason: string | null;
+  activeRunsKnown: boolean;
+}
+
+function StopSchedulingButton({
+  stopAvailable,
+  stopReason,
+  activeRunsKnown,
+}: StopSchedulingButtonProps): ReactElement {
+  const { Button } = Milknado;
+  return (
+    <Button
+      disabled={!stopAvailable || !activeRunsKnown}
+      title={
+        !activeRunsKnown
+          ? 'Run totals are not available yet.'
+          : stopAvailable
+            ? undefined
+            : (stopReason ?? undefined)
+      }
+      onClick={() => {
+        if (!activeRunsKnown) {
+          return;
+        }
+        dispatchAction('scheduling.stop');
+      }}
+    >
+      Stop scheduling
+    </Button>
+  );
+}
+
 export function RunModeHeader(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
-  const { Button, StatusBadge } = Milknado;
+  const { StatusBadge } = Milknado;
   const capabilities = store.capabilities;
 
   if (!capabilities) {
@@ -25,24 +59,11 @@ export function RunModeHeader(): ReactElement | null {
     <div className="mk-button-row">
       <StatusBadge state={isOwner ? 'running' : 'pending'}>{ownerLabel(isOwner).badge}</StatusBadge>
       {isOwner && (
-        <Button
-          disabled={!stop.available || activeRuns === undefined}
-          title={
-            activeRuns === undefined
-              ? 'Run totals are not available yet.'
-              : stop.available
-                ? undefined
-                : (stop.reason ?? undefined)
-          }
-          onClick={() => {
-            if (activeRuns === undefined) {
-              return;
-            }
-            dispatchAction('scheduling.stop');
-          }}
-        >
-          Stop scheduling
-        </Button>
+        <StopSchedulingButton
+          stopAvailable={stop.available}
+          stopReason={stop.reason}
+          activeRunsKnown={activeRuns !== undefined}
+        />
       )}
       {isOwner && !stop.available && <p role="note">{stop.reason}</p>}
     </div>

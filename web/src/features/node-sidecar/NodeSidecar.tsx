@@ -2,36 +2,34 @@
 // path, title, badges) and its run summary. The tab bodies are separate
 // `sidecar-section` contributions (TabSections.tsx) so the tab strip sits
 // between the run summary and the active body.
-import type { ReactElement } from "react";
+import type { ReactElement } from 'react';
 import {
   useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
-} from "react";
+} from 'react';
 import {
   getState,
   selectedNodeId,
   setSelection,
   subscribe,
-} from "../../app/store";
-import { Milknado } from "../../design-system";
-import { toGraphNodes, type GraphNodeData } from "../../app/wire";
-import { toBadgeState } from "./badgeState";
-import { summarizePathTitle } from "./pathTitle";
+} from '../../app/store';
+import { Milknado } from '../../design-system';
+import { toGraphNodes } from '../../app/wire';
+import { toBadgeState } from './badgeState';
+import { SidecarAncestorPath } from './SidecarAncestorPath';
 import {
   getDetailState,
   selectNode,
   subscribeDetail,
   type WireRunRecord,
-} from "../../shared/node-detail";
+} from '../../shared/node-detail';
 import {
   getSelectedReviewId,
   subscribeReviewSelection,
-} from "../goal-review/selection";
-
-const PATH_ITEM_LIMIT = 4;
+} from '../goal-review/selection';
 
 function RunRows({ run }: { run: WireRunRecord }): ReactElement {
   return (
@@ -50,63 +48,11 @@ function RunRows({ run }: { run: WireRunRecord }): ReactElement {
       </div>
       <div className="mk-kv">
         <dt>Completed</dt>
-        <dd>{run.ended_at ?? "none"}</dd>
+        <dd>{run.ended_at ?? 'none'}</dd>
       </div>
     </>
   );
 }
-function ancestorPath(nodes: GraphNodeData[], nodeId: number): GraphNodeData[] {
-  const byId = new Map(nodes.map((node) => [String(node.id), node]));
-  const path: GraphNodeData[] = [];
-  const visited = new Set<string>();
-  let node = byId.get(String(nodeId));
-  while (node && !visited.has(String(node.id))) {
-    path.unshift(node);
-    visited.add(String(node.id));
-    node = node.parent === null ? undefined : byId.get(String(node.parent));
-  }
-  return path;
-}
-
-function AccessibleAncestorPath({
-  nodes,
-  fullNodes,
-  nodeId,
-}: {
-  nodes: GraphNodeData[];
-  fullNodes: GraphNodeData[];
-  nodeId: number;
-}): ReactElement {
-  const pathRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    const path = ancestorPath(fullNodes, nodeId);
-    const visiblePath =
-      path.length > PATH_ITEM_LIMIT
-        ? [path[0], ...path.slice(-(PATH_ITEM_LIMIT - 1))]
-        : path;
-    pathRef.current
-      ?.querySelectorAll<HTMLButtonElement>(".mk-path-item")
-      .forEach((button, index) => {
-        const node = visiblePath[index];
-        if (node) {
-          button.title = node.title;
-          button.setAttribute("aria-label", summarizePathTitle(node.title));
-        }
-      });
-  }, [fullNodes, nodeId]);
-
-  return (
-    <div ref={pathRef} className="mk-path-wrapper">
-      <Milknado.AncestorPath
-        nodes={nodes}
-        id={nodeId}
-        max={PATH_ITEM_LIMIT}
-        onSelect={setSelection}
-      />
-    </div>
-  );
-}
-
 export interface NodeSidecarProps {
   /** Runs on the close button instead of clearing the selection. */
   onClose?: () => void;
@@ -144,7 +90,7 @@ export function NodeSidecar({
       setDescriptionExpandable(title.scrollHeight > title.clientHeight + 1);
     };
     updateExpandable();
-    if (typeof ResizeObserver === "undefined") {
+    if (typeof ResizeObserver === 'undefined') {
       return;
     }
     const observer = new ResizeObserver(updateExpandable);
@@ -164,10 +110,6 @@ export function NodeSidecar({
   }
 
   const nodes = store.snapshot?.graph ? toGraphNodes(store.snapshot.graph) : [];
-  const pathNodes = nodes.map((node) => ({
-    ...node,
-    title: summarizePathTitle(node.title),
-  }));
   const runs = detail?.runs.items ?? [];
   const errors = runs
     .filter(
@@ -178,18 +120,14 @@ export function NodeSidecar({
   return (
     <div className="mk-stack">
       <div className="mk-sidecar-head">
-        <AccessibleAncestorPath
-          nodes={pathNodes}
-          fullNodes={nodes}
-          nodeId={nodeId}
-        />
+        <SidecarAncestorPath nodes={nodes} nodeId={nodeId} />
         <Button
           icon
           className="mk-btn-ctl"
           ariaLabel="Close the sidecar"
           onClick={onClose ?? (() => setSelection(null))}
         >
-          {"×"}
+          {'×'}
         </Button>
       </div>
       <div className="mk-sidecar-description">
@@ -197,11 +135,11 @@ export function NodeSidecar({
           ref={descriptionRef}
           className={
             descriptionExpanded
-              ? "mk-sidecar-title is-expanded"
-              : "mk-sidecar-title"
+              ? 'mk-sidecar-title is-expanded'
+              : 'mk-sidecar-title'
           }
         >
-          {detail?.description ?? ""}
+          {detail?.description ?? ''}
         </h2>
         {descriptionExpandable && (
           <button
@@ -211,8 +149,8 @@ export function NodeSidecar({
             onClick={() => setDescriptionExpanded((expanded) => !expanded)}
           >
             {descriptionExpanded
-              ? "Collapse description"
-              : "Expand description"}
+              ? 'Collapse description'
+              : 'Expand description'}
           </button>
         )}
       </div>

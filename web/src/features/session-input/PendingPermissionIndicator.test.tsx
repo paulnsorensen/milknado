@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { resetStore, setSelection, setSnapshot } from '../../app/store';
+import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
 import { PendingPermissionIndicator } from './PendingPermissionIndicator';
 
 function snapshotWithPermissions(
@@ -67,6 +67,16 @@ describe('PendingPermissionIndicator', () => {
     expect(screen.getByRole('status', { name: 'Pending permission requests' })).toHaveTextContent(
       'Permission requested',
     );
+  });
+
+  it('renders the badge as a button labelled with the owner node and selects it on click', () => {
+    setSnapshot(snapshotWithPermissions(['perm-1'], { run_id: 'run-1', node_id: 7 }));
+
+    render(<PendingPermissionIndicator />);
+    const button = screen.getByRole('button', { name: 'Permission requested · node 7' });
+    button.click();
+
+    expect(getState().selection).toBe(7);
   });
 
   it('hides pending permission requests when the owner run id is selected', () => {

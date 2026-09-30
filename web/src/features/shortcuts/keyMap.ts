@@ -176,7 +176,10 @@ export const KEY_BINDINGS: Shortcut[] = [
     label: 'G',
     description: 'Queue the guidance draft',
     column: 'Runs',
-    run: gated((c) => c.session_input.available, 'session.queue-guidance'),
+    run: gated(
+      (c) => c.session_input.available && canActOnSelectedRun(getState()),
+      'session.queue-guidance',
+    ),
   },
   {
     key: 'x',
