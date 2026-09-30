@@ -14,6 +14,7 @@ from typing import cast
 import psutil
 import pytest
 
+from milknado.app._shutdown import STOP_TIMEOUT_SECONDS
 from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig, save_config
 from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
@@ -250,6 +251,31 @@ import subprocess
 import time
 from pathlib import Path
 
+from milknado.app import _shutdown
+
+_first_signal_at = None
+_original_record = _shutdown.ShutdownIntent.record
+_original_bounded_stop = _shutdown.bounded_stop
+
+
+def _record(self, signum, frame):
+    global _first_signal_at
+    _original_record(self, signum, frame)
+    if _first_signal_at is None:
+        _first_signal_at = self.started_at
+
+
+def _timed_bounded_stop(stop, deadline):
+    result = _original_bounded_stop(stop, deadline)
+    completed_at = time.monotonic()
+    timing = Path(os.environ["SHUTDOWN_CLEANUP_TIMING"])
+    if _first_signal_at is not None and not timing.exists():
+        timing.write_text(f"{_first_signal_at!r} {deadline!r} {completed_at!r}")
+    return result
+
+
+_shutdown.ShutdownIntent.record = _record
+_shutdown.bounded_stop = _timed_bounded_stop
 _original_popen = subprocess.Popen
 
 class _BlockedPopen(_original_popen):
@@ -276,21 +302,24 @@ def test_cli_exits_while_worker_popen_is_blocked(
     repo, db, pid_file = _project(tmp_path, monkeypatch)
     marker = tmp_path / "popen-entered"
     release = tmp_path / "popen-release"
+    timing = tmp_path / "cleanup-timing"
     _ = (tmp_path / "sitecustomize.py").write_text(_SPAWN_BARRIER, encoding="utf-8")
     monkeypatch.setenv("SHUTDOWN_SPAWN_MARKER", str(marker))
     monkeypatch.setenv("SHUTDOWN_SPAWN_RELEASE", str(release))
+    monkeypatch.setenv("SHUTDOWN_CLEANUP_TIMING", str(timing))
     proc, master = _start(repo, pid_file, interactive=interactive, injection=tmp_path)
     try:
         _wait_for(marker)
-        started = time.monotonic()
         os.kill(proc.pid, signum)
         assert _wait_exit(proc, master) == 128 + signum, _output(proc, master)
-        elapsed = time.monotonic() - started
+        assert timing.exists(), "bounded cleanup did not report completion"
+        signal_at, deadline, completed_at = map(float, timing.read_text().split())
+        assert deadline == signal_at + STOP_TIMEOUT_SECONDS
+        assert completed_at - signal_at < STOP_TIMEOUT_SECONDS + 0.25
         assert not pid_file.exists(), "worker command ran after shutdown intent"
         with sqlite3.connect(db) as conn:
             rows = conn.execute("SELECT status FROM nodes WHERE status = 'running'").fetchall()
         assert rows, "unresolved launch released graph ownership"
-        assert elapsed < 8.25
     finally:
         _owned_cleanup(proc, pid_file, master)
         release.touch()
