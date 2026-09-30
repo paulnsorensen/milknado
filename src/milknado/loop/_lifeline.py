@@ -86,6 +86,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
         return 1
     assert record is not None
     worker = _worker(record)
+    durable_targets = record.descendants
     if record.observation_owner is None:
         key = ObservationKey(
             helper.invocation_id,
@@ -99,6 +100,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
             store.begin(key)
             observed = observe_descendants(worker)
             store.commit(key, observed)
+            durable_targets += observed
         except (OSError, RuntimeError, sqlite3.OperationalError, TimeoutError) as exc:
             _log.warning(
                 "lifeline observation unresolved invocation=%s: %s", helper.invocation_id, exc
@@ -109,6 +111,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
         current = store.get(helper.invocation_id)
     except (sqlite3.OperationalError, TimeoutError) as exc:
         _log.warning("lifeline evidence unavailable: %s", exc)
+        _ = terminate_verified(worker, durable_targets, deadline)
         return 1
     if not _current(current, helper):
         return 1
