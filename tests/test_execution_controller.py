@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from milknado.app.run import (
     RunActionAvailability,
 )
 from milknado.app.run_source import NodeSnapshotRequest
+from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch import WatchSnapshotSource
 from milknado.domains.common import (
     MilknadoConfig,
@@ -282,6 +284,40 @@ def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
     assert caught.value.signum == signal.SIGTERM
     assert monotonic() - start < 1.0
     assert loop.force_stop_deadlines == [intent.deadline(8.0)]
+
+
+@pytest.mark.asyncio
+async def test_tui_quit_force_stops_real_controller_before_exit() -> None:
+    started = Event()
+    released = Event()
+    stopped = Event()
+
+    class BlockingLoop(FakeLoop):
+        @override
+        def run(self, **kwargs: object) -> str:
+            del kwargs
+            started.set()
+            assert released.wait(3.0)
+            return "result"
+
+        @override
+        def force_stop_active(self, deadline: float) -> bool:
+            self.force_stop_deadlines.append(deadline)
+            stopped.set()
+            released.set()
+            return True
+
+    loop = BlockingLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    app = ExecutionApp(controller, feature_branch="feature")
+    async with app.run_test(size=(120, 36)) as pilot:
+        assert await asyncio.to_thread(started.wait, 2.0)
+        await pilot.press("q", "y")
+        assert await asyncio.to_thread(stopped.wait, 2.0)
+        assert loop.stop_scheduling_calls == 0
+        assert len(loop.force_stop_deadlines) == 1
 
 
 def test_project_and_watch_snapshots_share_pending_goal_review_filter(tmp_path: Path) -> None:
