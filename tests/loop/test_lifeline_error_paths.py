@@ -45,6 +45,8 @@ def test_lifeline_read_failure_retains_live_worker_record(
         with WorkerEvidenceStore(graph.db_path) as store:
             assert _cleanup(store, helper, time.monotonic() + 1) == 1
         assert worker.poll() is None
+        record = graph.runs.get_worker("inv-1")
+        assert record is not None and record.ended_at is None
     finally:
         if worker.poll() is None:
             os.killpg(worker.pid, signal.SIGKILL)
