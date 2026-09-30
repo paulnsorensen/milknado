@@ -609,6 +609,32 @@ def test_state_collects_configured_projection_facts(
     assert snapshot.stalled is False
 
 
+def test_state_uses_configured_stall_threshold(
+    graph: MikadoGraph, executor: Executor, fake_loop: FakeLoop
+) -> None:
+    run_loop = RunLoop(
+        executor=executor,
+        graph=graph,
+        loop=fake_loop,
+        config=MilknadoConfig(stall_threshold_seconds=60),
+    )
+    root = graph.add_node("ship controller")
+    leaf = graph.add_node("build snapshots", parent_id=root.id)
+    graph.mark_running(leaf.id)
+    _active(run_loop)["run-1"] = leaf.id
+    _dispatched_at(run_loop)["run-1"] = 100.0
+
+    with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=159.0):
+        before = run_loop.state().active_runs[0]
+    with patch("milknado.domains.execution.run_loop.time.monotonic", return_value=160.0):
+        at_threshold = run_loop.state().active_runs[0]
+
+    assert before.progress_pct is None
+    assert before.stalled is False
+    assert at_threshold.progress_pct is None
+    assert at_threshold.stalled is True
+
+
 def test_terminal_run_duration_seconds_from_stopped_completion(
     run_loop: RunLoop, graph: MikadoGraph, fake_loop: FakeLoop
 ) -> None:
