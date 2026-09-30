@@ -377,7 +377,7 @@ def build_execution_controller(
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
-    _ = reconcile_orphaned_runs(graph)
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     loop_adapter = LoopAdapter(graph=graph)
     executor = Executor(
         graph=graph,
@@ -410,7 +410,7 @@ def run_execution_loop(
     from milknado.domains.dispatch import reconcile_orphaned_runs
     from milknado.domains.execution import Executor, RunLoop
 
-    _ = reconcile_orphaned_runs(graph)
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     git = GitAdapter(project_root)
     loop_adapter = LoopAdapter(graph=graph)
     crg = CrgAdapter(project_root)
@@ -581,7 +581,9 @@ def run_inline_start(
     node = _require_task_node(graph, request.node_id)
     run_id = make_run_id(request.node_id)
     if node.status == NodeStatus.RUNNING:
-        reclaim_stale_node(graph, request.node_id, fence_run_id=node.run_id)
+        reclaim_stale_node(
+            graph, request.node_id, fence_run_id=node.run_id, process=ProcessAdapter()
+        )
     profile = resolve_flavor_profile(cfg, node.flavor)
     brief = render_brief(
         graph,

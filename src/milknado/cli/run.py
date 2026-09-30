@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
+from milknado.adapters import ProcessAdapter
 from milknado.cli._helpers import (
     DEFAULT_PROJECT_ROOT,
     typer_argument,
@@ -227,7 +228,7 @@ def _run(options: RunCommandOptions) -> None:
 
         interactive = _is_interactive_terminal()
         if not interactive:
-            _ = reconcile_orphaned_runs(graph)
+            _ = reconcile_orphaned_runs(graph, ProcessAdapter())
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
