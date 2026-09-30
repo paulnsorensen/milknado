@@ -156,7 +156,6 @@ class SlotLease(Protocol):
 
     def release(self) -> None:
         """Free the slot. Calling it again is a no-op."""
-        ...
 
 
 class HostCapacityPort(Protocol):

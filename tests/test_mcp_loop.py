@@ -641,6 +641,67 @@ def test_runner_fails_closed_when_no_quality_gates(tmp_path: Path) -> None:
     assert state["detail"] == (f"QualityGatesNotConfigured: {NO_GATES_CONFIGURED_MESSAGE}")
 
 
+def test_runner_defers_and_returns_node_to_pending_when_host_pool_is_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full host-wide pool sends the claimed node back to PENDING with the pool detail."""
+    from datetime import UTC, datetime
+
+    import milknado.adapters as adapters
+    from milknado.domains.graph import HostCapacityFull
+    from milknado.mcp import _loop_node_runner
+
+    root = str(tmp_path)
+    node_id = _call(milknado_todo_add, description="task", kind="task", project_root=root)["id"]
+    run_id = f"node-{node_id}-20260101T000000Z-full"
+    now = datetime.now(UTC).isoformat()
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        assert graph.claim_node(node_id, run_id, now=now)
+        graph.runs.start(
+            run_id,
+            node_id,
+            str(tmp_path / ".milknado" / "runs" / f"{run_id}.log"),
+            now,
+            10,
+            None,
+        )
+    finally:
+        graph.close()
+
+    def _full(*_args: object, **_kwargs: object) -> object:
+        raise HostCapacityFull(3, 3)
+
+    monkeypatch.setattr(adapters, "FlockSlotPool", _full)
+
+    rc = _loop_node_runner.main(
+        [
+            "--node-id",
+            str(node_id),
+            "--project-root",
+            root,
+            "--run-id",
+            run_id,
+            "--target-branch",
+            "main",
+            "--base-oid",
+            "test-base",
+        ]
+    )
+
+    assert rc == 75
+    state = _read_run(tmp_path, run_id)
+    assert state["status"] == "failed"
+    assert "deferred: host worker pool full" in (state["detail"] or "")
+    graph, _cfg = open_graph(tmp_path)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
+
+
 def test_runner_writes_done_on_successful_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -38,6 +38,7 @@ from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull, Mi
 from milknado.mcp.loop import milknado_run_loop_start
 from milknado.mcp.run import milknado_run_inline, milknado_run_inline_start
 from milknado.mcp.todo_mutate import milknado_todo_add
+from milknado.project import load_project_config
 from tests.test_execution import FakeCrg, FakeGit, FakeLoop
 
 _HOLDER = (
@@ -147,6 +148,40 @@ class TestSlotPool:
         assert not _free()
         holder.kill()
         assert _wait_free()
+
+    def test_win32_platform_disables_the_pool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(sys, "platform", "win32")
+        pool = FlockSlotPool(1)
+        lease = pool.acquire("r1", 1, Path("/a"))
+        assert pool.holders() == []
+        lease.release()
+
+    def test_holders_reports_empty_body_for_unreadable_slot(
+        self, holders: list[_Holder], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _ = _hold(holders, 1)
+
+        def _bad_json(*_args: object, **_kwargs: object) -> object:
+            raise ValueError("invalid json")
+
+        monkeypatch.setattr(json, "loads", _bad_json)
+        assert FlockSlotPool(1).holders() == [{}]
+
+    def test_acquire_closes_fd_and_frees_the_slot_when_the_body_write_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pool = FlockSlotPool(1)
+
+        def _boom(*_args: object, **_kwargs: object) -> int:
+            raise OSError("ENOSPC")
+
+        with monkeypatch.context() as patched:
+            patched.setattr(os, "pwrite", _boom)
+            with pytest.raises(OSError):
+                _ = pool.acquire("r1", 1, Path("/a"))
+
+        lease = pool.acquire("r1", 1, Path("/a"))
+        lease.release()
 
 
 def _executor(root: Path, limit: int) -> tuple[Executor, MikadoGraph, FakeLoop, ExecutionConfig]:
@@ -438,6 +473,15 @@ class TestHostWorkerLimitConfig:
         _write_global("[milknado]\nhost_worker_limit = 0\n")
         with pytest.raises(ValueError, match="host_worker_limit"):
             _ = load_config(_project_config(tmp_path, ""))
+
+    def test_global_value_applies_with_inherit_global_false(self, tmp_path: Path) -> None:
+        _write_global("[milknado]\nhost_worker_limit = 3\n")
+        config = load_config(_project_config(tmp_path, "inherit_global = false\n"))
+        assert config.host_worker_limit == 3
+
+    def test_global_value_applies_with_no_project_toml(self, tmp_path: Path) -> None:
+        _write_global("[milknado]\nhost_worker_limit = 3\n")
+        assert load_project_config(tmp_path).host_worker_limit == 3
 
 
 class TestNestingGuard:

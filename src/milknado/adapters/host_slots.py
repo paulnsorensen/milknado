@@ -58,10 +58,6 @@ class FlockSlotPool:
     def directory(self) -> Path:
         return self._dir
 
-    @property
-    def limit(self) -> int:
-        return self._limit
-
     def acquire(self, run_id: str, node_id: int, project_root: Path) -> SlotLease:
         if sys.platform == "win32":
             _logger.warning("host worker pool is disabled: the platform has no flock")
@@ -87,8 +83,12 @@ class FlockSlotPool:
             except OSError:
                 os.close(fd)
                 continue
-            os.ftruncate(fd, 0)
-            _ = os.pwrite(fd, body, 0)
+            try:
+                os.ftruncate(fd, 0)
+                _ = os.pwrite(fd, body, 0)
+            except OSError:
+                os.close(fd)
+                raise
             return _FlockLease(fd)
         raise HostCapacityFull(self._limit, self._limit)
 

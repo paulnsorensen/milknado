@@ -316,7 +316,17 @@ def default_config(project_root: Path) -> MilknadoConfig:
         execution_agent=resolve_execution_agent_command("claude"),
         project_root=project_root,
         db_path=project_root / ".milknado" / "milknado.db",
+        host_worker_limit=decode_milknado_section(_global_only_overrides()).host_worker_limit,
     )
+
+
+def _global_only_overrides() -> dict[str, object]:
+    """Read host-wide keys from the global config file, independent of inherit_global."""
+    global_path = global_config_path()
+    if not global_path.exists():
+        return {}
+    global_raw = _read_milknado_section(global_path)
+    return {key: global_raw[key] for key in _GLOBAL_ONLY_KEYS if key in global_raw}
 
 
 def global_config_path() -> Path:
@@ -364,6 +374,11 @@ def load_config_details(path: Path, *, include_global: bool = True) -> LoadedCon
             _clear_prompts_alternate_keys(global_raw, local_raw)
             raw = _merge(raw, global_raw)
             record_origins(origins, global_raw, f"global:{global_path}")
+    elif include_global:
+        global_only = _global_only_overrides()
+        if global_only:
+            raw = _merge(raw, global_only)
+            record_origins(origins, global_only, f"global:{global_config_path()}")
 
     for flavor in replaced_flavors:
         flavors = raw.get("flavor")
