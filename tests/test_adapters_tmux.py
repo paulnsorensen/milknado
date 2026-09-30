@@ -166,6 +166,39 @@ def test_ensure_session_raises_when_default_shell_pin_fails(
         TmuxAdapter(tmp_path).ensure_session()
 
 
+def _capture_argvs(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    argvs: list[list[str]] = []
+
+    def _fake(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        argvs.append(cmd)
+        return _completed(1 if "has-session" in cmd else 0)
+
+    monkeypatch.setattr(subprocess, "run", _fake)
+    return argvs
+
+
+def test_ensure_session_starts_window_zero_with_bin_sh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No command means tmux starts the user's login shell as window 0."""
+    argvs = _capture_argvs(monkeypatch)
+    TmuxAdapter(tmp_path).ensure_session()
+    created = [a for a in argvs if "new-session" in a]
+    assert len(created) == 1
+    assert created[0][-1] == "/bin/sh"
+
+
+def test_run_passes_config_file_only_when_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    argvs = _capture_argvs(monkeypatch)
+    _ = TmuxAdapter(tmp_path)._run(["list-windows"])  # pyright: ignore[reportPrivateUsage]
+    with_config = TmuxAdapter(tmp_path, config_path=Path("/dev/null"))
+    _ = with_config._run(["list-windows"])  # pyright: ignore[reportPrivateUsage]
+    assert argvs[0] == ["tmux", "list-windows"]
+    assert argvs[1] == ["tmux", "-f", "/dev/null", "list-windows"]
+
+
 def test_window_exists_is_exact_not_prefix(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -304,12 +337,19 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     # leak into the worker (env -i isolation — the security invariant).
     monkeypatch.setenv("LEAKY_SECRET", "should-not-reach-worker")
     socket = Path("/tmp") / f"milknado-{tmp_path.name}.sock"
-    adapter = TmuxAdapter(tmp_path, socket_path=socket)
+    # /dev/null keeps the user's ~/.tmux.conf (zsh panes) out of the test server.
+    adapter = TmuxAdapter(tmp_path, socket_path=socket, config_path=Path("/dev/null"))
     rdir = tmp_path / "runs"
     rdir.mkdir()
     try:
         adapter.ensure_session()
         adapter.ensure_session()  # idempotent — reuses, never duplicates
+        target = f"={session_name_for(tmp_path)}:0"
+        window_zero = adapter._run(  # pyright: ignore[reportPrivateUsage]
+            ["list-panes", "-t", target, "-F", "#{pane_start_command}"]
+        )
+        # /bin/sh is bash on macOS, so pane_current_command cannot tell them apart.
+        assert window_zero.stdout.strip().strip('"') == "/bin/sh"
 
         # Success: output (with ONLY the injected env) lands in the log, exit
         # code in the rc file, and the window cleans itself up.
