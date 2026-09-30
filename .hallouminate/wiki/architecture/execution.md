@@ -147,6 +147,16 @@ run_id, status)` (atomic `WHERE run_id=? AND status='running'`) and returns
 whether the write landed; with no `run_id` (legacy/test) it transitions
 unconditionally. Duration is recorded only when the write actually landed.
 
+`NodeExecutionContext` replaces eight parallel per-node maps.
+It keeps worker identity distinct from an adopted parent owner fence.
+The record also holds the worktree, session, pinned target, base OID, review round, and configuration.
+Pure review policy returns allow-merge, redispatch, or block decisions.
+Executor retains worker calls, graph transactions, notifications, and Git effects.
+Review audit precedes merge; audit failure or reviewer error blocks merge.
+Notification failure remains separate from audit failure.
+Review redispatch retains the worktree, session, owner fence, and capacity slot.
+Terminal replay returns before merge, and unconfirmed cleanup preserves ownership and the worktree.[^deep-module-implementation]
+
 ## Fail-closed worktree teardown
 
 Teardown refuses to destroy work by default; destruction is an explicitly
@@ -200,8 +210,18 @@ Review redispatch retains node ownership and therefore retains one capacity slot
 `PreservedWorkerRun` carries the worker identity and current owner fence through post-start failures.
 The fence must update after `replace_run_id`; otherwise confirmed cleanup cannot release the reservation.
 Shared completion treats an unrebased result as failure, not detached success.
-The private `run_loop/_node.py` module supplies the shared driver methods through `NodeDriverMixin`.
-This change does not add child-process recovery tracking after an unexpected supervisor kill.
+The private `run_loop/_node.py` module supplies `NodeDriver` with an explicit `CompletionContext`.
+It no longer shares state through a whole-RunLoop protocol or mixin.
+Durable worker records now support identity-verified recovery after supervisor death.[^deep-module-implementation]
+
+`RunLoop.state()` collects bounded immutable facts and one timestamp.
+The pure projection computes presentation values without graph reads, process calls, or clock reads.
+`Scheduler` owns active runs, attempts, progress, terminal history, counters, and local admission decisions.
+Its private lock keeps snapshots coherent with concurrent completion and abandonment.
+That lock contains only local state operations, never graph, process, or caller effects.
+Graph claims remain authoritative; typed scheduler decisions only request effects.
+The separate scheduling lock protects stop and dispatch admission.
+Force-stop does not wait for that scheduling lock.[^deep-module-implementation]
 
 ## Controller authorization boundary
 
@@ -355,8 +375,51 @@ The engine trusts the native completion flag and still runs its completion verif
 The verifier requires a committed or stageable change and the configured quality gates.
 A completion promise alone does not complete a task (`src/milknado/domains/execution/completion.py:22`).
 
-The runtime bounds protocol frames and retained output. It retains the process group after the leader exits.
-Normal completion, timeout, and force stop all clean up descendants (`src/milknado/loop/sessions/_process.py:70`).
+The runtime bounds protocol frames and retained output. On POSIX, it retains the process group after the leader exits.
+Normal completion, timeout, and force stop use the shared lifecycle boundary.
+Cleanup targets owned groups and identity-verified observed descendants, subject to the limits below.[^deep-module-implementation]
+
+Generic and native worker paths do not have identical Windows containment.
+Generic workers use a kill-on-close Windows Job Object; native sessions currently use direct process termination.
+A shared lifecycle refactor must preserve these platform differences rather than assume equivalent descendant cleanup.[^worker-process-boundaries]
+
+The P0 implementation now enforces design decision F-8, accepted on 2026-09-29.
+It provides bounded cleanup of owned groups and identity-verified observed descendants, not strict containment.
+Unobserved descendants that detach between snapshots can escape cleanup; the user explicitly accepts that limit.
+Known unconfirmed targets still prevent ownership release and a confirmed-cleanup result.
+F-7 now selects one cleanup lifeline per active worker invocation, not a shared guardian.
+This adds one helper per worker but isolates cleanup ownership and failures.
+Supervisor, lifeline, and actual worker identities remain distinct; lifeline exit cannot prove worker exit.
+F-9 refuses ambiguous kills when a recorded leader is dead and surviving group ownership cannot be verified.
+Cleanup stops verified targets only; unresolved identity preserves node ownership and produces a recovery diagnostic.
+Historical group numbers and recycled leader identities do not prove cleanup completed.
+F-5 closes admission when shutdown is recorded and includes launches already in progress in bounded cleanup.
+An in-flight launch may create a process after signal arrival; it remains tracked under the same cleanup deadline.
+Handlers must not acquire application locks; normal control flow performs cleanup.
+F-10 selects replacement when a lifeline dies unexpectedly while its supervisor survives.
+The implementation keeps worker parentage, protocol streams, and exit collection in the supervisor runtime.
+Replacement transfers monitoring and cleanup responsibility, not the worker's operating-system parentage.
+The replacement must retain worker identity and descendant evidence and reject stale helper acknowledgments.
+F-11 accepts the two-failure limit: automatic cleanup is not guaranteed if the supervisor dies before a failed lifeline's replacement becomes ready.
+Durable records remain for later recovery; confirmed replacement readiness restores protection for the current invocation.
+This design adds no independent backup cleanup owner.
+F-12 stops the worker when lifeline replacement keeps failing; replacement does not continue indefinitely.
+The supervisor performs verified cleanup without depending on the failed lifeline and escalates to SIGKILL when necessary.
+Confirmed cleanup fails only the affected run; unconfirmed exit preserves ownership and recovery records.
+The shared private lifecycle boundary owns launch protection, lifeline replacement, and cleanup.
+Durable ownership covers graph-backed, reviewer, verifier, standalone, and raw-manager loop workers without synthetic graph nodes.
+An exec gate releases user work only after durable worker identity and initial lifeline readiness.
+READY binds the durable snapshot sequence after EOF monitoring is armed.
+Observation-in-progress markers preserve unresolved coverage when discovery or persistence fails.
+A replacement can launch at most three times per invocation, within an eight-second episode.
+Successful replacement does not reset that attempt count or the first shutdown deadline.
+Real-process, SQLite, and Git tests validate these boundaries; Windows parity remains unverified.
+The scheduler, projection, review policy, and node-context refactors preserve this lifecycle boundary.[^bounded-orphan-cleanup][^deep-module-implementation]
+
+[^bounded-orphan-cleanup]: Durable spec `reap-orphaned-loop-workers.md`, Decisions F-5/F-7–F-12, Acceptance AC-6/AC-9/AC-12–AC-18; user selections in the 2026-09-29 design dialogue.
+
+[^native-process-containment]: src/milknado/loop/sessions/_process.py:171-202,255-286
+[^worker-process-boundaries]: src/milknado/loop/_agent.py:190-235,786-800; src/milknado/loop/sessions/_process.py:171-192,255-286
 
 
 
@@ -626,7 +689,11 @@ sentinel.
 ## Key files
 
 - `src/milknado/domains/execution/executor.py` — `Executor`, `WorktreeManager`, dispatch/complete state machine, fencing.
-- `src/milknado/domains/execution/run_loop/__init__.py` — `RunLoop` scheduling and presentation state.
+- `src/milknado/domains/execution/run_loop/__init__.py` — `RunLoop` orchestration, fact collection, and effects.
+- `src/milknado/domains/execution/run_loop/_scheduler.py` — synchronized local state and typed dispatch decisions.
+- `src/milknado/domains/execution/run_loop/_projection.py` and `state.py` — pure projection and immutable facts.
+- `src/milknado/domains/execution/_node_context.py` and `_review_policy.py` — per-node facts and pure review decisions.
+- `src/milknado/loop/_process_lifecycle.py` — protected worker lifetime, helper replacement, and bounded cleanup.
 - `src/milknado/domains/execution/run_loop/_node.py` — bounded `run_node` driver and shared terminal, timeout, and stop handling.
 - `src/milknado/domains/execution/_models.py` — execution results and typed dispatch failures.
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (shared worker context and result-deposit instructions).
@@ -642,4 +709,6 @@ sentinel.
 - `src/milknado/mcp/loop.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
 - `src/milknado/mcp/_core.py` — `RunDict` unified run-result schema, the shared `FastMCP` instance, and the `resolve_project_root` / `open_graph` / status-kind-flavor parsers. (The goal-claim fencing this module once held now lives on `MikadoGraph.claim_ancestor_goal_for_dispatch`; see `domains/graph/`.)
 
-_Source: PR #488; `execution/run_loop/__init__.py`, `graph/_transitions.py`, `app/loop.py`, and `mcp/_loop_node_runner.py` · Updated: 2026-09-29 · Supersedes: separate headless lifecycle and per-path concurrency checks._
+[^deep-module-implementation]: P0 `ad0110b`, P1 `cae3a54`, P2 `568c45e`, P3 `95862f8`; `loop/_process_lifecycle.py:85-198`, `execution/run_loop/_scheduler.py:73-165`, `execution/run_loop/_projection.py:64-78`, and `execution/_node_context.py:32-42`. Per-unit `just check-llm` gates pass. Runtime coverage includes `tests/loop/test_lifecycle_acceptance.py`, `tests/test_orphan_worker_recovery.py`, `tests/test_run_loop_scheduler.py`, and `tests/test_adversarial_review_runtime.py`.
+
+_Source: PR #488 and the verified deep-module commits cited above · Updated: 2026-09-30 · Supersedes: pending orphan-worker implementation, absent durable recovery, shared driver mixin, and combined scheduling/presentation ownership. The accepted F-5/F-7–F-12 limits remain._

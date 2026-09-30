@@ -28,3 +28,9 @@
 
 2026-09-29 · 17364b51573ac784 · merged · gotchas/campaign-dogfood-2026-09.md · Record PR 483 concern boundaries and historical versus matched TUI evidence limits. Exact and natural retrieval probes return the page at rank 1.
 
+
+2026-09-30 · b005bb13168379a8 · merged · architecture/execution.md · Replace pending worker-recovery claims with verified lifecycle behavior. Preserve accepted containment and double-failure limits. Record pure projection, synchronized scheduler, node context, and review policy.
+
+
+2026-09-30 · b005bb13168379a8 · merged · domain-model.md · Map Supervisor to host ownership, Worker invocation to its stable identity, Lifeline to its runtime, Covered targets to verified cleanup, and Confirmed cleanup to exit checks. Preserve canonical terms and accepted limits.
+
