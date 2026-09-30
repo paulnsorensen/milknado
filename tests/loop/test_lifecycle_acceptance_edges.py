@@ -249,7 +249,8 @@ def test_worker_does_not_execute_before_initial_helper_ready(
         assert not thread.is_alive() and len(owned) == 1
         assert _until(marker.exists)
         assert owned[0].process.wait(timeout=3) == 0
-        assert owned[0].finish(timeout=3)
+        confirmed = owned[0].cleanup()
+        assert confirmed
     finally:
         release.set()
         thread.join(timeout=6)

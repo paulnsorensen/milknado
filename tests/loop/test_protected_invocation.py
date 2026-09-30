@@ -55,7 +55,8 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
         assert worker.process.stdout is not None
         assert cast(TextIO, worker.process.stdout).read().strip() == "ready-output"
         assert worker.process.wait(timeout=5) == 0
-        assert worker.finish(timeout=5)
+        confirmed = worker.cleanup()
+        assert confirmed
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         graph.close()
@@ -143,7 +144,8 @@ def test_owned_worker_exit_during_observation_commits_current_marker(
         record = graph.runs.get_worker(worker.identity.invocation_id)
         assert record is not None and record.snapshot_seq == sequence
         assert record.observation_owner is None
-        assert worker.finish(timeout=5)
+        confirmed = worker.cleanup()
+        assert confirmed
     finally:
         if worker.process.poll() is None:
             worker.process.kill()
@@ -284,7 +286,8 @@ def test_dead_lifeline_is_replaced_without_restarting_worker(tmp_path: Path) -> 
         assert worker.process.poll() is None
         os.kill(worker.process.pid, signal.SIGTERM)
         _ = worker.process.wait(timeout=5)
-        assert worker.finish(timeout=5)
+        confirmed = worker.cleanup()
+        assert confirmed
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         if worker.process.poll() is None:

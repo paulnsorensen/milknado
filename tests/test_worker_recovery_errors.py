@@ -26,7 +26,8 @@ class _ProcessBoundary:
         raise AssertionError(f"unexpected supervisor cleanup: {pid} {timeout}")
 
     def supervisor_state(self, pid: int, start_token: float) -> str:
-        raise AssertionError(f"unexpected supervisor inspection: {pid} {start_token}")
+        assert (pid, start_token) == (999999, 123.5)
+        return "gone"
 
     def observe_worker(self, worker: WorkerIdentity) -> tuple[tuple[int, float, int], ...]:
         if self.mode == "observe":
@@ -85,8 +86,8 @@ def test_failed_recovery_keeps_worker_record_and_node_owned(
 
 
 class _OwnerBoundary:
-    def __init__(self, state: Literal["live", "unknown"]) -> None:
-        self.state: Literal["live", "unknown"] = state
+    def __init__(self, state: Literal["live", "unknown", "mismatch"]) -> None:
+        self.state: Literal["live", "unknown", "mismatch"] = state
 
     def terminate_group(self, pid: int, timeout: float) -> bool:
         raise AssertionError(f"unexpected supervisor cleanup: {pid} {timeout}")
@@ -121,6 +122,21 @@ def test_unassociated_worker_stays_open_without_dead_owner_proof(
         assert recovered is (state == "live")
         with WorkerEvidenceStore(graph.db_path) as store:
             records = store.live_workers(UnassociatedWorkers())
+        assert len(records) == 1
+        assert records[0].ended_at is None
+        assert records[0].observation_owner is None
+    finally:
+        graph.close()
+
+
+@pytest.mark.parametrize("state", ["live", "unknown", "mismatch"])
+def test_node_worker_stays_open_without_dead_owner_proof(
+    tmp_path: Path, state: Literal["live", "unknown", "mismatch"]
+) -> None:
+    graph = _graph(tmp_path)
+    try:
+        assert not reap_orphaned_workers(graph, _OwnerBoundary(state), ReapRequest(NodeWorkers(1)))
+        records = graph.runs.live_workers(node_id=1)
         assert len(records) == 1
         assert records[0].ended_at is None
         assert records[0].observation_owner is None

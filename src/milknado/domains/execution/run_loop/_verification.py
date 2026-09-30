@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, final
 
-from milknado.domains.common.types import NodeStatus
+from milknado.domains.common import NodeStatus
 from milknado.domains.execution.run_loop._result import VerifyOutcome
 from milknado.domains.execution.run_loop._scheduler import Scheduler
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from milknado.domains.common.protocols import LoopPort
+    from milknado.domains.common import LoopPort
     from milknado.domains.execution.executor import ExecutionConfig
     from milknado.domains.graph import MikadoGraph
     from milknado.domains.planning import Planner

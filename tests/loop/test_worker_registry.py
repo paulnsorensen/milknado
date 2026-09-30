@@ -146,8 +146,10 @@ def test_registry_stops_only_tickets_for_graph_run() -> None:
     selected = registry.reserve("run-1")
     unrelated = registry.reserve("run-2")
     stopped: list[str] = []
-    assert selected.activate(lambda: None, lambda _: stopped.append("run-1") is None)
-    assert unrelated.activate(lambda: None, lambda _: stopped.append("run-2") is None)
+    selected_active = selected.activate(lambda: None, lambda _: stopped.append("run-1") is None)
+    unrelated_active = unrelated.activate(lambda: None, lambda _: stopped.append("run-2") is None)
+    assert selected_active
+    assert unrelated_active
 
     assert registry.stop_run_workers("run-1", time.monotonic() + 1)
     assert stopped == ["run-1"]

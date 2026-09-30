@@ -22,6 +22,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from milknado.loop._process_registry import WorkerRegistry
 
 
 @pytest.fixture
@@ -65,12 +66,17 @@ def protected_record(tmp_path: Path) -> Iterator[tuple[MikadoGraph, ProtectedWor
         graph.close()
 
 
+@pytest.mark.parametrize("path", ["complete", "cleanup"])
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
 def test_replacement_read_failure_stops_worker_and_preserves_record(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
     monkeypatch: pytest.MonkeyPatch,
+    path: str,
 ) -> None:
     graph, protected = protected_record
+    registry = WorkerRegistry()
+    ticket = registry.reserve("run-1")
+    protected.ticket = ticket
 
     def fail_read(_evidence: LoopWorkerEvidence, _invocation_id: str) -> None:
         raise RuntimeError("evidence unavailable")
@@ -81,6 +87,68 @@ def test_replacement_read_failure_stops_worker_and_preserves_record(
     assert protected._replacements == 0  # pyright: ignore[reportPrivateUsage]
     assert protected._write_fd is None  # pyright: ignore[reportPrivateUsage]
     assert protected.process.poll() is not None
+    record = graph.runs.get_worker("inv-1")
+    assert record is not None and record.ended_at is None
+    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(
+        RuntimeError, match="worker protection failed; worker cleanup remains unresolved"
+    ):
+        if path == "complete":
+            _ = protected.complete(graceful=False)
+        else:
+            _ = protected.cleanup()
+    record = graph.runs.get_worker("inv-1")
+    assert record is not None and record.ended_at is None
+    assert ticket in registry.tickets
+
+
+@pytest.mark.parametrize("path", ["complete", "cleanup"])
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
+def test_helper_reap_error_retains_protection_failure_and_drains(
+    protected_record: tuple[MikadoGraph, ProtectedWorker],
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    graph, protected = protected_record
+
+    def fail_read(_evidence: LoopWorkerEvidence, _invocation_id: str) -> NoReturn:
+        raise RuntimeError("evidence unavailable")
+
+    def fail_reap(_helper: subprocess.Popen[str], _deadline: float) -> NoReturn:
+        raise UnconfirmedHelperExit("lifeline helper exit unconfirmed")
+
+    monkeypatch.setattr(LoopWorkerEvidence, "get_worker", fail_read)
+    failed = protected._replace_helper()  # pyright: ignore[reportPrivateUsage]
+    assert not failed
+    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(lifecycle, "stop_failed_helper", fail_reap)
+    stop = threading.Event()
+    reader = threading.Thread(target=stop.wait, daemon=True)
+    joined: list[float | None] = []
+    original_join = reader.join
+
+    def observe_join(timeout: float | None = None) -> None:
+        joined.append(timeout)
+        original_join(timeout)
+
+    if path == "cleanup":
+        reader.start()
+        monkeypatch.setattr(reader, "join", observe_join)
+    try:
+        with pytest.raises(
+            RuntimeError, match="worker protection failed; lifeline helper exit unconfirmed"
+        ) as error:
+            if path == "complete":
+                _ = protected.complete(graceful=False)
+            else:
+                _ = protected.cleanup((reader,), stop=stop)
+    finally:
+        stop.set()
+        if reader.is_alive():
+            original_join(timeout=1)
+    assert isinstance(error.value.__cause__, UnconfirmedHelperExit)
+    if path == "cleanup":
+        assert joined and not reader.is_alive()
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
 
@@ -119,18 +187,6 @@ def test_shutdown_keeps_uncertain_observation_open(
     assert record is not None and record.ended_at is None
     assert record.observation_owner == "supervisor"
     assert protected.process.poll() is not None
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_finish_timeout_does_not_close_open_record(
-    protected_record: tuple[MikadoGraph, ProtectedWorker],
-) -> None:
-    graph, protected = protected_record
-    assert not protected.finish(timeout=0.05)
-    assert protected._write_fd is None  # pyright: ignore[reportPrivateUsage]
-    assert protected.process.poll() is None
-    record = graph.runs.get_worker("inv-1")
-    assert record is not None and record.ended_at is None
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
@@ -209,7 +265,7 @@ def test_shutdown_waits_for_monitor_start_before_cleanup(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_finish_waits_for_monitor_exit_before_claiming_completion(
+def test_shutdown_waits_for_monitor_exit_before_claiming_completion(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
 ) -> None:
     graph, protected = protected_record
@@ -224,8 +280,10 @@ def test_finish_waits_for_monitor_exit_before_claiming_completion(
     watch.start()
     assert started.wait(timeout=1)
     protected._watch = watch  # pyright: ignore[reportPrivateUsage]
+    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
     try:
-        assert not protected.finish(timeout=0.02)
+        confirmed = protected.shutdown(time.monotonic() + 0.02)
+        assert not confirmed
         assert protected.process.poll() is None
         record = graph.runs.get_worker("inv-1")
         assert record is not None and record.ended_at is None

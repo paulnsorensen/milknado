@@ -110,6 +110,14 @@ def test_expired_store_deadline_refuses_evidence_operation(tmp_path: Path) -> No
         assert store.live_workers(UnassociatedWorkers()) == ()
 
 
+def test_repeated_open_keeps_worker_lock_private(tmp_path: Path) -> None:
+    path = tmp_path / "workers.db"
+    lock_path = path.with_suffix(path.suffix + ".lock")
+    for _ in range(2):
+        with open_standalone_worker_evidence(path):
+            assert lock_path.stat().st_mode & 0o077 == 0
+
+
 def _capture_initialization_connection(
     path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> list[sqlite3.Connection]:

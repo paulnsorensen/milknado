@@ -47,7 +47,10 @@ from pathlib import Path
 import psutil
 
 identity = f"{os.getpid()}:{psutil.Process().create_time()}"
-Path(os.environ["SHUTDOWN_WORKER_PID"]).write_text(identity, encoding="utf-8")
+marker = Path(os.environ["SHUTDOWN_WORKER_PID"])
+temporary = marker.with_name(f"{marker.name}.{os.getpid()}.tmp")
+temporary.write_text(identity, encoding="utf-8")
+temporary.replace(marker)
 for line in __import__("sys").stdin:
     if json.loads(line).get("type") == "user":
         print(json.dumps({"type": "system", "subtype": "init",

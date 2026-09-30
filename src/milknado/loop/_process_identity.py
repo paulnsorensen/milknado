@@ -43,7 +43,7 @@ def observe_descendants(worker: WorkerIdentity) -> tuple[Descendant, ...]:
         try:
             if child.status() != psutil.STATUS_ZOMBIE:
                 observed.append((child.pid, child.create_time(), os.getpgid(child.pid)))
-        except psutil.NoSuchProcess:
+        except (psutil.NoSuchProcess, ProcessLookupError):
             continue
         except (psutil.AccessDenied, OSError):
             raise RuntimeError("worker descendant enumeration unresolved") from None

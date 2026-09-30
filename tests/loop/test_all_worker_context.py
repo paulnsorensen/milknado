@@ -40,7 +40,12 @@ def _finish(worker: ProtectedWorker) -> None:
     assert worker.process.stdout is not None
     assert cast(TextIO, worker.process.stdout).read().strip() == "worker-ok"
     assert worker.process.wait(timeout=5) == 0
-    assert worker.finish(timeout=5)
+    confirmed = worker.cleanup()
+    assert confirmed
+    helper = worker._helper  # pyright: ignore[reportPrivateUsage]
+    assert helper.poll() is not None
+    assert helper.stdout is not None and helper.stdout.closed
+    assert helper.stderr is not None and helper.stderr.closed
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")

@@ -122,9 +122,9 @@ def _recoverable_records(
     recoverable: list[WorkerRecord] = []
     complete = True
     for record in records:
-        if isinstance(selection, UnassociatedWorkers):
+        if isinstance(selection, NodeWorkers | UnassociatedWorkers):
             state = process.supervisor_state(record.supervisor_pid, record.supervisor_start_token)
-            if state == "live":
+            if state == "live" and isinstance(selection, UnassociatedWorkers):
                 continue
             if state != "gone":
                 complete = False

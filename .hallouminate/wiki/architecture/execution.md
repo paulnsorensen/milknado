@@ -416,6 +416,35 @@ Successful replacement does not reset that attempt count or the first shutdown d
 Real-process, SQLite, and Git tests validate these boundaries; Windows parity remains unverified.
 The scheduler, projection, review policy, and node-context refactors preserve this lifecycle boundary.[^bounded-orphan-cleanup][^deep-module-implementation]
 
+PR #503 review adds these implementation constraints:
+Node-scoped recovery stops workers only when their durable supervisor identity is gone.
+Live, unknown, or mismatched supervisors remain untouched and make node recovery incomplete.
+Unassociated recovery still skips live supervisors; explicit run cancellation retains its stop policy.[^pr503-recovery]
+Cancellation reserves time for SIGKILL confirmation within the original timeout.
+Preserved-stop retries remain inside signal supervision on normal and exception paths.[^pr503-signals]
+Protection failure remains distinct from ownership confirmation.
+Production completion fails after replacement exhaustion even when the worker handles SIGTERM with exit status zero.
+Confirmed cleanup still closes durable evidence and releases its admission ticket.
+Unconfirmed cleanup retains ownership and reports protection failure alongside the cleanup diagnostic.
+Helper-reap errors retain their cause; reader draining remains bounded before cleanup reports failure.
+Shutdown reaps the helper after monitor quiescence and EOF; helper exit never proves worker exit.
+Generic runners close capture and log sinks even when cleanup raises.[^pr503-lifecycle]
+A child that disappears during process-group sampling is absent, not uncertain.
+Other observation errors retain unresolved evidence.[^pr503-observation]
+The worker-store FileLock explicitly uses mode 0600.
+The supported minimum filelock 3.19.1 otherwise changes a precreated private lock to 0644 and breaks the next store open.[^pr503-filelock]
+Shutdown fixture markers use atomic replacement so visibility implies complete identity data.[^pr503-marker]
+
+[^pr503-recovery]: src/milknado/domains/dispatch/reap.py:117-139; tests/test_worker_recovery_errors.py.
+[^pr503-signals]: src/milknado/adapters/process.py:100-122; src/milknado/mcp/_loop_node_runner.py:135-152; tests/test_process_termination_budget.py; tests/test_loop_node_runner_signal_subprocess.py. The signal fixture exercises the real runner and OS signals with a stub RunLoop.
+[^pr503-lifecycle]: src/milknado/loop/_process_lifecycle.py:182-296; src/milknado/loop/_agent.py:833-914,1082-1143; tests/loop/test_lifecycle_acceptance_exhaustion.py; tests/loop/test_lifecycle_error_paths.py; tests/loop/test_all_worker_context.py.
+[^pr503-observation]: src/milknado/loop/_process_identity.py:43-49; tests/loop/test_process_identity_errors.py.
+[^pr503-filelock]: src/milknado/domains/graph/worker_evidence.py:93; tests/test_worker_evidence_errors.py. Repeated-open regression fails before the fix and passes with filelock 3.19.1.
+[^pr503-marker]: tests/test_shutdown_subprocess.py:50-54.
+
+_Source: PR #503 source review and focused regression tests · Updated: 2026-09-30 · Supersedes: the 2026-09-30 blanket implementation-verification claim; F-12 requires production failure propagation._
+
+
 [^bounded-orphan-cleanup]: Durable spec `reap-orphaned-loop-workers.md`, Decisions F-5/F-7–F-12, Acceptance AC-6/AC-9/AC-12–AC-18; user selections in the 2026-09-29 design dialogue.
 
 [^native-process-containment]: src/milknado/loop/sessions/_process.py:171-202,255-286

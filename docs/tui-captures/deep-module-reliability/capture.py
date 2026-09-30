@@ -47,7 +47,8 @@ class WarningTranscriptApp(App[None]):
 
 class CaptureSource(Source):
     def __init__(self, read_only: bool) -> None:
-        super().__init__(read_only=read_only)
+        super().__init__()
+        self.read_only = read_only
         self.stop_calls = 0
 
     def stop_scheduling(self) -> None:

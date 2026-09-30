@@ -250,7 +250,8 @@ def test_helper_replacement_keeps_bidirectional_worker_and_exit_status(tmp_path:
         worker.process.stdin.flush()
         assert worker.process.stdout.readline() == "second:after\n"
         assert worker.process.wait(timeout=5) == 7
-        assert worker.finish(timeout=5)
+        confirmed = worker.cleanup()
+        assert confirmed
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         if worker.process.poll() is None:
@@ -298,7 +299,8 @@ def test_normal_worker_exit_does_not_launch_replacement(tmp_path: Path) -> None:
     worker = _protected(graph, node_id, "raise SystemExit(9)")
     try:
         assert worker.process.wait(timeout=5) == 9
-        assert worker.finish(timeout=5)
+        confirmed = worker.cleanup()
+        assert confirmed
         record = graph.runs.get_worker(worker.identity.invocation_id)
         assert record is not None and record.ready_generation == record.helper_generation == 0
         assert record.ended_at is not None

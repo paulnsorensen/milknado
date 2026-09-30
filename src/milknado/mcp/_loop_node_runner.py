@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, Protocol, cast
 from milknado.app._shutdown import ShutdownIntent, ShutdownSignal, supervise
 from milknado.domains.common import RunResult
 from milknado.domains.dispatch import now_iso, runs_dir
+from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import HostCapacityFull, RunFenceLostError
 
 if TYPE_CHECKING:
-    from milknado.domains.execution import NodeLoopOutcome, RunLoop
+    from milknado.domains.execution import RunLoop
 
 _logger = logging.getLogger("milknado")
 
@@ -132,10 +133,25 @@ def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bo
 
 
 def _supervise_node(
-    driver: RunLoop, intent: ShutdownIntent, run_node: Callable[[], NodeLoopOutcome]
+    driver: RunLoop, intent: ShutdownIntent, run_node: Callable[[], NodeLoopOutcome], node_id: int
 ) -> NodeLoopOutcome:
+    def run_and_confirm() -> NodeLoopOutcome:
+        try:
+            outcome = run_node()
+        except HostCapacityFull:
+            raise
+        except Exception:
+            _ = driver.confirm_preserved_stop(
+                NodeLoopOutcome(node_id, False, ownership_preserved=True)
+            )
+            raise
+        return driver.confirm_preserved_stop(outcome)
+
     return supervise(
-        run_node, intent, lambda deadline: driver.force_stop_active(deadline), "milknado-node"
+        run_and_confirm,
+        intent,
+        lambda deadline: driver.force_stop_active(deadline),
+        "milknado-node",
     )
 
 
@@ -156,12 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     from milknado.app.project import open_graph
     from milknado.app.worker_recovery import reconcile_loop_workers
     from milknado.domains.common import resolve_flavor_profile
-    from milknado.domains.execution import (
-        ExecutionConfig,
-        Executor,
-        NodeLoopOutcome,
-        RunLoop,
-    )
+    from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
 
     root = Path(args.project_root)
 
@@ -224,8 +235,8 @@ def main(argv: list[str] | None = None) -> int:
                 base_oid=args.base_oid,
                 parent_run_id=args.run_id,
             ),
+            args.node_id,
         )
-        outcome = driver.confirm_preserved_stop(outcome)
         terminal_written = _finish_run(
             graph,
             root,
@@ -254,10 +265,6 @@ def main(argv: list[str] | None = None) -> int:
     except HostCapacityFull as exc:
         return _defer_run(graph, root, args, exc)
     except Exception as exc:
-        if driver is not None:
-            _ = driver.confirm_preserved_stop(
-                NodeLoopOutcome(args.node_id, False, ownership_preserved=True)
-            )
         return _fail_run(graph, root, args, exc)
     finally:
         graph.close()

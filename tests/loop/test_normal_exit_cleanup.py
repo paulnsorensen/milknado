@@ -92,7 +92,8 @@ def _assert_finished(
     assert "leader-output" in result.captured_stdout
     assert result.captured_stderr is not None
     assert "leader-error" in result.captured_stderr
-    assert worker.finish(timeout=3)
+    confirmed = worker.cleanup()
+    assert confirmed
     record = graph.runs.get_worker(worker.identity.invocation_id)
     assert record is not None and record.ended_at is not None
     assert record.ready_generation == 0
@@ -265,8 +266,8 @@ def test_normal_exit_during_failed_replacement_does_not_retry_or_reset_deadline(
         assert attempts == [1]
         limit = worker._stop_deadline  # pyright: ignore[reportPrivateUsage]
         assert limit is not None
-        assert worker.finish(timeout=3)
-        assert worker.shutdown(limit + 5)
+        confirmed = worker.shutdown(limit + 5)
+        assert confirmed
         assert worker._stop_deadline == limit  # pyright: ignore[reportPrivateUsage]
         assert worker.process.returncode == 7
         record = graph.runs.get_worker(worker.identity.invocation_id)

@@ -90,7 +90,7 @@ def open_standalone_worker_evidence(
     except FileExistsError:
         _check_private(lock_path, directory=False)
     timeout = 1 if deadline is None else max(0, deadline - time.monotonic())
-    with FileLock(lock_path, timeout=timeout):
+    with FileLock(lock_path, timeout=timeout, mode=0o600):
         if not path.exists():
             descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             os.close(descriptor)

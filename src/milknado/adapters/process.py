@@ -107,7 +107,7 @@ class ProcessAdapter:
         deadline = time.monotonic() + timeout
         with suppress(ProcessLookupError):
             os.killpg(os.getpgid(pid), signal.SIGTERM)
-        grace_deadline = min(deadline, time.monotonic() + self._termination_grace)
+        grace_deadline = min(deadline - timeout / 2, time.monotonic() + self._termination_grace)
         while pid_alive(pid) and time.monotonic() < grace_deadline:
             time.sleep(max(0.0, min(self._poll_interval, grace_deadline - time.monotonic())))
         if pid_alive(pid):

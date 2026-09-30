@@ -1,5 +1,3 @@
-"""Own loop-worker startup, protection, streams, and cleanup."""
-
 from __future__ import annotations
 
 import logging
@@ -12,7 +10,7 @@ from typing import final
 
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
-from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit
+from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit, stop_failed_helper
 from milknado.loop._process_helper import start_helper as _start_helper
 from milknado.loop._process_identity import Descendant, identity_state
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
@@ -195,9 +193,11 @@ class ProtectedWorker:
         if not self._cleanup_lock.acquire(timeout=max(0, deadline - time.monotonic())):
             return False
         try:
-            return self._shutdown_owned(deadline)
+            confirmed = self._shutdown_owned(deadline)
         finally:
             self._cleanup_lock.release()
+        stop_failed_helper(self._helper, deadline)
+        return confirmed
 
     def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
         evidence = self._context.evidence.with_deadline(deadline)
@@ -239,6 +239,20 @@ class ProtectedWorker:
         finally:
             self.close_lifeline()
 
+    def _completion_result(
+        self, confirmed: bool, helper_error: UnconfirmedHelperExit | None = None
+    ) -> bool:
+        if self._failed:
+            if helper_error is not None:
+                message = "worker protection failed; lifeline helper exit unconfirmed"
+                raise RuntimeError(message) from helper_error
+            if not confirmed:
+                raise RuntimeError("worker protection failed; worker cleanup remains unresolved")
+            raise RuntimeError("worker protection failed")
+        if helper_error is not None:
+            raise helper_error
+        return confirmed
+
     def complete(self, *, graceful: bool) -> bool:
         deadline = time.monotonic() + 3
         if graceful:
@@ -247,7 +261,11 @@ class ProtectedWorker:
                     self.process.stdin.close()
             with suppress(subprocess.TimeoutExpired):
                 _ = self.process.wait(timeout=min(0.5, max(0, deadline - time.monotonic())))
-        return self.shutdown(deadline)
+        try:
+            confirmed = self.shutdown(deadline)
+        except UnconfirmedHelperExit as exc:
+            return self._completion_result(False, exc)
+        return self._completion_result(confirmed)
 
     def cleanup(
         self,
@@ -256,11 +274,15 @@ class ProtectedWorker:
         stop: threading.Event | None = None,
         deadline: float | None = None,
     ) -> bool:
-        """Stop the verified worker, drain readers, then close owned pipes."""
         if stop is not None:
             stop.set()
         limit = self._claim_deadline(deadline if deadline is not None else time.monotonic() + 3)
-        confirmed = self.shutdown(limit)
+        helper_error: UnconfirmedHelperExit | None = None
+        try:
+            confirmed = self.shutdown(limit)
+        except UnconfirmedHelperExit as exc:
+            helper_error = exc
+            confirmed = False
         drained = True
         for thread in threads:
             if thread is not None:
@@ -271,27 +293,7 @@ class ProtectedWorker:
                 if pipe is not None:
                     with suppress(OSError, ValueError):
                         pipe.close()
-        return confirmed and drained
-
-    def finish(self, timeout: float = 3) -> bool:
-        deadline = time.monotonic() + timeout
-        self._stop.set()
-        if self._watch is not None:
-            self._watch.join(timeout=max(0, deadline - time.monotonic()))
-            if self._watch.is_alive():
-                return False
-        self.close_lifeline()
-        try:
-            _ = self._helper.wait(timeout=max(0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            return False
-        record = self._context.evidence.with_deadline(deadline).get_worker(
-            self.identity.invocation_id
-        )
-        confirmed = record is not None and record.ended_at is not None
-        if confirmed and self.ticket is not None:
-            self.ticket.close()
-        return confirmed and not self._failed
+        return self._completion_result(confirmed and drained, helper_error)
 
 
 def spawn_protected(options: SpawnOptions, context: ProtectionContext) -> ProtectedWorker:

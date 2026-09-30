@@ -3,8 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common.agent_argv import NodeAgentSession
-from milknado.domains.common.flavor_codec import Gate
+from milknado.domains.common import Gate, NodeAgentSession
 
 
 @dataclass(frozen=True)

@@ -34,3 +34,6 @@
 
 2026-09-30 · b005bb13168379a8 · merged · domain-model.md · Map Supervisor to host ownership, Worker invocation to its stable identity, Lifeline to its runtime, Covered targets to verified cleanup, and Confirmed cleanup to exit checks. Preserve canonical terms and accepted limits.
 
+
+2026-09-30 · b630435b130f1050 · merged · architecture/execution.md · Record PR503 recovery eligibility, separate protection failure from confirmed cleanup, bounded cancellation, signal retry supervision, helper and sink closure, private filelock mode, and atomic fixture markers. Focused regressions support these corrections; full gate follows.
+

@@ -831,85 +831,87 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
         raise
 
     try:
-        if proc.stdout is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
-        if pipe_stdin and proc.stdin is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
-        if pipe_stderr and proc.stderr is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-        if proc.stderr is not None:
-            stderr_thread = _start_pump_thread(
-                proc.stderr,
-                stderr_capture,
-                _STDERR,
-                run.on_output_line,
-                correlation,
-            )
-            pump_threads.append(stderr_thread)
-        if run.stdin_text is not None:
-            writer_thread = _start_writer_thread(proc, run.stdin_text)
-        stream = _read_agent_stream(
-            proc.stdout,
-            deadline,
-            run.on_activity,
-            run.on_output_line,
-            capture_stdout=capture_stdout_text,
-            output_capture=stdout_capture,
-            completion_signal=run.completion_signal,
-            adapter=run.adapter,
-            max_turns=run.max_turns,
-            on_tool_use=run.on_tool_use,
-            correlation=correlation,
-            force_stop_event=run.force_stop_event,
-            pump_threads=pump_threads,
-        )
-        if stream.timed_out or stream.turn_capped or stream.force_stopped:
-            if protected is None:
-                _ensure_process_dead(proc, windows_job)
-        else:
-            _, reaped_timeout, reaped_force_stop = _wait_for_process(
-                proc,
-                deadline=deadline,
-                force_stop_event=run.force_stop_event,
-                windows_job=windows_job,
-                protected=protected,
-                correlation=correlation,
-            )
-            if reaped_timeout or reaped_force_stop:
-                stream = _StreamResult(
-                    stdout_lines=stream.stdout_lines,
-                    result_text=stream.result_text,
-                    timed_out=reaped_timeout,
-                    force_stopped=reaped_force_stop,
-                    tool_use_count=stream.tool_use_count,
-                    turn_capped=stream.turn_capped,
-                    completion_detected=stream.completion_detected,
+        try:
+            if proc.stdout is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
+            if pipe_stdin and proc.stdin is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
+            if pipe_stderr and proc.stderr is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
+            if proc.stderr is not None:
+                stderr_thread = _start_pump_thread(
+                    proc.stderr,
+                    stderr_capture,
+                    _STDERR,
+                    run.on_output_line,
+                    correlation,
                 )
+                pump_threads.append(stderr_thread)
+            if run.stdin_text is not None:
+                writer_thread = _start_writer_thread(proc, run.stdin_text)
+            stream = _read_agent_stream(
+                proc.stdout,
+                deadline,
+                run.on_activity,
+                run.on_output_line,
+                capture_stdout=capture_stdout_text,
+                output_capture=stdout_capture,
+                completion_signal=run.completion_signal,
+                adapter=run.adapter,
+                max_turns=run.max_turns,
+                on_tool_use=run.on_tool_use,
+                correlation=correlation,
+                force_stop_event=run.force_stop_event,
+                pump_threads=pump_threads,
+            )
+            if stream.timed_out or stream.turn_capped or stream.force_stopped:
+                if protected is None:
+                    _ensure_process_dead(proc, windows_job)
+            else:
+                _, reaped_timeout, reaped_force_stop = _wait_for_process(
+                    proc,
+                    deadline=deadline,
+                    force_stop_event=run.force_stop_event,
+                    windows_job=windows_job,
+                    protected=protected,
+                    correlation=correlation,
+                )
+                if reaped_timeout or reaped_force_stop:
+                    stream = _StreamResult(
+                        stdout_lines=stream.stdout_lines,
+                        result_text=stream.result_text,
+                        timed_out=reaped_timeout,
+                        force_stopped=reaped_force_stop,
+                        tool_use_count=stream.tool_use_count,
+                        turn_capped=stream.turn_capped,
+                        completion_detected=stream.completion_detected,
+                    )
+        finally:
+            if protected is not None:
+                if not protected.cleanup((*pump_threads, writer_thread)):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            else:
+                _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
+        stdout = stdout_capture.text
+        stderr = stderr_capture.text
+        return AgentResult(
+            returncode=None if stream.timed_out or stream.force_stopped else proc.returncode,
+            elapsed=time.monotonic() - start,
+            log_file=log_sink.path if log_sink is not None else None,
+            result_text=stream.result_text,
+            timed_out=stream.timed_out,
+            force_stopped=stream.force_stopped,
+            captured_stdout=stdout if capture_stdout_text else None,
+            captured_stderr=stderr if capture_stderr_text else None,
+            tool_use_count=stream.tool_use_count,
+            turn_capped=stream.turn_capped,
+            completion_detected=stream.completion_detected,
+        )
     finally:
-        if protected is not None:
-            if not protected.cleanup((*pump_threads, writer_thread)):
-                raise RuntimeError("worker cleanup remains unresolved")
-        else:
-            _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
-
-    stdout = stdout_capture.text
-    stderr = stderr_capture.text
-    stdout_capture.close()
-    if log_sink is not None:
-        log_sink.close()
-    return AgentResult(
-        returncode=None if stream.timed_out or stream.force_stopped else proc.returncode,
-        elapsed=time.monotonic() - start,
-        log_file=log_sink.path if log_sink is not None else None,
-        result_text=stream.result_text,
-        timed_out=stream.timed_out,
-        force_stopped=stream.force_stopped,
-        captured_stdout=stdout if capture_stdout_text else None,
-        captured_stderr=stderr if capture_stderr_text else None,
-        tool_use_count=stream.tool_use_count,
-        turn_capped=stream.turn_capped,
-        completion_detected=stream.completion_detected,
-    )
+        stdout_capture.close()
+        stderr_capture.close()
+        if log_sink is not None:
+            log_sink.close()
 
 
 def _pump_stream(
@@ -1078,67 +1080,67 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
         raise
 
     try:
-        if pipe_stdin and proc.stdin is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
-        if pipe_stdout:
-            if proc.stdout is None:
-                raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
-            stdout_thread = _start_pump_thread(
-                proc.stdout, stdout_capture, _STDOUT, _on_output_line
+        try:
+            if pipe_stdin and proc.stdin is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
+            if pipe_stdout:
+                if proc.stdout is None:
+                    raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
+                stdout_thread = _start_pump_thread(
+                    proc.stdout, stdout_capture, _STDOUT, _on_output_line
+                )
+            if pipe_stderr:
+                if proc.stderr is None:
+                    raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
+                stderr_thread = _start_pump_thread(
+                    proc.stderr, stderr_capture, _STDERR, _on_output_line
+                )
+            if run.stdin_text is not None:
+                writer_thread = _start_writer_thread(proc, run.stdin_text)
+            deadline = time.monotonic() + run.timeout if run.timeout is not None else None
+            returncode, timed_out, force_stopped = _wait_for_process(
+                proc,
+                deadline=deadline,
+                force_stop_event=run.force_stop_event,
+                windows_job=windows_job,
+                protected=protected,
+                correlation=f"iteration={run.iteration}",
             )
-        if pipe_stderr:
-            if proc.stderr is None:
-                raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-            stderr_thread = _start_pump_thread(
-                proc.stderr, stderr_capture, _STDERR, _on_output_line
-            )
-        if run.stdin_text is not None:
-            writer_thread = _start_writer_thread(proc, run.stdin_text)
-
-        deadline = time.monotonic() + run.timeout if run.timeout is not None else None
-        returncode, timed_out, force_stopped = _wait_for_process(
-            proc,
-            deadline=deadline,
-            force_stop_event=run.force_stop_event,
-            windows_job=windows_job,
-            protected=protected,
-            correlation=f"iteration={run.iteration}",
+        finally:
+            if protected is not None:
+                if not protected.cleanup((stdout_thread, stderr_thread, writer_thread)):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            else:
+                _cleanup_agent(
+                    proc, stdout_thread, stderr_thread, writer_thread, windows_job=windows_job
+                )
+        stdout = stdout_capture.text
+        stderr = stderr_capture.text
+        tool_use_count, turn_capped = _count_tool_uses_post_hoc(
+            adapter=run.adapter,
+            stdout_lines=stdout_capture.tail,
+            stdout_capture=stdout_capture,
+            max_turns=run.max_turns,
+            on_tool_use=run.on_tool_use,
+        )
+        return AgentResult(
+            returncode=None if timed_out or force_stopped else returncode,
+            elapsed=time.monotonic() - start,
+            log_file=log_sink.path if log_sink is not None else None,
+            result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
+            timed_out=timed_out,
+            force_stopped=force_stopped,
+            captured_stdout=stdout if capture_stdout_text else None,
+            captured_stderr=stderr if capture_stderr_text else None,
+            tool_use_count=tool_use_count,
+            turn_capped=turn_capped,
+            completion_detected=completion_detected,
         )
     finally:
-        if protected is not None:
-            if not protected.cleanup((stdout_thread, stderr_thread, writer_thread)):
-                raise RuntimeError("worker cleanup remains unresolved")
-        else:
-            _cleanup_agent(
-                proc, stdout_thread, stderr_thread, writer_thread, windows_job=windows_job
-            )
-
-    stdout = stdout_capture.text
-    stderr = stderr_capture.text
-    tool_use_count, turn_capped = _count_tool_uses_post_hoc(
-        adapter=run.adapter,
-        stdout_lines=stdout_capture.tail,
-        stdout_capture=stdout_capture,
-        max_turns=run.max_turns,
-        on_tool_use=run.on_tool_use,
-    )
-    stdout_capture.close()
-    if log_sink is not None:
-        log_sink.close()
-
-    return AgentResult(
-        returncode=None if timed_out or force_stopped else returncode,
-        elapsed=time.monotonic() - start,
-        log_file=log_sink.path if log_sink is not None else None,
-        result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
-        timed_out=timed_out,
-        force_stopped=force_stopped,
-        captured_stdout=stdout if capture_stdout_text else None,
-        captured_stderr=stderr if capture_stderr_text else None,
-        tool_use_count=tool_use_count,
-        turn_capped=turn_capped,
-        completion_detected=completion_detected,
-    )
+        stdout_capture.close()
+        stderr_capture.close()
+        if log_sink is not None:
+            log_sink.close()
 
 
 def _prepare_agent_run(

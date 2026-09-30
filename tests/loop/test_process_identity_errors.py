@@ -102,6 +102,23 @@ def test_worker_disappears_during_descendant_enumeration(
     assert observe_descendants(worker) == ()
 
 
+def test_child_disappears_during_descendant_sampling(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = psutil.Process()
+    worker = WorkerIdentity("inv-1", process.pid, os.getpgid(process.pid), process.create_time())
+
+    def children(_self: psutil.Process, recursive: bool = False) -> list[psutil.Process]:
+        assert recursive
+        return [process]
+
+    monkeypatch.setattr(psutil.Process, "children", children)
+
+    def disappeared(_pid: int) -> int:
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "getpgid", disappeared)
+    assert observe_descendants(worker) == ()
+
+
 def test_unknown_group_never_confirms_covered_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     worker = WorkerIdentity("inv-1", 2**31 - 1, 2**31 - 1, 123.5)
 
