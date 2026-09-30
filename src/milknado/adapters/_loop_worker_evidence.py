@@ -19,7 +19,7 @@ class LoopWorkerEvidence:
     deadline: float | None = None
 
     @contextmanager
-    def _store(self) -> Generator[WorkerEvidenceStore]:
+    def _store(self) -> Generator[WorkerEvidenceStore, None, None]:
         try:
             with WorkerEvidenceStore(self.db_path, deadline=self.deadline) as store:
                 yield store
