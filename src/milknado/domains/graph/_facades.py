@@ -18,6 +18,7 @@ from milknado.domains.common import (
     SessionEvent,
     SessionView,
     WorkerIdentity,
+    WorkerOwner,
 )
 from milknado.domains.graph._analytics_facade import synchronized
 from milknado.domains.graph._command_facade import _CommandFacade
@@ -60,8 +61,8 @@ class _RunFacade(_SubFacade):
         _run_persistence.set_run_pid(self._conn, run_id, pid)
 
     @synchronized
-    def record_worker(self, run_id: str, worker: WorkerIdentity) -> None:
-        _worker_persistence.record_worker(self._conn, run_id, worker)
+    def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
+        _worker_persistence.record_worker(self._conn, owner, worker)
 
     @synchronized
     def live_workers(

@@ -19,6 +19,15 @@ class WorkerIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerOwner:
+    runtime_run_id: str
+    supervisor_pid: int
+    supervisor_start_token: float
+    graph_run_id: str | None = None
+    node_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class HelperIdentity:
     invocation_id: str
     generation: int

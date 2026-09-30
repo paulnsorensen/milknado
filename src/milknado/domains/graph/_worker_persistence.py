@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 from typing import TypeAlias, cast
 
 import msgspec
-from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
 
+from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 Descendant: TypeAlias = tuple[int, float, int]
@@ -17,8 +17,10 @@ Descendant: TypeAlias = tuple[int, float, int]
 CREATE_RUN_WORKERS = (
     "CREATE TABLE IF NOT EXISTS run_workers ("
     "invocation_id TEXT PRIMARY KEY, "
-    "run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE, "
-    "node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, "
+    "runtime_run_id TEXT NOT NULL, supervisor_pid INTEGER NOT NULL, "
+    "supervisor_start_token REAL NOT NULL, "
+    "graph_run_id TEXT REFERENCES runs(run_id) ON DELETE CASCADE, "
+    "node_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE, "
     "pid INTEGER NOT NULL, pgid INTEGER NOT NULL, start_token REAL NOT NULL, "
     "helper_pid INTEGER, helper_start_token REAL, "
     "helper_generation INTEGER NOT NULL DEFAULT -1, "
@@ -27,14 +29,18 @@ CREATE_RUN_WORKERS = (
     "observation_owner TEXT, observation_seq INTEGER, "
     "observation_generation INTEGER, observation_pid INTEGER, observation_token REAL, "
     "descendants_json TEXT NOT NULL DEFAULT '[]', "
-    "started_at TEXT NOT NULL, ended_at TEXT)"
+    "started_at TEXT NOT NULL, ended_at TEXT, "
+    "CHECK ((graph_run_id IS NULL) = (node_id IS NULL)))"
 )
 
 
 @dataclass(frozen=True, slots=True)
 class WorkerRecord:
-    run_id: str
-    node_id: int
+    runtime_run_id: str
+    supervisor_pid: int
+    supervisor_start_token: float
+    graph_run_id: str | None
+    node_id: int | None
     invocation_id: str
     pid: int
     pgid: int
@@ -54,8 +60,11 @@ class WorkerRecord:
 def _record(row: sqlite3.Row) -> WorkerRecord:
     data = msgspec.json.decode(cast(str, row["descendants_json"]), type=list[Descendant])
     return WorkerRecord(
-        run_id=cast(str, row["run_id"]),
-        node_id=cast(int, row["node_id"]),
+        runtime_run_id=cast(str, row["runtime_run_id"]),
+        supervisor_pid=cast(int, row["supervisor_pid"]),
+        supervisor_start_token=cast(float, row["supervisor_start_token"]),
+        graph_run_id=cast(str | None, row["graph_run_id"]),
+        node_id=cast(int | None, row["node_id"]),
         invocation_id=cast(str, row["invocation_id"]),
         pid=cast(int, row["pid"]),
         pgid=cast(int, row["pgid"]),
@@ -73,29 +82,42 @@ def _record(row: sqlite3.Row) -> WorkerRecord:
     )
 
 
-def record_worker(conn: sqlite3.Connection, run_id: str, worker: WorkerIdentity) -> None:
+def record_worker(conn: sqlite3.Connection, owner: WorkerOwner, worker: WorkerIdentity) -> None:
+    if (owner.graph_run_id is None) != (owner.node_id is None):
+        raise ValueError("graph run and node association must be set together")
+    if not owner.runtime_run_id or owner.supervisor_pid <= 0 or owner.supervisor_start_token <= 0:
+        raise ValueError("invalid worker owner")
+    if owner.graph_run_id is not None:
+        row = fetchone(
+            conn, "SELECT node_id FROM runs WHERE run_id = ? AND status = 'running'",
+            (owner.graph_run_id,),
+        )
+        if row is None or row[0] != owner.node_id:
+            raise RuntimeError(f"running run not found: {owner.graph_run_id}")
     now = datetime.now(UTC).isoformat()
-    cur = conn.execute(
+    conn.execute(
         "INSERT INTO run_workers "
-        "(run_id, node_id, invocation_id, pid, pgid, start_token, started_at) "
-        "SELECT run_id, node_id, ?, ?, ?, ?, ? FROM runs "
-        "WHERE run_id = ? AND status = 'running'",
-        (worker.invocation_id, worker.pid, worker.pgid, worker.start_token, now, run_id),
+        "(runtime_run_id, supervisor_pid, supervisor_start_token, graph_run_id, node_id, "
+        "invocation_id, pid, pgid, start_token, started_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (owner.runtime_run_id, owner.supervisor_pid, owner.supervisor_start_token,
+         owner.graph_run_id, owner.node_id, worker.invocation_id, worker.pid,
+         worker.pgid, worker.start_token, now),
     )
     conn.commit()
-    if cur.rowcount != 1:
-        raise RuntimeError(f"running run not found: {run_id}")
 
 
 def live_workers(
-    conn: sqlite3.Connection, *, node_id: int | None = None, run_id: str | None = None
+    conn: sqlite3.Connection, *, node_id: int | None = None,
+    run_id: str | None = None, unassociated: bool = False,
 ) -> tuple[WorkerRecord, ...]:
     rows = fetchall(
         conn,
         "SELECT * FROM run_workers WHERE ended_at IS NULL "
-        "AND (? IS NULL OR node_id = ?) AND (? IS NULL OR run_id = ?) "
+        "AND (? IS NULL OR node_id = ?) AND (? IS NULL OR graph_run_id = ?) "
+        "AND (? = 0 OR graph_run_id IS NULL) "
         "ORDER BY started_at, invocation_id",
-        (node_id, node_id, run_id, run_id),
+        (node_id, node_id, run_id, run_id, int(unassociated)),
     )
     return tuple(_record(cast(sqlite3.Row, row)) for row in rows)
 

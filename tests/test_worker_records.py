@@ -6,8 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
-from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
+from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
+from milknado.domains.graph import (
+    MikadoGraph,
+    RunWorkers,
+    UnassociatedWorkers,
+    WorkerEvidenceStore,
+    open_standalone_worker_evidence,
+)
 
 
 def test_worker_record_persists_and_blocks_reclaim(tmp_path: Path) -> None:
@@ -16,7 +22,10 @@ def test_worker_record_persists_and_blocks_reclaim(tmp_path: Path) -> None:
     node = graph.add_node("worker")
     assert graph.claim_node(node.id, "run-1", now="2026-01-01T00:00:00+00:00", pid=999999)
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-    graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+    graph.runs.record_worker(
+        WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+        WorkerIdentity("inv-1", 2345, 2345, 123.5),
+    )
     graph.close()
 
     graph = MikadoGraph(db_path)
@@ -40,7 +49,10 @@ def test_reclaim_guard_covers_worker_run_under_parent_owner(tmp_path: Path) -> N
         node = graph.add_node("worker")
         assert graph.claim_node(node.id, "parent", now="2026-01-01T00:00:00+00:00", pid=999999)
         graph.runs.start("child", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-        graph.runs.record_worker("child", WorkerIdentity("inv-child", 2345, 2345, 123.5))
+        graph.runs.record_worker(
+            WorkerOwner("child", 999999, 123.5, "child", node.id),
+            WorkerIdentity("inv-child", 2345, 2345, 123.5),
+        )
         assert graph.try_reclaim(node.id, now="2026-01-01T00:01:00+00:00") is False
         current = graph.get_node(node.id)
         assert current is not None and current.run_id == "parent"
@@ -53,7 +65,10 @@ def test_worker_observation_and_helper_ready_are_fenced(tmp_path: Path) -> None:
     try:
         node = graph.add_node("worker")
         graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-        graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+        graph.runs.record_worker(
+            WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+            WorkerIdentity("inv-1", 2345, 2345, 123.5),
+        )
         helper = HelperIdentity("inv-1", 0, 3456, 234.5)
         observation = ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
         graph.runs.record_helper(helper)
@@ -74,7 +89,10 @@ def test_interrupted_observation_prevents_worker_closure(tmp_path: Path) -> None
     try:
         node = graph.add_node("worker")
         graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-        graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+        graph.runs.record_worker(
+            WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+            WorkerIdentity("inv-1", 2345, 2345, 123.5),
+        )
         graph.runs.begin_worker_observation(
             ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
         )
@@ -90,7 +108,10 @@ def test_replaced_helper_cannot_begin_or_commit_observation(tmp_path: Path) -> N
     try:
         node = graph.add_node("worker")
         graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-        graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+        graph.runs.record_worker(
+            WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+            WorkerIdentity("inv-1", 2345, 2345, 123.5),
+        )
         old = HelperIdentity("inv-1", 0, 3456, 234.5)
         graph.runs.record_helper(old)
         graph.runs.record_helper(HelperIdentity("inv-1", 1, 4567, 345.5))
@@ -112,7 +133,10 @@ def test_stale_verified_snapshot_cannot_close_newer_evidence(tmp_path: Path) -> 
     try:
         node = graph.add_node("worker")
         graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-        graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+        graph.runs.record_worker(
+            WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+            WorkerIdentity("inv-1", 2345, 2345, 123.5),
+        )
         first = ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
         graph.runs.begin_worker_observation(first)
         graph.runs.commit_worker_observation(first, ((4567, 345.5, 4567),))
@@ -138,14 +162,20 @@ def test_worker_evidence_connection_respects_one_deadline_under_writer_lock(
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
-    graph.runs.record_worker("run-1", WorkerIdentity("inv-1", 2345, 2345, 123.5))
+    graph.runs.record_worker(
+        WorkerOwner("run-1", 999999, 123.5, "run-1", node.id),
+        WorkerIdentity("inv-1", 2345, 2345, 123.5),
+    )
     lock = sqlite3.connect(graph.db_path)
     try:
         lock.execute("BEGIN IMMEDIATE")
-        lock.execute("UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?", ("inv-1",))
+        lock.execute(
+            "UPDATE run_workers SET snapshot_seq = snapshot_seq WHERE invocation_id = ?",
+            ("inv-1",),
+        )
         start = time.monotonic()
         with WorkerEvidenceStore(graph.db_path, deadline=start + 0.3) as store:
-            assert len(store.live_workers(run_id="run-1")) == 1
+            assert len(store.live_workers(RunWorkers("run-1"))) == 1
             with pytest.raises((sqlite3.OperationalError, TimeoutError)):
                 store.begin(ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5))
         assert time.monotonic() - start < 0.8
@@ -153,3 +183,17 @@ def test_worker_evidence_connection_respects_one_deadline_under_writer_lock(
         lock.rollback()
         lock.close()
         graph.close()
+
+
+def test_unassociated_worker_uses_same_durable_store(tmp_path: Path) -> None:
+    with open_standalone_worker_evidence(tmp_path / "workers.db") as store:
+        store.record_worker(
+            WorkerOwner("runtime-1", 999999, 123.5),
+            WorkerIdentity("inv-1", 2345, 2345, 123.5),
+        )
+        records = store.live_workers(UnassociatedWorkers())
+        assert len(records) == 1
+        assert records[0].runtime_run_id == "runtime-1"
+        assert records[0].graph_run_id is None
+        assert records[0].node_id is None
+        assert records[0].supervisor_pid == 999999

@@ -59,7 +59,14 @@ from milknado.domains.graph.status_flow import (
     validate_todo_status,
 )
 from milknado.domains.graph.traversals import walk_ancestors
-from milknado.domains.graph.worker_evidence import WorkerEvidenceStore
+from milknado.domains.graph.worker_evidence import (
+    NodeWorkers,
+    RunWorkers,
+    UnassociatedWorkers,
+    WorkerEvidenceStore,
+    default_worker_db_path,
+    open_standalone_worker_evidence,
+)
 
 __all__ = [
     "admit_session_command",
@@ -98,6 +105,11 @@ __all__ = [
     "RunRecord",
     "WorkerEvidenceStore",
     "WorkerRecord",
+    "NodeWorkers",
+    "RunWorkers",
+    "UnassociatedWorkers",
+    "default_worker_db_path",
+    "open_standalone_worker_evidence",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",

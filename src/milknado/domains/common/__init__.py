@@ -45,10 +45,11 @@ from milknado.domains.common.paths import (
 from milknado.domains.common.plugin import PluginHook, PluginMeta
 from milknado.domains.common.process import (
     CONTROLLER_MASTER_ENV,
+    WORKER_CONTEXT_ENV,
     HelperIdentity,
     ObservationKey,
     WorkerIdentity,
-    WORKER_CONTEXT_ENV,
+    WorkerOwner,
     pid_alive,
 )
 from milknado.domains.common.protocols import (
@@ -132,6 +133,7 @@ __all__ = [
     "HelperIdentity",
     "ObservationKey",
     "WorkerIdentity",
+    "WorkerOwner",
     "FlavorOverride",
     "default_config",
     "detect_project_gates",
