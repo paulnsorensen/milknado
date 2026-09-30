@@ -8,6 +8,7 @@ import shlex
 import signal
 import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 
@@ -61,7 +62,7 @@ async def _wait_for(path: Path) -> tuple[int, float]:
 
 
 def _worker_end(db: Path, pid: int) -> str | None:
-    with sqlite3.connect(db) as conn:
+    with closing(sqlite3.connect(db)) as conn:
         row = cast(
             tuple[str | None] | None,
             conn.execute("SELECT ended_at FROM run_workers WHERE pid = ?", (pid,)).fetchone(),
@@ -110,10 +111,13 @@ async def test_run_quit_confirms_then_stops_live_worker(
             confirmation = app.screen.query_one("#confirmation-overlay", Static)
             assert "Quit and force stop 1 active run?" in cast(Text, confirmation.render()).plain
             assert _worker_alive(pid, token)
-            await pilot.press("y")
-            async with asyncio.timeout(8.0):
-                while _worker_alive(pid, token):
+            deadline = asyncio.get_running_loop().time() + 8.0
+            async with asyncio.timeout_at(deadline):
+                await pilot.press("y")
+                while app.cleanup_confirmed is None:
                     await asyncio.sleep(0.02)
+            assert app.cleanup_confirmed is True
+            assert not _worker_alive(pid, token)
             assert _worker_end(graph.db_path, pid) is not None
     finally:
         if pid is not None and _worker_alive(pid, token):
