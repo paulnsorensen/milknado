@@ -7,6 +7,7 @@ import select
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -22,20 +23,33 @@ class HelperStart:
     sequence: int
     generation: int
     deadline: float
+    stop_deadline: Callable[[], float | None] | None = None
 
 
 class UnconfirmedHelperExit(RuntimeError):
     pass
 
 
-def _await_ready(helper: subprocess.Popen[str], expected: str, deadline: float) -> bool:
+def _await_ready(
+    helper: subprocess.Popen[str],
+    expected: str,
+    deadline: float,
+    stop_deadline: Callable[[], float | None] | None = None,
+) -> bool:
     if helper.stdout is None:
         return False
     fd = helper.stdout.fileno()
     frame = bytearray()
     while (remaining := deadline - time.monotonic()) > 0 and len(frame) < 256:
-        ready, _, _ = select.select([fd], [], [], remaining)
-        if not ready or not (chunk := os.read(fd, 256 - len(frame))):
+        if stop_deadline is not None and stop_deadline() is not None:
+            return False
+        timeout = min(remaining, 0.1) if stop_deadline else remaining
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            if stop_deadline is None:
+                return False
+            continue
+        if not (chunk := os.read(fd, 256 - len(frame))):
             return False
         frame.extend(chunk)
         if b"\n" in frame:
@@ -48,13 +62,13 @@ def _await_ready(helper: subprocess.Popen[str], expected: str, deadline: float) 
 
 
 def stop_failed_helper(helper: subprocess.Popen[str], deadline: float) -> None:
-    if helper.poll() is None and time.monotonic() < deadline:
+    if helper.poll() is None:
         with suppress(ProcessLookupError):
             helper.terminate()
         try:
             _ = helper.wait(timeout=min(0.2, max(0, deadline - time.monotonic())))
         except subprocess.TimeoutExpired:
-            if time.monotonic() < deadline:
+            if helper.poll() is None:
                 with suppress(ProcessLookupError):
                     helper.kill()
     try:
@@ -106,7 +120,7 @@ def start_helper(
             f"READY {identity.invocation_id} {identity.generation} {identity.pid} "
             f"{identity.start_token} {request.sequence}"
         )
-        if not _await_ready(helper, expected, request.deadline - 0.5):
+        if not _await_ready(helper, expected, request.deadline - 0.5, request.stop_deadline):
             raise RuntimeError("lifeline READY mismatch")
         record = evidence.get_worker(worker.identity.invocation_id)
         if (
@@ -120,8 +134,14 @@ def start_helper(
             or record.helper_start_token != identity.start_token
         ):
             raise RuntimeError("lifeline READY not durable")
+        if request.stop_deadline is not None and request.stop_deadline() is not None:
+            raise RuntimeError("lifeline replacement cancelled")
         return helper, write_fd
     except Exception:
         os.close(write_fd)
-        stop_failed_helper(helper, request.deadline)
+        stop_deadline = request.stop_deadline() if request.stop_deadline is not None else None
+        limit = (
+            min(request.deadline, stop_deadline) if stop_deadline is not None else request.deadline
+        )
+        stop_failed_helper(helper, limit)
         raise

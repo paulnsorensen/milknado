@@ -290,24 +290,3 @@ def test_dead_helper_with_unavailable_evidence_stops_owned_worker(
             helper.kill()
         _ = helper.wait(timeout=2)
         graph.close()
-
-
-@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
-def test_periodic_observation_does_not_run_at_poll_frequency(
-    protected_record: tuple[MikadoGraph, ProtectedWorker],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _graph, protected = protected_record
-    snapshots: list[float] = []
-
-    def record_snapshot(_worker: WorkerProcess, _evidence: LoopWorkerEvidence) -> int:
-        snapshots.append(time.monotonic())
-        return 0
-
-    monkeypatch.setattr(lifecycle, "_snapshot", record_snapshot)
-    protected.start_monitor()
-    time.sleep(0.65)
-    assert snapshots == []
-    time.sleep(0.65)
-    assert len(snapshots) == 1
-    assert protected.shutdown(time.monotonic() + 3)

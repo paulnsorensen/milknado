@@ -14,7 +14,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit
 from milknado.loop._process_helper import start_helper as _start_helper
-from milknado.loop._process_identity import identity_state
+from milknado.loop._process_identity import Descendant, identity_state
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 from milknado.loop._process_observation import snapshot as _snapshot
 from milknado.loop._process_registry import LaunchTicket
@@ -62,38 +62,14 @@ class ProtectedWorker:
         finally:
             self._monitor_started.set()
 
-    def _stop_known_worker(self, deadline: float) -> None:
-        _ = terminate_verified(self.identity, (), deadline, self.process)
+    def _stop_known_worker(
+        self, deadline: float, descendants: tuple[Descendant, ...] = ()
+    ) -> None:
+        _ = terminate_verified(self.identity, descendants, deadline, self.process)
 
     def _abort_protection(self, deadline: float) -> None:
         self._failed = True
-        self.close_lifeline()
-        evidence = self._context.evidence.with_deadline(deadline)
-        try:
-            record = evidence.get_worker(self.identity.invocation_id)
-            if record is None or record.ended_at is not None:
-                self._stop_known_worker(deadline)
-                return
-            if (
-                record.observation_owner is None
-                and identity_state(self.identity.pid, self.identity.start_token) == "live"
-            ):
-                with suppress(OSError, RuntimeError):
-                    _ = _snapshot(self.worker, evidence)
-                record = evidence.get_worker(self.identity.invocation_id)
-                if record is None:
-                    self._stop_known_worker(deadline)
-                    return
-            result = terminate_verified(self.identity, record.descendants, deadline, self.process)
-            if result.covered_exited and record.observation_owner is None:
-                evidence.end_worker(
-                    self.identity.invocation_id, record.snapshot_seq, record.helper_generation
-                )
-        except (OSError, RuntimeError):
-            _log.exception(
-                "worker protection cleanup unresolved invocation=%s", self.identity.invocation_id
-            )
-            self._stop_known_worker(deadline)
+        _ = self._shutdown_owned(deadline, release=False)
 
     def _abort_replacement(self) -> None:
         if self.process.poll() is not None:
@@ -134,7 +110,12 @@ class ProtectedWorker:
                 helper, write_fd = _start_helper(
                     self.worker,
                     self._context,
-                    HelperStart(sequence, record.helper_generation + 1, deadline),
+                    HelperStart(
+                        sequence,
+                        record.helper_generation + 1,
+                        deadline,
+                        self._replacement_stop_deadline,
+                    ),
                 )
             except UnconfirmedHelperExit:
                 self._abort_replacement()
@@ -155,6 +136,10 @@ class ProtectedWorker:
             return True
         self._abort_replacement()
         return False
+
+    def _replacement_stop_deadline(self) -> float | None:
+        with self._state_lock:
+            return self._stop_deadline
 
     def _claim_deadline(self, deadline: float) -> float:
         with self._state_lock:
@@ -214,13 +199,15 @@ class ProtectedWorker:
         finally:
             self._cleanup_lock.release()
 
-    def _shutdown_owned(self, deadline: float) -> bool:
+    def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
         evidence = self._context.evidence.with_deadline(deadline)
+        durable_targets: tuple[Descendant, ...] = ()
         try:
             record = evidence.get_worker(self.identity.invocation_id)
             if record is None:
                 self._stop_known_worker(deadline)
                 return False
+            durable_targets = record.descendants
             if record.ended_at is None:
                 if (
                     record.observation_owner is None
@@ -229,8 +216,9 @@ class ProtectedWorker:
                     _ = _snapshot(self.worker, evidence)
                 record = evidence.get_worker(self.identity.invocation_id)
                 if record is None:
-                    self._stop_known_worker(deadline)
+                    self._stop_known_worker(deadline, durable_targets)
                     return False
+                durable_targets = record.descendants
                 result = terminate_verified(
                     self.identity, record.descendants, deadline, self.process
                 )
@@ -239,12 +227,14 @@ class ProtectedWorker:
                 evidence.end_worker(
                     self.identity.invocation_id, record.snapshot_seq, record.helper_generation
                 )
-            if self.ticket is not None:
+            elif not release:
+                self._stop_known_worker(deadline, durable_targets)
+            if release and self.ticket is not None:
                 self.ticket.close()
             return True
         except (OSError, RuntimeError):
             _log.exception("worker shutdown unresolved invocation=%s", self.identity.invocation_id)
-            self._stop_known_worker(deadline)
+            self._stop_known_worker(deadline, durable_targets)
             return False
         finally:
             self.close_lifeline()

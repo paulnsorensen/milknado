@@ -188,7 +188,15 @@ def test_shutdown_during_takeover_uses_first_deadline(
         assert _until(lambda: worker._watch is not None and not worker._watch.is_alive())  # pyright: ignore[reportPrivateUsage]
         assert worker._write_fd is None  # pyright: ignore[reportPrivateUsage]
         assert _until(lambda: worker._helper.poll() is not None, timeout=5)  # pyright: ignore[reportPrivateUsage]
-        assert worker.process.poll() is not None
+        after = graph.runs.get_worker(worker.identity.invocation_id)
+        assert after is not None and after.ended_at is None
+        assert after.ready_generation != after.helper_generation
+        assert after.helper_pid is not None and after.helper_pid != before.helper_pid
+        assert _until(
+            lambda: not psutil.pid_exists(after.helper_pid)
+            or psutil.Process(after.helper_pid).status() == psutil.STATUS_ZOMBIE
+        )
+        assert worker.ticket in registry.tickets
     finally:
         release.set()
         if worker.process.poll() is None:

@@ -25,6 +25,7 @@ from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_helper import (
     HelperStart,
     _await_ready,  # pyright: ignore[reportPrivateUsage]
+    UnconfirmedHelperExit,
     stop_failed_helper,
 )
 from milknado.loop._process_observation import snapshot
@@ -103,6 +104,40 @@ def test_failed_helper_escalates_when_sigterm_ignored(tmp_path: Path) -> None:
         assert helper.returncode == -signal.SIGKILL
         assert helper.stdout is not None and helper.stdout.closed
         assert helper.stderr is not None and helper.stderr.closed
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            _ = helper.wait(timeout=2)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signals are required")
+def test_expired_deadline_still_signals_failed_helper(tmp_path: Path) -> None:
+    ready = tmp_path / "ready"
+    helper = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal,sys,time; from pathlib import Path; "
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "Path(sys.argv[1]).touch(); time.sleep(30)",
+            str(ready),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        limit = time.monotonic() + 2
+        while not ready.exists() and time.monotonic() < limit:
+            time.sleep(0.01)
+        assert ready.exists()
+        start = time.monotonic()
+        try:
+            stop_failed_helper(helper, start - 1)
+        except UnconfirmedHelperExit:
+            pass
+        assert time.monotonic() - start < 0.5
+        assert helper.wait(timeout=2) == -signal.SIGKILL
     finally:
         if helper.poll() is None:
             helper.kill()
