@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import final
@@ -90,9 +91,16 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
         token = psutil.Process(proc.pid).create_time()
     except Exception:
         if gate_write is not None:
-            os.close(gate_write)
-        proc.kill()
-        _ = proc.wait(timeout=1)
+            with suppress(OSError):
+                os.close(gate_write)
+        with suppress(OSError):
+            proc.kill()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            _ = proc.wait(timeout=1)
+        for pipe in (proc.stdin, proc.stdout, proc.stderr):
+            if pipe is not None:
+                with suppress(OSError, ValueError):
+                    pipe.close()
         raise
     identity = WorkerIdentity(options.invocation_id or uuid.uuid4().hex, proc.pid, proc.pid, token)
     return WorkerProcess(proc, identity, gate_write)
