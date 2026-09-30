@@ -49,7 +49,7 @@ class ShutdownIntent:
                 _ = signal.signal(signum, self.record)
 
     @contextmanager
-    def installed(self) -> Generator[None]:
+    def installed(self) -> Generator[None, None, None]:
         signals = [signal.SIGINT, signal.SIGTERM]
         if hangup := cast(signal.Signals | None, getattr(signal, "SIGHUP", None)):
             signals.append(hangup)
