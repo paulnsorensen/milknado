@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -13,13 +14,14 @@ import pytest
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
-from milknado.loop._agent import _ResolvedAgentRun, _run_agent_blocking, _run_agent_streaming
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker,
-    ProtectionContext,
-    SpawnOptions,
-    spawn_protected,
+from milknado.loop._agent import (
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
@@ -40,7 +42,7 @@ raise SystemExit(int(sys.argv[4]))
 """
 
 
-def _until(predicate, timeout: float = 8) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 8) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -139,5 +141,5 @@ def test_successful_replacement_does_not_interrupt_concurrent_generic_run(
             release.touch()
         for worker in workers.values():
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()

@@ -34,23 +34,31 @@ def running_project(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     agent = bin_dir / "claude"
-    agent.write_text(
-        f"#!{sys.executable}\n"
-        "import os,time\n"
-        "from pathlib import Path\n"
-        f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))\n"
-        "while True: time.sleep(1)\n"
+    _ = agent.write_text(
+        "\n".join(
+            (
+                f"#!{sys.executable}",
+                "import os,time",
+                "from pathlib import Path",
+                f"Path({str(tmp_path / 'agent.pid')!r}).write_text(str(os.getpid()))",
+                "while True: time.sleep(1)",
+            )
+        )
+        + "\n"
     )
     agent.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    (root / "milknado.toml").write_text(
-        '[milknado]\nagent_family = "claude"\n'
-        'execution_agent = "claude -p"\nquality_gates = ["true"]\n'
-        "max_iterations = 1\n"
+    _ = (root / "milknado.toml").write_text(
+        """[milknado]
+agent_family = "claude"
+execution_agent = "claude -p"
+quality_gates = ["true"]
+max_iterations = 1
+"""
     )
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
-    subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
-    subprocess.run(
+    _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    _ = subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
+    _ = subprocess.run(
         [
             "git",
             "-c",
@@ -142,7 +150,7 @@ def test_lifeline_supervisor_gap_recovery_verifies_before_release(
     run_id, worker = _create_death_gap(root, graph, node_id, owned)
     if corrupt_identity:
         with sqlite3.connect(graph.db_path) as db:
-            db.execute(
+            _ = db.execute(
                 "UPDATE run_workers SET start_token = ? WHERE invocation_id = ?",
                 (worker.start_token + 1, worker.invocation_id),
             )

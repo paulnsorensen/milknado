@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import psutil
@@ -15,7 +16,11 @@ import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph
-from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess
+from milknado.loop._process_helper import HelperStart, start_helper
+from milknado.loop._process_identity import terminate_verified_result
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 
 pytestmark = pytest.mark.skipif(
@@ -23,7 +28,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _until(predicate, timeout: float = 9) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 9) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -88,11 +93,11 @@ def test_exhaustion_stops_only_affected_invocation(tmp_path: Path) -> None:
     finally:
         for worker in (affected, other):
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
-def test_mismatched_worker_identity_never_signals_live_process(tmp_path: Path) -> None:
+def test_mismatched_worker_identity_never_signals_live_process() -> None:
     process = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
         start_new_session=True,
@@ -100,14 +105,14 @@ def test_mismatched_worker_identity_never_signals_live_process(tmp_path: Path) -
     try:
         token = psutil.Process(process.pid).create_time()
         wrong = WorkerIdentity("wrong", process.pid, process.pid, token + 1)
-        result = lifecycle.terminate_verified(wrong, (), time.monotonic() + 1)
+        result = terminate_verified_result(wrong, (), time.monotonic() + 1)
         assert not result.covered_exited
         assert any("mismatch" in issue for issue in result.unresolved)
         assert process.poll() is None
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=2)
+            _ = process.wait(timeout=2)
 
 
 def test_hung_replacement_keeps_finite_deadline_and_stops_worker(
@@ -117,7 +122,7 @@ def test_hung_replacement_keeps_finite_deadline_and_stops_worker(
     graph, node_id = _graph(tmp_path)
     worker = spawn_protected(_options(tmp_path), _context(graph, "run-1", node_id))
     fake = tmp_path / "hung-helper"
-    fake.write_text("#!/bin/sh\nexec sleep 30\n")
+    _ = fake.write_text("#!/bin/sh\nexec sleep 30\n")
     fake.chmod(0o700)
     helper_pid = 0
     try:
@@ -144,7 +149,7 @@ def test_hung_replacement_keeps_finite_deadline_and_stops_worker(
             if helper.status() != psutil.STATUS_ZOMBIE:
                 helper.kill()
         if worker.process.poll() is None:
-            worker.shutdown(time.monotonic() + 3)
+            _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -157,12 +162,13 @@ def test_shutdown_during_takeover_uses_first_deadline(
     context = _context(graph, "run-1", node_id, registry)
     worker = spawn_protected(_options(tmp_path), context)
     entered, release = threading.Event(), threading.Event()
-    real_start = lifecycle._start_helper
 
-    def held_start(*args, **kwargs):
+    def held_start(
+        gated_worker: WorkerProcess, held_context: ProtectionContext, request: HelperStart
+    ) -> tuple[subprocess.Popen[str], int]:
         entered.set()
         assert release.wait(timeout=4)
-        return real_start(*args, **kwargs)
+        return start_helper(gated_worker, held_context, request)
 
     monkeypatch.setattr(lifecycle, "_start_helper", held_start)
     try:
@@ -181,7 +187,7 @@ def test_shutdown_during_takeover_uses_first_deadline(
     finally:
         release.set()
         if worker.process.poll() is None:
-            worker.shutdown(time.monotonic() + 3)
+            _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -192,13 +198,14 @@ def test_worker_does_not_execute_before_initial_helper_ready(
     graph, node_id = _graph(tmp_path)
     marker = tmp_path / "worked"
     entered, release = threading.Event(), threading.Event()
-    real_start = lifecycle._start_helper
-    owned = []
+    owned: list[ProtectedWorker] = []
 
-    def held_start(*args, **kwargs):
+    def held_start(
+        gated_worker: WorkerProcess, held_context: ProtectionContext, request: HelperStart
+    ) -> tuple[subprocess.Popen[str], int]:
         entered.set()
         assert release.wait(timeout=5)
-        return real_start(*args, **kwargs)
+        return start_helper(gated_worker, held_context, request)
 
     def launch() -> None:
         options = SpawnOptions(
@@ -231,7 +238,7 @@ def test_worker_does_not_execute_before_initial_helper_ready(
         thread.join(timeout=6)
         for worker in owned:
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -242,7 +249,7 @@ def test_repeated_pre_ready_helper_crashes_use_three_replacements(
     graph, node_id = _graph(tmp_path)
     worker = spawn_protected(_options(tmp_path), _context(graph, "run-1", node_id))
     fake = tmp_path / "crashing-helper"
-    fake.write_text("#!/bin/sh\nexit 7\n")
+    _ = fake.write_text("#!/bin/sh\nexit 7\n")
     fake.chmod(0o700)
     try:
         before = graph.runs.get_worker(worker.identity.invocation_id)
@@ -256,5 +263,5 @@ def test_repeated_pre_ready_helper_crashes_use_three_replacements(
         assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
     finally:
         if worker.process.poll() is None:
-            worker.shutdown(time.monotonic() + 3)
+            _ = worker.shutdown(time.monotonic() + 3)
         graph.close()

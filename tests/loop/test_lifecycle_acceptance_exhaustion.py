@@ -4,6 +4,7 @@ import os
 import signal
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -16,16 +17,13 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
-    _ResolvedAgentRun,
-    _run_agent_blocking,
-    _run_agent_streaming,
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker,
-    ProtectionContext,
-    SpawnOptions,
-    spawn_protected,
-)
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
 
 pytestmark = pytest.mark.skipif(
@@ -67,7 +65,7 @@ raise SystemExit(19)
 """
 
 
-def _until(predicate, timeout: float = 10) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 10) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -84,7 +82,9 @@ def _start_run(graph: MikadoGraph, label: str) -> ProtectionContext:
     return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
 
 
-def _launch(context: ProtectionContext, workers: dict[str, ProtectedWorker], label: str):
+def _launch(
+    context: ProtectionContext, workers: dict[str, ProtectedWorker], label: str
+) -> Callable[[SpawnOptions], ProtectedWorker]:
     def spawn(options: SpawnOptions) -> ProtectedWorker:
         worker = spawn_protected(options, context)
         workers[label] = worker
@@ -93,7 +93,9 @@ def _launch(context: ProtectionContext, workers: dict[str, ProtectedWorker], lab
     return spawn
 
 
-def _generic_run(tmp_path: Path, label: str, spawn, iteration: int) -> _ResolvedAgentRun:
+def _generic_run(
+    tmp_path: Path, label: str, spawn: Callable[[SpawnOptions], ProtectedWorker], iteration: int
+) -> _ResolvedAgentRun:
     return _ResolvedAgentRun(
         [
             sys.executable,
@@ -111,9 +113,11 @@ def _generic_run(tmp_path: Path, label: str, spawn, iteration: int) -> _Resolved
     )
 
 
-def _native_run(tmp_path: Path, stage: Path, release: Path, spawn) -> AgentRunSpec:
+def _native_run(
+    tmp_path: Path, stage: Path, release: Path, spawn: Callable[[SpawnOptions], ProtectedWorker]
+) -> AgentRunSpec:
     script = tmp_path / "native.py"
-    script.write_text(_NATIVE)
+    _ = script.write_text(_NATIVE)
     executable = tmp_path / "claude"
     executable.symlink_to(sys.executable)
     return AgentRunSpec(
@@ -141,7 +145,7 @@ def _exhaust(
 ) -> None:
     if failure == "hung":
         fake = graph.db_path.parent / "hung-helper"
-        fake.write_text("#!/bin/sh\nexec sleep 30\n")
+        _ = fake.write_text("#!/bin/sh\nexec sleep 30\n")
         fake.chmod(0o700)
         monkeypatch.setattr(sys, "executable", str(fake))
         record = graph.runs.get_worker(worker.identity.invocation_id)
@@ -237,5 +241,5 @@ def test_agent_exhaustion_closes_only_affected_invocation(
     finally:
         for worker in workers.values():
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()

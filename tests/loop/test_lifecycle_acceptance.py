@@ -1,29 +1,34 @@
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
+import msgspec
 import psutil
 import pytest
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker,
-    ProtectionContext,
-    SpawnOptions,
-    spawn_protected,
-)
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
 )
+
+
+class _SupervisorFacts(msgspec.Struct, frozen=True):
+    invocation: str
+    pid: int
+    helper: int
+
 
 _SUPERVISOR = """
 import json
@@ -53,7 +58,7 @@ while True:
 """
 
 
-def _until(predicate, timeout: float = 8) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 8) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -122,33 +127,33 @@ def test_ready_lifeline_reaps_worker_after_supervisor_sigkill(
     token = 0.0
     try:
         assert _until(marker.exists), "supervisor did not publish protected worker readiness"
-        facts = json.loads(marker.read_text())
-        record = graph.runs.get_worker(facts["invocation"])
+        facts = msgspec.json.decode(marker.read_bytes(), type=_SupervisorFacts)
+        record = graph.runs.get_worker(facts.invocation)
         assert record is not None and record.ready_generation == 0
         pid, token = record.pid, record.start_token
         assert _alive(pid, token)
         if replace:
-            os.kill(facts["helper"], signal.SIGKILL)
+            os.kill(facts.helper, signal.SIGKILL)
             assert _until(
                 lambda: (
-                    (current := graph.runs.get_worker(facts["invocation"])) is not None
+                    (current := graph.runs.get_worker(facts.invocation)) is not None
                     and current.ready_generation == 1
-                    and current.helper_pid != facts["helper"]
+                    and current.helper_pid != facts.helper
                 )
             ), "replacement never became durably ready"
             assert _alive(pid, token)
         os.kill(supervisor.pid, signal.SIGKILL)
-        supervisor.wait(timeout=2)
+        _ = supervisor.wait(timeout=2)
         assert _until(lambda: not _alive(pid, token), timeout=6), (
             "ready lifeline did not reap worker"
         )
-        record = graph.runs.get_worker(facts["invocation"])
+        record = graph.runs.get_worker(facts.invocation)
         assert record is not None
         assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
     finally:
         if supervisor.poll() is None:
             supervisor.kill()
-            supervisor.wait(timeout=2)
+            _ = supervisor.wait(timeout=2)
         if pid and _alive(pid, token):
             os.killpg(pid, signal.SIGKILL)
         graph.close()
@@ -167,21 +172,21 @@ def test_helper_supervisor_death_gap_retains_worker_record(tmp_path: Path) -> No
     token = 0.0
     try:
         assert _until(marker.exists)
-        facts = json.loads(marker.read_text())
-        record = graph.runs.get_worker(facts["invocation"])
+        facts = msgspec.json.decode(marker.read_bytes(), type=_SupervisorFacts)
+        record = graph.runs.get_worker(facts.invocation)
         assert record is not None
         pid, token = record.pid, record.start_token
-        os.kill(facts["helper"], signal.SIGSTOP)
+        os.kill(facts.helper, signal.SIGSTOP)
         os.kill(supervisor.pid, signal.SIGKILL)
-        supervisor.wait(timeout=2)
-        os.kill(facts["helper"], signal.SIGKILL)
+        _ = supervisor.wait(timeout=2)
+        os.kill(facts.helper, signal.SIGKILL)
         assert _alive(pid, token)
-        record = graph.runs.get_worker(facts["invocation"])
+        record = graph.runs.get_worker(facts.invocation)
         assert record is not None and record.ended_at is None
     finally:
         if supervisor.poll() is None:
             supervisor.kill()
-            supervisor.wait(timeout=2)
+            _ = supervisor.wait(timeout=2)
         if pid and _alive(pid, token):
             os.killpg(pid, signal.SIGKILL)
         graph.close()
@@ -201,7 +206,7 @@ def test_helper_replacement_keeps_bidirectional_worker_and_exit_status(tmp_path:
         assert worker.process.stdout is not None
         assert worker.process.stdin is not None
         assert worker.process.stdout.readline() == "ready\n"
-        worker.process.stdin.write("before\n")
+        _ = worker.process.stdin.write("before\n")
         worker.process.stdin.flush()
         assert worker.process.stdout.readline() == "first:before\n"
         before = graph.runs.get_worker(worker.identity.invocation_id)
@@ -215,7 +220,7 @@ def test_helper_replacement_keeps_bidirectional_worker_and_exit_status(tmp_path:
         )
         after = graph.runs.get_worker(worker.identity.invocation_id)
         assert after is not None and after.pid == before.pid == worker.process.pid
-        worker.process.stdin.write("after\n")
+        _ = worker.process.stdin.write("after\n")
         worker.process.stdin.flush()
         assert worker.process.stdout.readline() == "second:after\n"
         assert worker.process.wait(timeout=5) == 7
@@ -224,7 +229,7 @@ def test_helper_replacement_keeps_bidirectional_worker_and_exit_status(tmp_path:
     finally:
         if worker.process.poll() is None:
             os.killpg(worker.process.pid, signal.SIGKILL)
-            worker.process.wait(timeout=2)
+            _ = worker.process.wait(timeout=2)
         graph.close()
 
 
@@ -258,7 +263,7 @@ def test_repeated_ready_helper_deaths_stop_worker_after_three_replacements(tmp_p
     finally:
         if worker.process.poll() is None:
             os.killpg(worker.process.pid, signal.SIGKILL)
-            worker.process.wait(timeout=2)
+            _ = worker.process.wait(timeout=2)
         graph.close()
 
 
@@ -274,5 +279,5 @@ def test_normal_worker_exit_does_not_launch_replacement(tmp_path: Path) -> None:
     finally:
         if worker.process.poll() is None:
             os.killpg(worker.process.pid, signal.SIGKILL)
-            worker.process.wait(timeout=2)
+            _ = worker.process.wait(timeout=2)
         graph.close()

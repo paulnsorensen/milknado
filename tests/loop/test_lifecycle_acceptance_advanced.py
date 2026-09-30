@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -16,16 +17,13 @@ from milknado.domains.common import HelperIdentity, SessionInput, WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import (
     AgentRunSpec,
-    _ResolvedAgentRun,
-    _run_agent_blocking,
-    _run_agent_streaming,
+    _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_blocking,  # pyright: ignore[reportPrivateUsage]
+    _run_agent_streaming,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.loop._process_lifecycle import (
-    ProtectedWorker,
-    ProtectionContext,
-    SpawnOptions,
-    spawn_protected,
-)
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
 
 pytestmark = pytest.mark.skipif(
@@ -33,7 +31,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _until(predicate, timeout: float = 8) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 8) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -116,7 +114,7 @@ raise SystemExit(11)
         release.touch()
         for worker in owned:
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -149,7 +147,7 @@ def test_native_session_preserves_worker_and_result_during_replacement(tmp_path:
     graph, context = _context(tmp_path)
     stage, release = tmp_path / "stage", tmp_path / "release"
     script = tmp_path / "fixture.py"
-    script.write_text(_NATIVE)
+    _ = script.write_text(_NATIVE)
     executable = tmp_path / "claude"
     executable.symlink_to(sys.executable)
     owned: list[ProtectedWorker] = []
@@ -194,7 +192,7 @@ def test_native_session_preserves_worker_and_result_during_replacement(tmp_path:
         release.touch()
         for worker in owned:
             if worker.process.poll() is None:
-                worker.shutdown(time.monotonic() + 3)
+                _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -238,7 +236,7 @@ def test_stale_ready_generation_cannot_replace_current_helper(tmp_path: Path) ->
         )
         assert worker.process.poll() is None
     finally:
-        worker.shutdown(time.monotonic() + 3)
+        _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
 
 
@@ -290,5 +288,5 @@ def test_replacement_retains_observed_setsid_descendant(tmp_path: Path) -> None:
             if child.status() != psutil.STATUS_ZOMBIE:
                 child.kill()
         if worker.process.poll() is None:
-            worker.shutdown(time.monotonic() + 3)
+            _ = worker.shutdown(time.monotonic() + 3)
         graph.close()
