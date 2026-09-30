@@ -898,10 +898,13 @@ def _run_on_fake_clock(
             _set_attr(run_loop, "_capacity_deferred", False)
         return result
 
+    def dispatch_any(*_args: object) -> tuple[int, int]:
+        return dispatch()
+
     _set_attr(
         run_loop,
         "_dispatch_if_scheduling_open",
-        MagicMock(side_effect=lambda *_args: dispatch()),
+        MagicMock(side_effect=dispatch_any),
     )
     _set_attr(run_loop, "_retry_deferred_if_due", MagicMock(side_effect=retries))
     _set_attr(run_loop, "_handle_completion_timeout", MagicMock(return_value=1))
@@ -913,6 +916,7 @@ def _run_on_fake_clock(
     def wait(
         active_run_ids: set[str], timeout: float | None = None
     ) -> tuple[str, TerminalRunOutcome | ProgressEvent]:
+        del timeout  # signature mirrors LoopPort; the fake ignores the timeout
         advance, event = pending.pop(0)
         clock[0] += advance
         if not pending:

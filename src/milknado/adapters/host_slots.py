@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common.protocols import SlotLease
+from milknado.domains.common import SlotLease
 from milknado.domains.graph import HostCapacityFull
 
 _logger = logging.getLogger(__name__)

@@ -42,6 +42,7 @@ def test_main_logs_terminal_event_with_run_id(
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
         max_iterations: int = 8
+        host_worker_limit: int = 6
         max_turns: int = 60
         commit_footer: str | None = None
 
@@ -92,8 +93,12 @@ def test_main_logs_terminal_event_with_run_id(
     def _make_loop(*_args: object, **_kwargs: object) -> _StubLoop:
         return _StubLoop()
 
-    def _make_executor(**_kwargs: object) -> object:
-        return object()
+    class _StubExecutor:
+        def use_host_capacity(self, _pool: object) -> None:
+            return None
+
+    def _make_executor(**_kwargs: object) -> _StubExecutor:
+        return _StubExecutor()
 
     captured_configs: list[dict[str, object]] = []
 

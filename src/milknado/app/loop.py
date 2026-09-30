@@ -25,9 +25,9 @@ from milknado.domains.common import (
     NodeStatus,
     RunFenceLostError,
     RunResult,
+    SlotLease,
     UnlandedWorkError,
 )
-from milknado.domains.common.protocols import SlotLease
 from milknado.domains.dispatch import (
     ProcessPort,
     RunWindow,
@@ -248,10 +248,10 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
             "limit": exc.limit,
             "detail": (
                 f"host worker pool full ({exc.running}/{exc.limit}), possibly held by "
-                "other projects; wait for a worker to finish, then start this node again"
+                + "other projects; wait for a worker to finish, then start this node again"
                 if host_full
                 else f"concurrency limit reached: {exc.running} of {exc.limit} tasks are "
-                "running; wait for a task to finish, then start this node again"
+                + "running; wait for a task to finish, then start this node again"
             ),
         }
     run_started = False

@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
+from typing_extensions import override
 
 from milknado.adapters import FlockSlotPool
 from milknado.app.project import open_graph
@@ -303,9 +304,10 @@ class _StallingLoop(FakeLoop):
 
     def __init__(self, other_lease: SlotLease) -> None:
         super().__init__(id_prefix="stall")
-        self._other = other_lease
+        self._other: SlotLease = other_lease
         self.timeouts: list[float | None] = []
 
+    @override
     def wait_for_next_completion(  # pyright: ignore[reportIncompatibleMethodOverride]
         self, active_run_ids: set[str], timeout: float | None = None
     ) -> tuple[str, object]:
@@ -384,7 +386,7 @@ class TestDeferredNodeRetry:
                 Callable[[ExecutionConfig, int], tuple[int, int]],
                 getattr(driver, "_retry_deferred_if_due"),  # noqa: B009
             )
-            interval = run_loop_module.IDLE_RESCAN_SECONDS
+            interval = cast(float, getattr(run_loop_module, "IDLE_RESCAN_SECONDS"))  # noqa: B009
             monotonic = "milknado.domains.execution.run_loop.time.monotonic"
             with patch(monotonic, side_effect=lambda: clock[0]):
                 _ = retry(config, 2)
