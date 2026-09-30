@@ -618,13 +618,16 @@ def test_capture_session_handles_nested_json_and_failures(
         '{"event":{"session_id":"nested"}}',
     ]
     executor = _executor(graph, tmp_path, loop)
-    node = MikadoNode(id=9, description="session", run_id="worker", worktree_path=str(tmp_path))
+    node = MikadoNode(
+        id=9, description="session", run_id="worker", worktree_path=str(tmp_path / "stale")
+    )
     _seed_context(executor, 9, tmp_path, "worker")
     session = executor._capture_session(  # pyright: ignore[reportPrivateUsage]
         node, _config(tmp_path, agent_family="codex")
     )
     assert session is not None
     assert session.session_id == "nested"
+    assert session.worktree_path == str(tmp_path.resolve())
     assert (
         executor._capture_session(  # pyright: ignore[reportPrivateUsage]
             node, _config(tmp_path, agent_family="codex")

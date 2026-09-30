@@ -881,7 +881,10 @@ class Executor:
             raise ValueError(
                 f"node {node.id} worker output did not contain a resumable session id"
             )
-        worktree = Path(node.worktree_path or config.project_root).resolve()
+        session_worktree = (
+            context.worktree if context else Path(node.worktree_path or config.project_root)
+        )
+        worktree = session_worktree.resolve()
         session = NodeAgentSession(
             node_id=node.id,
             family=family,
@@ -1354,8 +1357,10 @@ class Executor:
 
         self._require_worker_cleanup(node)
         self._validate_completion_target(node_id, feature_branch)
-        worktree = Path(node.worktree_path) if node.worktree_path else None
         context = self._context_by_node.get(node_id)
+        worktree = Path(node.worktree_path) if node.worktree_path else None
+        if context is not None:
+            worktree = context.worktree
         config = context.config if context else None
         notification = ReviewNotification(True, True)
         if worktree is not None and config is not None and self._review_enabled(config):
