@@ -425,6 +425,7 @@ def _wait_for_process(
     deadline: float | None,
     force_stop_event: threading.Event | None,
     windows_job: _WindowsJob | None,
+    protected: ProtectedWorker | None,
     correlation: str,
 ) -> tuple[int | None, bool, bool]:
     """Interruptibly reap a worker, returning (returncode, timed_out, force_stopped)."""
@@ -435,18 +436,21 @@ def _wait_for_process(
                 proc.pid,
                 correlation,
             )
-            _ensure_process_dead(proc, windows_job)
+            if protected is None:
+                _ensure_process_dead(proc, windows_job)
             return None, False, True
         remaining = max(deadline - time.monotonic(), 0) if deadline is not None else 0.1
         if deadline is not None and remaining == 0:
-            _ensure_process_dead(proc, windows_job)
+            if protected is None:
+                _ensure_process_dead(proc, windows_job)
             return None, True, False
         wait_for = min(remaining, 0.1)
         try:
             return proc.wait(timeout=wait_for), False, False
         except subprocess.TimeoutExpired as exc:
             if exc.timeout != wait_for:
-                _ensure_process_dead(proc, windows_job)
+                if protected is None:
+                    _ensure_process_dead(proc, windows_job)
                 return None, True, False
             continue
     return proc.returncode, False, False
@@ -861,13 +865,15 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
             pump_threads=pump_threads,
         )
         if stream.timed_out or stream.turn_capped or stream.force_stopped:
-            _ensure_process_dead(proc, windows_job)
+            if protected is None:
+                _ensure_process_dead(proc, windows_job)
         else:
             _, reaped_timeout, reaped_force_stop = _wait_for_process(
                 proc,
                 deadline=deadline,
                 force_stop_event=run.force_stop_event,
                 windows_job=windows_job,
+                protected=protected,
                 correlation=correlation,
             )
             if reaped_timeout or reaped_force_stop:
@@ -881,9 +887,11 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
                     completion_detected=stream.completion_detected,
                 )
     finally:
-        _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
-        if protected is not None and not protected.finish():
-            raise RuntimeError("worker cleanup remains unresolved")
+        if protected is not None:
+            if not protected.cleanup((*pump_threads, writer_thread)):
+                raise RuntimeError("worker cleanup remains unresolved")
+        else:
+            _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text
@@ -1096,18 +1104,17 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             deadline=deadline,
             force_stop_event=run.force_stop_event,
             windows_job=windows_job,
+            protected=protected,
             correlation=f"iteration={run.iteration}",
         )
     finally:
-        _cleanup_agent(
-            proc,
-            stdout_thread,
-            stderr_thread,
-            writer_thread,
-            windows_job=windows_job,
-        )
-        if protected is not None and not protected.finish():
-            raise RuntimeError("worker cleanup remains unresolved")
+        if protected is not None:
+            if not protected.cleanup((stdout_thread, stderr_thread, writer_thread)):
+                raise RuntimeError("worker cleanup remains unresolved")
+        else:
+            _cleanup_agent(
+                proc, stdout_thread, stderr_thread, writer_thread, windows_job=windows_job
+            )
 
     stdout = stdout_capture.text
     stderr = stderr_capture.text

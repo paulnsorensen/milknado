@@ -193,7 +193,7 @@ class _SessionExecution:
                 self.outcome.timed_out = True
                 break
             submitted = self.submit_inputs()
-            if self.proc.poll() is not None:
+            if self.proc.poll() is not None and self.protected is None:
                 terminate(self.proc)
             if self.outcome.done and not submitted and self.lines.empty():
                 time.sleep(POLL_INTERVAL)
@@ -221,15 +221,17 @@ class _SessionExecution:
                 self.outcome.capped = True
                 break
         assert self.proc is not None
-        finish_process(
-            self.proc,
-            graceful=not (
-                self.outcome.timed_out
-                or self.outcome.force_stopped
-                or not self.outcome.done
-                or self.outcome.capped
-            ),
+        graceful = not (
+            self.outcome.timed_out
+            or self.outcome.force_stopped
+            or not self.outcome.done
+            or self.outcome.capped
         )
+        if self.protected is not None:
+            if not self.protected.complete(graceful=graceful):
+                raise RuntimeError("worker cleanup remains unresolved")
+        else:
+            finish_process(self.proc, graceful=graceful)
         drain(self.lines, self.eof_streams, context)
 
     def result(self) -> AgentResult:
@@ -264,10 +266,11 @@ class _SessionExecution:
         )
 
     def cleanup(self) -> None:
-        if self.proc is not None:
+        if self.protected is not None:
+            if not self.protected.cleanup(tuple(self.threads), stop=self.stop):
+                raise RuntimeError("worker cleanup remains unresolved")
+        elif self.proc is not None:
             cleanup_process(self.proc, self.stop, tuple(self.threads))
-        if self.protected is not None and not self.protected.finish():
-            raise RuntimeError("worker cleanup remains unresolved")
         if self.log_handle is not None:
             self.log_handle.close()
         if self.wind_down is not None:

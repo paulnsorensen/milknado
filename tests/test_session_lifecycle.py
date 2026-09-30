@@ -17,6 +17,7 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentRunSpec, OutputLineCallback
 from milknado.loop._process_lifecycle import ProtectionContext, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
+from milknado.loop.sessions import _runtime as session_runtime
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
 
 _SCRIPT = """\
@@ -311,7 +312,15 @@ def test_structured_session_hard_cap_stops_at_the_tool_boundary(tmp_path: Path) 
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
-def test_structured_session_uses_same_protected_worker(tmp_path: Path) -> None:
+def test_structured_session_uses_same_protected_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def legacy_cleanup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("protected worker used legacy process cleanup")
+
+    monkeypatch.setattr(session_runtime, "cleanup_process", legacy_cleanup)
+    monkeypatch.setattr(session_runtime, "finish_process", legacy_cleanup)
+    monkeypatch.setattr(session_runtime, "terminate", legacy_cleanup)
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)

@@ -6,6 +6,7 @@ import os
 import signal
 import subprocess
 import time
+from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
 import psutil
@@ -156,3 +157,19 @@ def terminate_verified(
         except subprocess.TimeoutExpired:
             errors.add("worker wait timed out")
     return tuple(sorted(errors | set(_confirm(worker, descendants, deadline))))
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupResult:
+    covered_exited: bool
+    unresolved: tuple[str, ...]
+
+
+def terminate_verified_result(
+    worker: WorkerIdentity,
+    retained: tuple[Descendant, ...],
+    deadline: float,
+    process: subprocess.Popen[bytes] | subprocess.Popen[str] | None = None,
+) -> CleanupResult:
+    unresolved = terminate_verified(worker, retained, deadline, process)
+    return CleanupResult(not unresolved, unresolved)

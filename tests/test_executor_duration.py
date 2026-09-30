@@ -162,6 +162,10 @@ class _FakeLoop:
         _ = deadline
         return True
 
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = graph_run_id, deadline
+        return True
+
     def list_runs(self) -> list[_FakeRun]:
         return []
 

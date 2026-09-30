@@ -45,7 +45,7 @@ from milknado.domains.execution import (
     RebaseConflict,
     RunLoop,
 )
-from milknado.domains.execution._models import CompletionResult, DispatchResult
+from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
 from milknado.domains.execution.run_loop._completion import handle_completion
@@ -205,6 +205,10 @@ class _ReviewLoop:
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = run_id, timeout
+        return True
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = graph_run_id, deadline
         return True
 
     def list_runs(self) -> Sequence[_Run]:
@@ -809,6 +813,35 @@ def test_review_failure_blocks_without_redispatch(
     assert node.status.value == "blocked"
 
 
+def test_unconfirmed_reviewer_preserves_node_run_and_worktree(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    class UnconfirmedReviewLoop(_ReviewLoop):
+        def run_node_review(  # pyright: ignore[reportImplicitOverride]
+            self,
+            agent: str,
+            prompt: str,
+            worktree: Path,
+            project_root: Path,
+            *,
+            timeout_seconds: float,
+            graph_run_id: str,
+        ) -> ReviewVerdict:
+            _ = agent, prompt, worktree, project_root, timeout_seconds
+            raise PreservedWorkerRun(1, graph_run_id)
+
+    executor = _executor(graph, tmp_path, UnconfirmedReviewLoop([True]))
+    _ = graph.add_node("review owner")
+    dispatched = executor.dispatch(1, _config(tmp_path))
+    with pytest.raises(PreservedWorkerRun) as failure:
+        _ = executor.complete(1, "main")
+    assert failure.value.run_id == dispatched.run_id
+    node = graph.get_node(1)
+    assert node is not None and node.status.value == "running"
+    assert dispatched.worktree.exists()
+    assert graph.runs.get(dispatched.run_id)["status"] == "running"
+
+
 def test_review_findings_write_failure_still_audits_and_blocks(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -895,14 +928,14 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
 
     failed_manager = Manager(RuntimeError("stop failed"))
     failed_events = FailedEvents()
-    failed = _drain_review_run(
-        failed_manager,
-        "failed",
-        failed_events,
-        1800.0,
-    )
-    assert failed.approved is False
-    assert "event stream failed" in failed.findings_md
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = _drain_review_run(failed_manager, "failed", failed_events, 1800.0)
+    assert failed_manager.stopped
+
+    unconfirmed_manager = Manager()
+    unconfirmed_manager.stop_and_join = lambda *_args, **_kwargs: False  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = _drain_review_run(unconfirmed_manager, "running", empty_events, 1800.0)
 
 
 def test_agent_session_parser_rejects_bad_shapes() -> None:

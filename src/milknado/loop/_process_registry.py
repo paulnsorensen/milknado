@@ -11,8 +11,9 @@ _log = logging.getLogger(__name__)
 
 
 class LaunchTicket:
-    def __init__(self, registry: WorkerRegistry) -> None:
+    def __init__(self, registry: WorkerRegistry, graph_run_id: str | None) -> None:
         self._registry = registry
+        self.graph_run_id = graph_run_id
         self._gate_close: Callable[[], None] | None = None
         self._shutdown: Callable[[float], bool] | None = None
 
@@ -68,11 +69,11 @@ class WorkerRegistry:
     def _requested(self) -> bool:
         return self._stopping or self._shutdown_intent()
 
-    def reserve(self) -> LaunchTicket:
+    def reserve(self, graph_run_id: str | None = None) -> LaunchTicket:
         with self._lock:
             if self._requested():
                 raise RuntimeError("worker admission is closed")
-            ticket = LaunchTicket(self)
+            ticket = LaunchTicket(self, graph_run_id)
             self._tickets.add(ticket)
             return ticket
 
@@ -82,11 +83,22 @@ class WorkerRegistry:
             self._deadline = deadline if self._deadline is None else min(self._deadline, deadline)
             active = tuple(self._tickets)
             effective_deadline = self._deadline
+        return self._stop_tickets(active, effective_deadline)
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        with self._lock:
+            active = tuple(
+                ticket for ticket in self._tickets if ticket.graph_run_id == graph_run_id
+            )
+        return self._stop_tickets(active, deadline)
+
+    @staticmethod
+    def _stop_tickets(active: tuple[LaunchTicket, ...], deadline: float) -> bool:
         results = [False] * len(active)
 
         def stop_one(index: int, ticket: LaunchTicket) -> None:
             try:
-                results[index] = ticket.stop(effective_deadline)
+                results[index] = ticket.stop(deadline)
             except Exception:
                 _log.exception("worker shutdown failed")
 
@@ -97,5 +109,5 @@ class WorkerRegistry:
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join(timeout=max(0, effective_deadline - time.monotonic()))
+            thread.join(timeout=max(0, deadline - time.monotonic()))
         return all(results) and all(not thread.is_alive() for thread in threads)

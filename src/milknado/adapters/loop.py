@@ -30,7 +30,7 @@ from milknado.domains.common import (
     WorkerOwner,
     build_resume_command,
 )
-from milknado.domains.execution import build_completion_verifier
+from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
 from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
 from milknado.loop._process_lifecycle import ProtectedWorker, ProtectionContext, SpawnOptions, spawn_protected
@@ -127,10 +127,10 @@ class LoopAdapter(LoopSessionMixin):
             config.completion_verifier = build_completion_verifier(
                 loop_dir, quality_gates, base_oid=base_oid
             )
+        if os.name != "nt" and self._graph is not None and run_id is None:
+            raise RuntimeError("graph node run requires a graph run ID")
         run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
         if os.name != "nt":
-            if self._graph is not None and run_id is None:
-                raise RuntimeError("graph node run requires a graph run ID")
             config.spawn_worker = lambda options: self._launch_worker(
                 options, run.state.run_id, run_id
             )
@@ -149,6 +149,9 @@ class LoopAdapter(LoopSessionMixin):
 
     def stop_active_workers(self, deadline: float) -> bool:
         return self._worker_registry.stop_all(deadline)
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        return self._worker_registry.stop_run_workers(graph_run_id, deadline)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.force_stop_and_join(run_id, timeout)
@@ -334,7 +337,17 @@ class LoopAdapter(LoopSessionMixin):
                     options, run.state.run_id, graph_run_id
                 )
             local_manager.start_run(run.state.run_id)
-            return _drain_review_run(local_manager, run.state.run_id, local_queue, timeout_seconds)
+            try:
+                return _drain_review_run(
+                    local_manager, run.state.run_id, local_queue, timeout_seconds
+                )
+            except _UnconfirmedReviewStop as exc:
+                if self._graph is None or graph_run_id is None:
+                    raise
+                graph_run = self._graph.runs.get(graph_run_id)
+                if graph_run is None:
+                    raise RuntimeError("review owner row vanished before stop confirmation") from exc
+                raise PreservedWorkerRun(graph_run["node_id"], graph_run_id) from exc
 
     def generate_loop_md(
         self,
@@ -399,6 +412,20 @@ def _drain_verify_run(
     return _parse_verify_output("\n".join(output_parts))
 
 
+class _UnconfirmedReviewStop(RuntimeError):
+    def __init__(self, run_id: str) -> None:
+        super().__init__(f"reviewer stop was not confirmed: {run_id}")
+
+
+def _require_review_stop(local_manager: RunManager, run_id: str) -> None:
+    try:
+        if local_manager.stop_and_join(run_id, timeout=5.0):
+            return
+    except Exception as exc:
+        raise _UnconfirmedReviewStop(run_id) from exc
+    raise _UnconfirmedReviewStop(run_id)
+
+
 def _drain_review_run(
     local_manager: RunManager,
     run_id: str,
@@ -412,7 +439,7 @@ def _drain_review_run(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
+                _require_review_stop(local_manager, run_id)
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
@@ -421,27 +448,23 @@ def _drain_review_run(
             try:
                 event = ev_queue.get(timeout=remaining)
             except queue.Empty:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
+                _require_review_stop(local_manager, run_id)
                 return ReviewVerdict(
                     approved=False,
                     findings_md="reviewer timed out before producing a verdict",
                     error=True,
                 )
-            if event.type in {
-                EventType.ITERATION_COMPLETED,
-                EventType.ITERATION_FAILED,
-            }:
+            if event.type in {EventType.ITERATION_COMPLETED, EventType.ITERATION_FAILED}:
                 text = _event_text(event.data, "result_text", "echo_stdout")
                 if text:
                     output_parts.append(text)
             elif event.type == EventType.RUN_STOPPED:
                 break
+    except _UnconfirmedReviewStop:
+        raise
     except Exception as exc:
         _logger.exception("node review drain failed for run_id=%s", run_id)
-        try:
-            _ = local_manager.stop_and_join(run_id, timeout=5.0)
-        except Exception:
-            _logger.exception("node review stop failed for run_id=%s", run_id)
+        _require_review_stop(local_manager, run_id)
         return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}", error=True)
     return _parse_review_verdict("\n".join(output_parts))
 

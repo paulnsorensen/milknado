@@ -4,13 +4,16 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 import psutil
 import pytest
 
+import milknado.loop._agent as agent
 import milknado.loop._process_lifecycle as lifecycle
+import milknado.loop._process_observation as observation
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
@@ -45,7 +48,42 @@ def test_protected_invocation_preserves_output_and_closes_record(tmp_path: Path)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
-def test_blocking_agent_uses_protected_worker_without_changing_output(tmp_path: Path) -> None:
+def test_shared_owner_stops_worker_and_drains_its_pipes(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    worker = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(30)"),
+            tmp_path, None, True, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        ),
+        _context(graph, node.id),
+    )
+    assert worker.process.stdout is not None
+    output: list[str] = []
+    reader = threading.Thread(target=lambda: output.append(worker.process.stdout.read()))
+    reader.start()
+    try:
+        assert worker.cleanup((reader,), deadline=time.monotonic() + 4)
+        assert not reader.is_alive()
+        assert worker.process.stdout.closed
+        assert worker.process.stderr is not None and worker.process.stderr.closed
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        if worker.process.poll() is None:
+            worker.process.kill()
+            _ = worker.process.wait(timeout=1)
+        graph.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_blocking_agent_uses_protected_worker_without_changing_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def legacy_cleanup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("protected worker used legacy cleanup")
+
+    monkeypatch.setattr(agent, "_cleanup_agent", legacy_cleanup)
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
@@ -66,7 +104,13 @@ def test_blocking_agent_uses_protected_worker_without_changing_output(tmp_path: 
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
-def test_streaming_agent_preserves_json_framing(tmp_path: Path) -> None:
+def test_streaming_agent_preserves_json_framing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def legacy_cleanup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("protected worker used legacy cleanup")
+
+    monkeypatch.setattr(agent, "_cleanup_agent", legacy_cleanup)
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("worker")
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
@@ -141,7 +185,7 @@ def test_failed_observation_stops_worker_and_keeps_open_marker(
         def fail_observation(_identity):
             raise RuntimeError("simulated observation failure")
 
-        monkeypatch.setattr(lifecycle, "observe_descendants", fail_observation)
+        monkeypatch.setattr(observation, "observe_descendants", fail_observation)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline and worker.process.poll() is None:
             time.sleep(0.05)

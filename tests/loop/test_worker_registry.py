@@ -118,3 +118,16 @@ def test_registry_attempts_all_active_workers_with_one_deadline() -> None:
     assert first.activate(lambda: None, shutdown)
     assert second.activate(lambda: None, shutdown)
     assert registry.stop_all(time.monotonic() + 0.5)
+
+
+def test_registry_stops_only_tickets_for_graph_run() -> None:
+    registry = WorkerRegistry()
+    selected = registry.reserve("run-1")
+    unrelated = registry.reserve("run-2")
+    stopped: list[str] = []
+    assert selected.activate(lambda: None, lambda _: stopped.append("run-1") is None)
+    assert unrelated.activate(lambda: None, lambda _: stopped.append("run-2") is None)
+
+    assert registry.stop_run_workers("run-1", time.monotonic() + 1)
+    assert stopped == ["run-1"]
+    assert not unrelated.cancelled

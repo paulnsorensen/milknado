@@ -1161,8 +1161,19 @@ class Executor:
         return self._stop_with_bookkeeping(run_id, timeout, force=False)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Force-stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=True)
+        """Force-stop the graph run and its associated reviewer workers."""
+        deadline = time.monotonic() + (
+            timeout if timeout is not None else _LOOP_CANCEL_STOP_TIMEOUT_SECS
+        )
+        try:
+            stopped = self._stop_with_bookkeeping(
+                run_id, max(0, deadline - time.monotonic()), force=True
+            )
+        finally:
+            reviewers_stopped = self._loop.stop_run_workers(run_id, deadline)
+        if not reviewers_stopped:
+            self._unconfirmed_stop_run_ids.add(run_id)
+        return stopped and reviewers_stopped
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
         target_branch = self._target_branch_by_node.get(node_id)
@@ -1357,6 +1368,8 @@ class Executor:
     ) -> tuple[CompletionResult | None, ReviewNotification]:
         try:
             approved, findings, review_error = self._run_review(node, worktree, config)
+        except PreservedWorkerRun as exc:
+            raise PreservedWorkerRun(node.id, exc.run_id, node.run_id) from exc
         except Exception as exc:
             review_error = True
             approved = False

@@ -10,12 +10,8 @@ import time
 from typing import Protocol
 
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
-from milknado.loop._process_lifecycle import (
-    Descendant,
-    identity_state,
-    observe_descendants,
-    terminate_verified,
-)
+from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
+from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
 
 _log = logging.getLogger(__name__)
