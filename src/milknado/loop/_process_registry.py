@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 from collections.abc import Callable
+
+_log = logging.getLogger(__name__)
 
 
 class LaunchTicket:
@@ -78,5 +82,20 @@ class WorkerRegistry:
             self._deadline = deadline if self._deadline is None else min(self._deadline, deadline)
             active = tuple(self._tickets)
             effective_deadline = self._deadline
-        results = [ticket.stop(effective_deadline) for ticket in active]
-        return all(results)
+        results = [False] * len(active)
+
+        def stop_one(index: int, ticket: LaunchTicket) -> None:
+            try:
+                results[index] = ticket.stop(effective_deadline)
+            except Exception:
+                _log.exception("worker shutdown failed")
+
+        threads = [
+            threading.Thread(target=stop_one, args=(index, ticket), daemon=True)
+            for index, ticket in enumerate(active)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=max(0, effective_deadline - time.monotonic()))
+        return all(results) and all(not thread.is_alive() for thread in threads)

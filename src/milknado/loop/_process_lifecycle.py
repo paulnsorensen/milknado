@@ -9,7 +9,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -17,6 +16,7 @@ from typing import Protocol
 import psutil
 
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
+from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
 from milknado.loop._process_identity import terminate_verified as _terminate_verified
 from milknado.loop._process_registry import LaunchTicket, WorkerRegistry
@@ -40,92 +40,15 @@ def terminate_verified(
     return CleanupResult(not unresolved, unresolved)
 
 
-@dataclass(frozen=True, slots=True)
-class SpawnOptions:
-    command: tuple[str, ...]
-    cwd: Path | None
-    env: dict[str, str] | None
-    text: bool
-    stdin: int
-    stdout: int | None
-    stderr: int | None
-    invocation_id: str | None = None
-
-
-class WorkerProcess:
-    def __init__(
-        self,
-        process: subprocess.Popen[str] | subprocess.Popen[bytes],
-        identity: WorkerIdentity,
-        gate_fd: int | None,
-    ) -> None:
-        self.process = process
-        self.identity = identity
-        self._gate_fd = gate_fd
-
-    def release(self) -> None:
-        if self._gate_fd is None:
-            return
-        gate_fd = self._gate_fd
-        self._gate_fd = None
-        try:
-            os.write(gate_fd, b"R")
-        finally:
-            os.close(gate_fd)
-
-    def close_gate(self) -> None:
-        if self._gate_fd is not None:
-            os.close(self._gate_fd)
-            self._gate_fd = None
-
-
-def spawn_gated(options: SpawnOptions) -> WorkerProcess:
-    """Keep the actual command inert until its parent releases the exec gate."""
-    if not options.command:
-        raise ValueError("worker command is empty")
-    gate_read: int | None = None
-    gate_write: int | None = None
-    command = options.command
-    kwargs: dict[str, object] = {"start_new_session": os.name != "nt"}
-    if os.name != "nt":
-        gate_read, gate_write = os.pipe()
-        command = (sys.executable, "-m", "milknado.loop._exec_gate", str(gate_read), *command)
-        kwargs["pass_fds"] = (gate_read,)
-    if options.text:
-        kwargs.update(text=True, encoding="utf-8", errors="replace", bufsize=1)
-    try:
-        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
-            command,
-            stdin=options.stdin,
-            stdout=options.stdout,
-            stderr=options.stderr,
-            cwd=options.cwd,
-            env=options.env,
-            **kwargs,  # pyright: ignore[reportArgumentType]
-        )
-    except Exception:
-        if gate_write is not None:
-            os.close(gate_write)
-        raise
-    finally:
-        if gate_read is not None:
-            os.close(gate_read)
-    try:
-        token = psutil.Process(proc.pid).create_time()
-    except Exception:
-        if gate_write is not None:
-            os.close(gate_write)
-        proc.kill()
-        proc.wait(timeout=1)
-        raise
-    identity = WorkerIdentity(options.invocation_id or uuid.uuid4().hex, proc.pid, proc.pid, token)
-    return WorkerProcess(proc, identity, gate_write)
 
 
 class WorkerRecordView(Protocol):
     invocation_id: str
     snapshot_seq: int
     ready_generation: int
+    helper_generation: int
+    helper_pid: int | None
+    helper_start_token: float | None
     observation_owner: str | None
     descendants: tuple[Descendant, ...]
     ended_at: str | None
@@ -178,23 +101,25 @@ class ProtectedWorker:
         self._watch = threading.Thread(target=self._monitor, daemon=True)
         self._watch.start()
 
-    def _abort_protection(self) -> None:
+    def _abort_protection(self, deadline: float) -> None:
         self._failed = True
-        record = self._context.evidence.get_worker(self.identity.invocation_id)
-        if record is None or record.ended_at is not None:
-            return
-        if record.observation_owner is not None:
-            return
+        self._close_lifeline()
         try:
-            if identity_state(self.identity.pid, self.identity.start_token) == "live":
-                _snapshot(self.worker, self._context.evidence)
             record = self._context.evidence.get_worker(self.identity.invocation_id)
-            if record is None or record.observation_owner is not None:
+            if record is None or record.ended_at is not None:
                 return
-            result = terminate_verified(
-                self.identity, record.descendants, time.monotonic() + 3, self.process
-            )
-            if result.covered_exited:
+            if record.observation_owner is None and identity_state(
+                self.identity.pid, self.identity.start_token
+            ) == "live":
+                try:
+                    _snapshot(self.worker, self._context.evidence)
+                except (OSError, RuntimeError):
+                    pass
+                record = self._context.evidence.get_worker(self.identity.invocation_id)
+                if record is None:
+                    return
+            result = terminate_verified(self.identity, record.descendants, deadline, self.process)
+            if result.covered_exited and record.observation_owner is None:
                 self._context.evidence.end_worker(self.identity.invocation_id, record.snapshot_seq)
         except (OSError, RuntimeError):
             _log.exception("worker protection cleanup unresolved invocation=%s", self.identity.invocation_id)
@@ -217,13 +142,13 @@ class ProtectedWorker:
             except (OSError, RuntimeError) as exc:
                 _log.warning("lifeline replacement failed invocation=%s: %s", self.identity.invocation_id, exc)
                 if self._launches == 1:
-                    self._abort_protection()
+                    self._abort_protection(deadline)
                     return False
                 continue
             self._helper = helper
             self._write_fd = write_fd
             return True
-        self._abort_protection()
+        self._abort_protection(deadline)
         return False
 
     def _monitor(self) -> None:
@@ -238,7 +163,7 @@ class ProtectedWorker:
                 _snapshot(self.worker, self._context.evidence)
             except (OSError, RuntimeError):
                 _log.exception("worker observation unresolved invocation=%s", self.identity.invocation_id)
-                self._abort_protection()
+                self._abort_protection(time.monotonic() + 3)
                 return
 
     def shutdown(self, deadline: float) -> bool:
@@ -313,6 +238,7 @@ def _start_helper(
     worker: WorkerProcess, context: ProtectionContext, sequence: int,
     generation: int = 0, deadline: float | None = None,
 ) -> tuple[subprocess.Popen[str], int]:
+    limit = deadline if deadline is not None else time.monotonic() + 8
     read_fd, write_fd = os.pipe()
     try:
         helper = subprocess.Popen(
@@ -332,7 +258,7 @@ def _start_helper(
         context.evidence.record_helper(identity)
         if helper.stdout is None:
             raise RuntimeError("lifeline READY stream missing")
-        wait = 8 if deadline is None else max(0, min(8, deadline - time.monotonic()))
+        wait = max(0, limit - time.monotonic())
         ready, _, _ = select.select([helper.stdout], [], [], wait)
         expected = (
             f"READY {identity.invocation_id} {identity.generation} {identity.pid} "
@@ -341,16 +267,22 @@ def _start_helper(
         if not ready or helper.stdout.readline().strip() != expected:
             raise RuntimeError("lifeline READY mismatch")
         record = context.evidence.get_worker(worker.identity.invocation_id)
-        if record is None or record.ready_generation != identity.generation:
+        if (
+            record is None or record.ended_at is not None
+            or record.observation_owner is not None or record.snapshot_seq != sequence
+            or record.ready_generation != identity.generation
+            or record.helper_generation != identity.generation
+            or record.helper_pid != identity.pid
+            or record.helper_start_token != identity.start_token
+        ):
             raise RuntimeError("lifeline READY not durable")
         return helper, write_fd
     except Exception:
         os.close(write_fd)
         try:
-            _ = helper.wait(timeout=3)
+            _ = helper.wait(timeout=max(0, limit - time.monotonic()))
         except subprocess.TimeoutExpired:
-            helper.kill()
-            _ = helper.wait(timeout=1)
+            pass
         raise
 
 

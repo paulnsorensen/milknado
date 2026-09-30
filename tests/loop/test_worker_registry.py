@@ -97,3 +97,17 @@ def test_registry_rejects_admission_on_scalar_intent() -> None:
     with pytest.raises(RuntimeError, match="admission is closed"):
         registry.reserve()
     ticket.close()
+
+def test_registry_attempts_all_active_workers_with_one_deadline() -> None:
+    registry = WorkerRegistry()
+    first = registry.reserve()
+    second = registry.reserve()
+    barrier = threading.Barrier(2)
+
+    def shutdown(_deadline: float) -> bool:
+        barrier.wait(timeout=0.5)
+        return True
+
+    assert first.activate(lambda: None, shutdown)
+    assert second.activate(lambda: None, shutdown)
+    assert registry.stop_all(time.monotonic() + 0.5)

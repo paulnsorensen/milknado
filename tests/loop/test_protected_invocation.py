@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import milknado.loop._process_lifecycle as lifecycle
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import _ResolvedAgentRun, _run_agent_blocking, _run_agent_streaming
 from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
@@ -108,6 +109,38 @@ def test_dead_lifeline_is_replaced_without_restarting_worker(tmp_path: Path) -> 
         _ = worker.process.wait(timeout=5)
         assert worker.finish(timeout=5)
         assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        if worker.process.poll() is None:
+            os.killpg(worker.process.pid, signal.SIGKILL)
+            _ = worker.process.wait(timeout=1)
+        graph.close()
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_failed_observation_stops_worker_and_keeps_open_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    worker = spawn_protected(
+        SpawnOptions(
+            (sys.executable, "-c", "import time; time.sleep(30)"),
+            tmp_path, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
+        ),
+        ProtectionContext(graph.runs, "run-1", graph.db_path),
+    )
+    try:
+        def fail_observation(_identity):
+            raise RuntimeError("simulated observation failure")
+
+        monkeypatch.setattr(lifecycle, "observe_descendants", fail_observation)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and worker.process.poll() is None:
+            time.sleep(0.05)
+        assert worker.process.poll() is not None
+        record = graph.runs.get_worker(worker.identity.invocation_id)
+        assert record is not None and record.observation_owner == "supervisor"
+        assert record.ended_at is None
     finally:
         if worker.process.poll() is None:
             os.killpg(worker.process.pid, signal.SIGKILL)
