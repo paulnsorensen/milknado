@@ -6,6 +6,7 @@ reviews:
     - "!src/milknado/web/static/**"
     - "tests/**"
     - "web/**"
+    - "!web/vendor/milknado/**"
     - "scripts/**"
     - "integrations/**"
     - "plugins/**"
@@ -13,3 +14,4 @@ reviews:
     - "pyproject.toml"
     - "milknado.toml"
     - "justfile"
+    - "codecov.yml"
