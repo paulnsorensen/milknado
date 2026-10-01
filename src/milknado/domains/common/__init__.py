@@ -50,6 +50,7 @@ from milknado.domains.common.process import (
     ObservationKey,
     WorkerIdentity,
     WorkerOwner,
+    mark_worker_env,
     pid_alive,
 )
 from milknado.domains.common.protocols import (
@@ -130,6 +131,7 @@ __all__ = [
     "TerminalRunOutcome",
     "VALID_CHILD_KINDS",
     "VALID_TRANSITIONS",
+    "mark_worker_env",
     "pid_alive",
     "CONTROLLER_MASTER_ENV",
     "WORKER_CONTEXT_ENV",

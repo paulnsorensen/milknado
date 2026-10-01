@@ -6,6 +6,7 @@ another's internals for it.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -47,6 +48,14 @@ class ObservationKey:
 
 CONTROLLER_MASTER_ENV = "MILKNADO_CONTROLLER_MASTER"
 WORKER_CONTEXT_ENV = "MILKNADO_WORKER_CONTEXT"
+
+
+def mark_worker_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Remove controller authority and mark a copy of the worker environment."""
+    worker_env = dict(env)
+    _ = worker_env.pop(CONTROLLER_MASTER_ENV, None)
+    worker_env[WORKER_CONTEXT_ENV] = "1"
+    return worker_env
 
 
 def pid_alive(pid: object) -> bool:

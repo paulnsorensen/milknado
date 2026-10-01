@@ -17,6 +17,7 @@ from milknado.loop._agent import (
     _build_spawn_env,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.loop._output import BoundedOutput
 from milknado.loop._process_contract import WorkerHandle
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
@@ -25,9 +26,9 @@ from milknado.loop.sessions._factory import create_protocol
 from milknado.loop.sessions._outcome import SessionOutcome
 from milknado.loop.sessions._outcome import publish_events as _publish_events
 from milknado.loop.sessions._process import (
+    CAPTURE_LIMIT,
     POLL_INTERVAL,
     READER_QUEUE_LIMIT,
-    BoundedTail,
     Line,
     cleanup_process,
     finish_process,
@@ -91,8 +92,8 @@ class _SessionExecution:
         self.threads = start_readers(proc, self.lines, self.stop, self.spec.iteration)
         self.stream_context = StreamContext(
             channel=self.channel,
-            stdout_tail=BoundedTail(),
-            stderr_tail=BoundedTail(),
+            stdout_tail=BoundedOutput(CAPTURE_LIMIT),
+            stderr_tail=BoundedOutput(CAPTURE_LIMIT),
             log_handle=self.log_handle,
             on_stdout=self.receive_line,
             on_output_line=self.spec.on_output_line,
@@ -106,8 +107,7 @@ class _SessionExecution:
         actions = tuple(self.protocol.actions)
         if step.session_id is not None:
             outcome.session_id = step.session_id
-        context = channel.view().context
-        if context is not None and step.done:
+        if (context := channel.view().context) is not None and step.done:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
         for event in step.events:
             if publish_events:
@@ -123,8 +123,7 @@ class _SessionExecution:
             outcome.result_text = step.result_text
         outcome.done, outcome.failed = outcome.done or step.done, outcome.failed or step.failed
         outcome.interrupted = outcome.interrupted or step.interrupted
-        context = channel.view().context
-        if context is not None:
+        if (context := channel.view().context) is not None:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
 
     def apply_step(self, step: ProtocolStep) -> None:

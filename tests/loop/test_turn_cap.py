@@ -22,9 +22,9 @@ from _pytest.logging import LogCaptureFixture
 
 import milknado.loop._agent as agent_mod
 from milknado.loop._agent import (
+    _OUTPUT_TAIL_CHARS,  # pyright: ignore[reportPrivateUsage]
     AgentResult,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
-    _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
     _count_tool_uses_post_hoc,  # pyright: ignore[reportPrivateUsage]
     _read_agent_stream,  # pyright: ignore[reportPrivateUsage]
     _ResolvedAgentRun,  # pyright: ignore[reportPrivateUsage]
@@ -36,6 +36,7 @@ from milknado.loop._events import (
     EventType,
     QueueEmitter,
 )
+from milknado.loop._output import BoundedOutput
 from milknado.loop._run_types import RunStatus
 from milknado.loop.adapters import (
     AdapterEvent,
@@ -138,7 +139,7 @@ def test_opencode_counts_without_cap_do_not_trip() -> None:
 def test_crush_max_turns_is_graceful_noop() -> None:
     """crush emits no countable events, so the cap can never fire."""
     adapter = CrushAdapter()
-    stdout_lines = _BoundedOutput()
+    stdout_lines = BoundedOutput(_OUTPUT_TAIL_CHARS)
     for line in ("Did some work.\n", "<promise>COMPLETE</promise>\n"):
         stdout_lines.append(line)
 
