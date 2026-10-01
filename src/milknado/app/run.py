@@ -567,6 +567,7 @@ def run_inline_start(
         GraphSessionPort,
         claim_with_host_slot,
         ensure_tmux_ready,
+        isolated_orientation,
         make_run_id,
         reclaim_stale_node,
         render_brief,
@@ -591,12 +592,6 @@ def run_inline_start(
             graph, request.node_id, fence_run_id=node.run_id, process=ProcessAdapter()
         )
     profile = resolve_flavor_profile(cfg, node.flavor)
-    brief = render_brief(
-        graph,
-        request.node_id,
-        prepend=profile.brief_prepend,
-        project_root=root,
-    )
     lease = claim_with_host_slot(
         graph, FlockSlotPool(cfg.host_worker_limit), (request.node_id, run_id), root
     )
@@ -614,6 +609,13 @@ def run_inline_start(
         )
         if request.worktree is WorktreeMode.ISOLATE:
             isolated_worktree = worker_cwd
+        brief = render_brief(
+            graph,
+            request.node_id,
+            prepend=profile.brief_prepend,
+            project_root=root,
+            orientation=isolated_orientation(graph, git, request.node_id, (run_id, worker_cwd)),
+        )
         ref = start_headless_async(
             AsyncRunRequest(
                 project_root=root,

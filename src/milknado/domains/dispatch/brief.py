@@ -3,10 +3,64 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import GraphReadPort, MikadoNode, NodeKind, NodeStatus
+from milknado.domains.common import (
+    GitOperationError,
+    GitPort,
+    GraphReadPort,
+    MikadoNode,
+    NodeKind,
+    NodeStatus,
+)
 from milknado.domains.graph import walk_ancestors
+
+
+@dataclass(frozen=True)
+class WorkerOrientation:
+    """Facts a worker needs at start, so it never has to probe its environment."""
+
+    run_id: str
+    worktree: Path
+    branch: str | None
+
+
+_ORIENTATION_NOTE = (
+    "These values are final. Do not run pwd, ls, git status or echo of environment "
+    "variables to learn them."
+)
+
+
+def current_branch_or_none(git: GitPort) -> str | None:
+    """Return the checked-out branch, or None when the root is not a git checkout."""
+    try:
+        return git.current_branch()
+    except GitOperationError:
+        return None
+
+
+def isolated_orientation(
+    graph: GraphReadPort, git: GitPort, node_id: int, worker: tuple[str, Path]
+) -> WorkerOrientation:
+    """Orient a worker from `(run_id, cwd)`; a node whose worktree is cwd has its own branch."""
+    run_id, cwd = worker
+    node = graph.get_node(node_id)
+    in_own_worktree = node is not None and node.worktree_path == str(cwd)
+    branch = node.branch_name if node is not None and in_own_worktree else None
+    return WorkerOrientation(run_id, cwd, branch or current_branch_or_none(git))
+
+
+def _orientation_lines(node_id: int, orientation: WorkerOrientation) -> list[str]:
+    return [
+        "## Orientation",
+        f"- run_id: {orientation.run_id}",
+        f"- node_id: {node_id}",
+        f"- worktree: {orientation.worktree}",
+        f"- branch: {orientation.branch or '(unknown)'}",
+        _ORIENTATION_NOTE,
+        "",
+    ]
 
 
 def _done_prereqs(graph: GraphReadPort, node: MikadoNode) -> list[MikadoNode]:
@@ -71,8 +125,12 @@ def _brief_header(
     chain: list[MikadoNode],
     done: list[MikadoNode],
     done_label: str,
+    orientation: WorkerOrientation | None,
 ) -> list[str]:
-    lines = [f"# {title_prefix}: {node.description}", "", "## Goal context"]
+    lines = [f"# {title_prefix}: {node.description}", ""]
+    if orientation is not None:
+        lines.extend(_orientation_lines(node.id, orientation))
+    lines.append("## Goal context")
     lines.extend(_format_goal_context(chain))
     lines.append("")
     lines.append(f"## {done_label}")
@@ -101,7 +159,7 @@ _CODER_INSTRUCTIONS = (
     "milknado_track_follow_up with a one-line description rather than only "
     "printing it. "
     "As your final step, call milknado_deposit_result with run_id set to the "
-    "MILKNADO_RUN_ID environment variable and payload set to your COMPLETE "
+    "run_id stated under Orientation and payload set to your COMPLETE "
     "deliverable — the full text of what you produced, not a reference to "
     "content that lives only in this context. The deposited payload is what "
     "the coordinator reads back; anything left only in your reply is lost."
@@ -114,7 +172,7 @@ _REVIEW_INSTRUCTIONS = (
     "severity-grouped findings report (blocker/high/medium/low), one bullet "
     "per finding with evidence and a fix recommendation. "
     "As your final step, call milknado_deposit_result with run_id set to the "
-    "MILKNADO_RUN_ID environment variable and payload set to your COMPLETE "
+    "run_id stated under Orientation and payload set to your COMPLETE "
     "findings report — the full markdown, not a reference to content that "
     "lives only in this context. Then call milknado_deposit_review with the same "
     "run_id, verdict exactly 'approve' or 'reject', and the same findings markdown."
@@ -126,7 +184,7 @@ _PLATE_INSTRUCTIONS = (
     "the `gh` CLI. `gh` is authenticated in this environment without "
     "sandboxing — do not run `gh` through a sandboxed or offline path. "
     "As your final step, call milknado_deposit_result with run_id set to the "
-    "MILKNADO_RUN_ID environment variable and payload set to the PR URL (or "
+    "run_id stated under Orientation and payload set to the PR URL (or "
     "commit SHA if no PR was opened) plus a summary of what shipped."
 )
 
@@ -137,6 +195,7 @@ def render_brief(
     *,
     prepend: str | None = None,
     project_root: Path | None = None,
+    orientation: WorkerOrientation | None = None,
 ) -> str:
     node = graph.get_node(node_id)
     if node is None:
@@ -148,14 +207,14 @@ def render_brief(
     done = _done_prereqs(graph, node)
 
     if node.flavor == "review":
-        lines = _brief_header("Review", node, chain, done, "Work under review")
+        lines = _brief_header("Review", node, chain, done, "Work under review", orientation)
         return _finish_brief(lines, _REVIEW_INSTRUCTIONS, prepend)
     if node.flavor == "plate":
-        lines = _brief_header("Plate", node, chain, done, "Work to publish")
+        lines = _brief_header("Plate", node, chain, done, "Work to publish", orientation)
         return _finish_brief(lines, _PLATE_INSTRUCTIONS, prepend)
 
     files = graph.files.for_node(node_id)
-    lines = _brief_header("Task", node, chain, done, "Prerequisites already done")
+    lines = _brief_header("Task", node, chain, done, "Prerequisites already done", orientation)
 
     lines.append("## Relevant files")
     if files:

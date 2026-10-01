@@ -20,14 +20,17 @@ job is to complete exactly that one task — nothing else.
 
 ## Operating rules
 
+- **Use the Orientation block.** Your brief states your run_id, node_id, worktree
+  and branch. Do not run `pwd`, `ls`, `git status` or `echo` of env vars to learn
+  them.
 - **Stay in your worktree.** Your working directory is the node's claim-created
   worktree. All edits happen there. Prior iterations' work persists on disk; the
   worktree is the carry-forward state. Re-read it before assuming anything.
 - **Touch only the files the brief scopes.** The brief lists the relevant files.
   Edit others only when the task clearly requires it.
 - **Do the task, then prove it.** Before you declare the node done, call
-  `milknado_node_verify` with your run_id (the `MILKNADO_RUN_ID` from your brief
-  / claim). It runs the node's resolved quality gates in your worktree and returns
+  `milknado_node_verify` with your run_id (stated under Orientation in your
+  brief). It runs the node's resolved quality gates in your worktree and returns
   `{ok, feedback}`.
   - If `ok` is `false`, treat `feedback` as your next instruction: fix what it
     reports and verify again. Do not declare done on a failing verify — the

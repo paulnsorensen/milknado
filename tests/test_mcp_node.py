@@ -134,6 +134,41 @@ def test_claim_marks_running_creates_worktree_writes_run_no_spawn(repo: Path) ->
     assert (wt / "README.md").exists()
 
 
+def test_claim_brief_states_orientation(repo: Path) -> None:
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+
+    graph, _cfg = open_graph(repo)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None and node.branch_name
+    brief = payload["brief"]
+    assert f"- run_id: {payload['run_id']}" in brief
+    assert f"- node_id: {node_id}" in brief
+    assert f"- worktree: {payload['worktree_path']}" in brief
+    assert f"- branch: {node.branch_name}" in brief
+
+
+def test_claim_in_place_brief_states_project_root_and_current_branch(repo: Path) -> None:
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+    payload = _call(milknado_todo_claim, node_id=node_id, worktree=False, project_root=str(repo))
+
+    current = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    brief = payload["brief"]
+    assert f"- worktree: {repo}" in brief
+    assert f"- branch: {current}" in brief
+
+
 def test_claim_returns_full_structured_payload(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)

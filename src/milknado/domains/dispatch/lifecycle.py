@@ -19,7 +19,11 @@ from milknado.domains.common import (
 from milknado.domains.common.protocols import HostCapacityPort
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
-from milknado.domains.dispatch.brief import render_brief
+from milknado.domains.dispatch.brief import (
+    WorkerOrientation,
+    current_branch_or_none,
+    render_brief,
+)
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
@@ -148,13 +152,16 @@ def _run_claimed_node(
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
     try:
+        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         brief = render_brief(
             graph,
             request.node_id,
             prepend=request.brief_prepend,
             project_root=request.project_root,
+            orientation=WorkerOrientation(
+                run_id, cwd, isolate.worker_branch if isolate else current_branch_or_none(git)
+            ),
         )
-        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         graph.runs.start(
             run_id,
             request.node_id,
