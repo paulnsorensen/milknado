@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 import uuid
-from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,24 +34,6 @@ MAX_STDERR_LINE_SIZE = CAPTURE_LIMIT
 _THREAD_JOIN_TIMEOUT = 1.0
 
 _PROCESS_GROUP_IDS: WeakKeyDictionary[subprocess.Popen[bytes], int] = WeakKeyDictionary()
-
-
-class BoundedTail:
-    def __init__(self) -> None:
-        self._lines: deque[str] = deque()
-        self._chars: int = 0
-
-    def append(self, line: str) -> None:
-        if len(line) > CAPTURE_LIMIT:
-            line = line[-CAPTURE_LIMIT:]
-        self._lines.append(line)
-        self._chars += len(line)
-        while self._chars > CAPTURE_LIMIT and len(self._lines) > 1:
-            self._chars -= len(self._lines.popleft())
-
-    @property
-    def text(self) -> str:
-        return "".join(self._lines)
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from collections.abc import Iterator
+from dataclasses import dataclass, field
 
 # Platform flag used by _agent.py and cli.py to guard Windows-specific code
 # paths (process-group handling, console encoding).  Centralised here next to
@@ -23,6 +24,28 @@ SUBPROCESS_TEXT_KWARGS: dict[str, object] = {
 }
 
 SESSION_KWARGS: dict[str, object] = {} if IS_WINDOWS else {"start_new_session": True}
+
+
+@dataclass(slots=True)
+class BoundedOutput:
+    limit: int
+    _lines: list[str] = field(default_factory=list)
+    _chars: int = 0
+
+    def append(self, line: str) -> None:
+        if len(line) > self.limit:
+            line = line[-self.limit :]
+        self._lines.append(line)
+        self._chars += len(line)
+        while self._chars > self.limit and len(self._lines) > 1:
+            self._chars -= len(self._lines.pop(0))
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._lines)
+
+    @property
+    def text(self) -> str:
+        return "".join(self._lines)
 
 
 @dataclass(slots=True)

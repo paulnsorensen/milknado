@@ -8,15 +8,16 @@ from typing import IO
 
 from milknado.domains.common import SessionEvent
 from milknado.loop._events import OutputStream
+from milknado.loop._output import BoundedOutput
 from milknado.loop.sessions._channel import SessionChannel
-from milknado.loop.sessions._process import POLL_INTERVAL, TERMINATE_GRACE, BoundedTail, Line
+from milknado.loop.sessions._process import POLL_INTERVAL, TERMINATE_GRACE, Line
 
 
 @dataclass(slots=True)
 class StreamContext:
     channel: SessionChannel
-    stdout_tail: BoundedTail
-    stderr_tail: BoundedTail
+    stdout_tail: BoundedOutput
+    stderr_tail: BoundedOutput
     log_handle: IO[str] | None
     on_stdout: Callable[[str], None]
     on_output_line: Callable[[str, OutputStream], None] | None

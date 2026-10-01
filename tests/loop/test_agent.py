@@ -25,7 +25,6 @@ from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
     OutputLineCallback,
-    _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
     _extract_result_text_from_line,  # pyright: ignore[reportPrivateUsage]
     _kill_process_group,  # pyright: ignore[reportPrivateUsage]
     _pump_stream,  # pyright: ignore[reportPrivateUsage]
@@ -37,6 +36,7 @@ from milknado.loop._agent import (
     execute_agent,
 )
 from milknado.loop._events import OutputStream
+from milknado.loop._output import BoundedOutput
 from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
@@ -1910,7 +1910,7 @@ class TestBoundedReaderThreadJoins:
 
                 def tracking_start_pump(  # pyright: ignore[reportAny]
                     stream: io.StringIO,
-                    buffer: _BoundedOutput | None,
+                    buffer: BoundedOutput | None,
                     stream_name: OutputStream,
                     on_output_line: OutputLineCallback | None,
                 ):
@@ -2144,7 +2144,7 @@ class TestArgDeliveryStdin:
 
 class TestBoundedOutput:
     def test_drops_oldest_complete_lines_when_tail_exceeds_limit(self) -> None:
-        output = _BoundedOutput(limit=6)
+        output = BoundedOutput(limit=6)
         output.append("abc")
         output.append("def")
         output.append("ghi")
@@ -2152,10 +2152,29 @@ class TestBoundedOutput:
         assert list(output) == ["def", "ghi"]
 
     def test_single_oversized_line_keeps_only_tail(self) -> None:
-        output = _BoundedOutput(limit=4)
+        output = BoundedOutput(limit=4)
         output.append("abcdefgh")
 
         assert list(output) == ["efgh"]
+        assert output.text == "efgh"
+
+    def test_evicts_old_lines_after_truncating_oversized_line(self) -> None:
+        output = BoundedOutput(limit=4)
+        output.append("ab")
+        output.append("012345")
+
+        assert list(output) == ["2345"]
+        assert output.text == "2345"
+
+    def test_live_iterator_sees_lines_appended_during_iteration(self) -> None:
+        output = BoundedOutput(limit=10)
+        output.append("a")
+        output.append("b")
+        lines = iter(output)
+
+        assert next(lines) == "a"
+        output.append("c")
+        assert list(lines) == ["b", "c"]
 
 
 def test_lingering_group_that_exits_during_grace_is_not_sigkilled() -> None:

@@ -147,10 +147,12 @@ def test_controller_capability_authorizes_one_exact_decision(
 def test_worker_environment_strips_controller_master(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip controller authority and mark dispatch worker environments."""
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
-    worker_env = build_worker_env({CONTROLLER_MASTER_ENV: "worker-spoof"})
+    extra = {CONTROLLER_MASTER_ENV: "worker-spoof", WORKER_CONTEXT_ENV: "0"}
+    worker_env = build_worker_env(extra)
 
     assert CONTROLLER_MASTER_ENV not in worker_env
     assert worker_env[WORKER_CONTEXT_ENV] == "1"
+    assert extra == {CONTROLLER_MASTER_ENV: "worker-spoof", WORKER_CONTEXT_ENV: "0"}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="PTY worker test requires POSIX")
@@ -235,12 +237,15 @@ def test_loop_agent_environment_strips_controller_master(
 ) -> None:
     """Strip controller authority from loop-agent worker environments."""
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "native-inherited")
+    overrides = {CONTROLLER_MASTER_ENV: "worker-spoof", WORKER_CONTEXT_ENV: "0"}
 
-    worker_env = _build_spawn_env(None)
+    worker_env = _build_spawn_env(overrides)
 
-    assert worker_env is not None
     assert CONTROLLER_MASTER_ENV not in worker_env
     assert worker_env[WORKER_CONTEXT_ENV] == "1"
+    assert worker_env["ANTHROPIC_API_KEY"] == "native-inherited"
+    assert overrides == {CONTROLLER_MASTER_ENV: "worker-spoof", WORKER_CONTEXT_ENV: "0"}
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group test")
@@ -263,7 +268,7 @@ def test_session_environment_strips_controller_master(
             ),
         ),
     )
-    proc = start_process(protocol, tmp_path)
+    proc = start_process(protocol, tmp_path, env={CONTROLLER_MASTER_ENV: "worker-spoof"})
     stdout, _ = proc.communicate(timeout=10)
 
     assert stdout == b"\n1\n"

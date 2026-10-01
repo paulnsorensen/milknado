@@ -27,19 +27,20 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, cast
 
-from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
+from milknado.domains.common import mark_worker_env
 from milknado.loop._events import OutputStream
 from milknado.loop._output import (
     IS_WINDOWS,
     SESSION_KWARGS,
     SUBPROCESS_TEXT_KWARGS,
+    BoundedOutput,
     ProcessResult,
     warn,
 )
@@ -238,28 +239,6 @@ class _WindowsJob:
 
 
 @dataclass(slots=True)
-class _BoundedOutput:
-    limit: int = _OUTPUT_TAIL_CHARS
-    _lines: list[str] = field(default_factory=list)
-    _chars: int = 0
-
-    def append(self, line: str) -> None:
-        if len(line) > self.limit:
-            line = line[-self.limit :]
-        self._lines.append(line)
-        self._chars += len(line)
-        while self._chars > self.limit and len(self._lines) > 1:
-            self._chars -= len(self._lines.pop(0))
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._lines)
-
-    @property
-    def text(self) -> str:
-        return "".join(self._lines)
-
-
-@dataclass(slots=True)
 class _FileSink:
     """Serialize complete output to a file without retaining it in memory."""
 
@@ -278,7 +257,7 @@ class _FileSink:
 class _OutputCapture:
     """Bounded tail plus an optional file-backed complete-output sink."""
 
-    tail: _BoundedOutput | None = None
+    tail: BoundedOutput | None = None
     sink: _FileSink | None = None
     mirror: _FileSink | None = None
 
@@ -652,7 +631,7 @@ def _readline_pump(
 
 @dataclass(slots=True)
 class _StreamState:
-    stdout_lines: _BoundedOutput | None
+    stdout_lines: BoundedOutput | None
     output_capture: _OutputCapture | None = None
     completion_signal: str | None = None
     result_text: str | None = None
@@ -725,7 +704,7 @@ def _read_agent_stream(
         stdout_lines=(
             output_capture.tail
             if output_capture is not None
-            else (_BoundedOutput() if capture_stdout else None)
+            else (BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout else None)
         ),
         output_capture=output_capture,
         completion_signal=completion_signal,
@@ -807,12 +786,12 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stdout_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout_text else None,
         sink=None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stderr_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stderr_text else None,
         mirror=log_sink,
     )
 
@@ -1038,12 +1017,12 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stdout_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout_text else None,
         sink=_new_output_sink(None, run.iteration) if needs_post_hoc_count else None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stderr_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stderr_text else None,
         mirror=log_sink,
     )
     result_text: str | None = None
@@ -1219,12 +1198,9 @@ def execute_agent(spec: AgentRunSpec) -> AgentResult:
 def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str]:
     """Compose a marked worker environment without controller authority."""
     merged = os.environ.copy()
-    _ = merged.pop(CONTROLLER_MASTER_ENV, None)
     if overrides:
         merged.update(overrides)
-        _ = merged.pop(CONTROLLER_MASTER_ENV, None)
-    merged[WORKER_CONTEXT_ENV] = "1"
-    return merged
+    return mark_worker_env(merged)
 
 
 def _setup_wind_down(
@@ -1342,7 +1318,7 @@ def _wrap_tool_use_with_counter(
 def _count_tool_uses_post_hoc(
     *,
     adapter: CLIAdapter | None,
-    stdout_lines: _BoundedOutput | None,
+    stdout_lines: BoundedOutput | None,
     stdout_capture: _OutputCapture | None = None,
     max_turns: int | None,
     on_tool_use: ToolUseCallback | None,

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from milknado.domains.common import CONTROLLER_MASTER_ENV, WORKER_CONTEXT_ENV
+from milknado.domains.common import mark_worker_env
 from milknado.domains.common.agent_argv import (
     POSITIONAL_BRIEF_EXECUTABLES,
     validate_worker_argv,
@@ -120,10 +120,7 @@ def build_worker_env(
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     if extra:
         env.update(extra)
-    # The broad MILKNADO_* rule must not carry controller authority to workers.
-    _ = env.pop(CONTROLLER_MASTER_ENV, None)
-    env[WORKER_CONTEXT_ENV] = "1"
-    return env
+    return mark_worker_env(env)
 
 
 def _execute(
