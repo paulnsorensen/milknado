@@ -37,3 +37,9 @@
 
 2026-09-30 · b630435b130f1050 · merged · architecture/execution.md · Record PR503 recovery eligibility, separate protection failure from confirmed cleanup, bounded cancellation, signal retry supervision, helper and sink closure, private filelock mode, and atomic fixture markers. Focused regressions support these corrections; full gate follows.
 
+
+2026-09-30 · 27cf366cb9744aab · merged · architecture/run-inline-isolation.md · Record shared merge-back helper and warning ownership. Preserve separate finalization; correct the clean-exit claim when merge-back fails.
+
+
+2026-09-30 · 95f7a44d51a0f3c7 · merged · architecture/run-inline-isolation.md · Record user-approved unused merge_back_isolated export removal. Keep its internal implementation and CLI/MCP behavior.
+

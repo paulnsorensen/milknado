@@ -23,7 +23,7 @@ from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
-    merge_back_isolated,
+    merge_back_if_done,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.ports import (
@@ -175,7 +175,9 @@ def _run_claimed_node(
             process=request.process,
         )
         terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
-        merge = _maybe_merge_back(git, request, isolate, terminal)
+        merge = merge_back_if_done(
+            git, request.project_root, isolate if request.merge_back else None, terminal
+        )
         if merge is not None and not merge.rebased:
             terminal = "failed"
         _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
@@ -220,24 +222,6 @@ def _run_claimed_node(
         "summary": result.summary,
         "worktree_preserved": (merge.worktree_preserved if merge is not None else None),
     }
-
-
-def _maybe_merge_back(
-    git: GitPort,
-    request: SyncDispatchRequest,
-    context: IsolateContext | None,
-    worker_terminal: str,
-) -> MergeBackResult | None:
-    if context is None or not request.merge_back or worker_terminal != "done":
-        return None
-    result = merge_back_isolated(git, request.project_root, context)
-    if result.worktree_preserved is not None:
-        _logger.warning(
-            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
-            context.worker_branch,
-            result.worktree_preserved,
-        )
-    return result
 
 
 def reclaim_stale_node(

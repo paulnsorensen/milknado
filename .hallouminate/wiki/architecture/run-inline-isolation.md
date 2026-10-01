@@ -35,11 +35,23 @@ branch's fate on a clean (exit 0) run:
 branch a merge-back lands on is the caller's current branch
 (`GitAdapter.current_branch()`), resolved at dispatch time.
 
-The sync path (`dispatch_node_sync`) merges back inline after the worker returns;
-the async path (`_async_worker`) defers the merge-back to the worker thread, after
-the worker process exits, since the start tool returns immediately. On exit 0 the
-node is marked terminal DONE and a second dispatch is refused (reset the node's
-status to retry).
+The sync path (`dispatch_node_sync`) merges back inline after the worker returns.
+The async path (`_async_worker`) merges back in its worker thread after process exit.
+Both call the slice-internal `merge_back_if_done` helper for eligibility, execution, and preservation warnings.
+The helper returns `None` without a requested isolated context or a `done` terminal state.[^merge-helper]
+`merge_back_isolated` remains implemented in `isolate.py`, but dispatch no longer re-exports it.
+The consolidation leaves no external production caller for that export.[^merge-exports]
+
+Sync node finalization and async run-row persistence remain separate.
+An unsuccessful requested merge-back changes the terminal state to failed, even after a clean worker exit.[^merge-callers]
+The preservation warning uses the `milknado.domains.dispatch.isolate` logger.
+Its warning level, message, branch, path, and frequency remain unchanged.[^merge-helper]
+
+[^merge-helper]: src/milknado/domains/dispatch/isolate.py:139-154
+[^merge-exports]: src/milknado/domains/dispatch/__init__.py:22-27,61-105; src/milknado/domains/dispatch/isolate.py:147; tests/test_public_api_liveness_contract.py:166-185
+[^merge-callers]: src/milknado/domains/dispatch/lifecycle.py:177-183; src/milknado/domains/dispatch/async_run.py:214-233
+
+_Source: dispatch merge-back consolidation · Updated: 2026-09-30 · Supersedes: unconditional DONE claim after exit 0_
 
 ## Worker process boundaries
 
