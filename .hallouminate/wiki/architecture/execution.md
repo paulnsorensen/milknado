@@ -20,9 +20,11 @@ Capacity refusal leaves the task unchanged and starts no worker or worktree.
 ## Dispatch lifecycle (`Executor`, executor.py)
 
 `dispatch(node_id, config)` wraps `_dispatch_once` in a transient-retry loop
-(`dispatch_max_retries`, exponential backoff). `InvalidTransition`/`ValueError`
-re-raise immediately; transient failures (OSError, timeout, 429/rate-limit,
-exit 124/137/143 — see `_is_transient`) retry.
+(`dispatch_max_retries`, exponential backoff). `InvalidTransition`, `ValueError`,
+and `PreservedWorkerRun` re-raise immediately. The preserved-worker exception bypasses
+message classification, even when its generated run ID contains `429`.
+Other transient failures (OSError, timeout, 429/rate-limit,
+exit 124/137/143 — see `_is_transient`) retry.[^preserved-dispatch-retry]
 
 `_dispatch_once`:
 
@@ -40,10 +42,14 @@ exit 124/137/143 — see `_is_transient`) retry.
    RUNNING (or attach worktree metadata to an already-claimed node), generate
    `LOOP.md` via `_create_loop_run`, start the loop run, record `dispatched_at`.
 
-On any failure inside the try, `_cleanup_failed_dispatch` runs a **fenced**
-state reset (release under the node's `run_id` if it has one, else `mark_pending`)
-then discards the worktree. The fence stops a failed dispatch from walking a node
-back to PENDING after a different run already re-claimed it.
+On dispatch failure, cleanup releases the claim under its owner fence and discards
+the worktree only after worker exit is confirmed. An unconfirmed stop preserves
+the claim, running row, and worktree, then raises `PreservedWorkerRun`.
+The owner fence prevents cleanup from releasing another run's claim.[^preserved-dispatch-retry]
+
+[^preserved-dispatch-retry]: src/milknado/domains/execution/executor.py, `_should_retry_dispatch`, `_dispatch_once`, and `_cleanup_failed_dispatch`; tests/test_execution.py, `TestShouldRetryDispatch` and `test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree`.
+
+_Source: PR #510 CI failure and typed retry guard · Updated: 2026-10-01 · Supersedes: unconditional dispatch-failure cleanup description._
 
 `_create_loop_run` renders the shared `dispatch.brief.render_brief` output, adds iteration-specific scaffolding, writes `LOOP.md`, starts the loop run, and returns its `run_id`.
 

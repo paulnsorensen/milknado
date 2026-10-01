@@ -43,3 +43,7 @@
 
 2026-09-30 · 95f7a44d51a0f3c7 · merged · architecture/run-inline-isolation.md · Record user-approved unused merge_back_isolated export removal. Keep its internal implementation and CLI/MCP behavior.
 
+
+
+2026-10-01 · cb4d63e098e5d794 · merged · architecture/execution.md · Preserved-worker failures bypass dispatch retries; unconfirmed stops retain ownership and worktrees.
+

@@ -209,8 +209,10 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def _should_retry_dispatch(exc: BaseException) -> bool:
-    # Precondition failures (InvalidTransition/ValueError), not transient worker errors.
-    return not isinstance(exc, (InvalidTransition, ValueError)) and _is_transient(exc)
+    # A preserved worker may still hold the claim and worktree.
+    if isinstance(exc, (InvalidTransition, ValueError, PreservedWorkerRun)):
+        return False
+    return _is_transient(exc)
 
 
 def _dispatchable_node_ids(

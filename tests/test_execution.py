@@ -1668,6 +1668,7 @@ class TestIsTransient:
 class TestShouldRetryDispatch:
     def test_transient_exception_retries(self) -> None:
         assert _SHOULD_RETRY_DISPATCH(OSError("no such file"))
+        assert _SHOULD_RETRY_DISPATCH(RuntimeError("429 rate limit exceeded"))
 
     def test_invalid_transition_never_retries(self) -> None:
         exc = InvalidTransition(1, NodeStatus.DONE, NodeStatus.RUNNING, (NodeStatus.PENDING,))
@@ -1675,6 +1676,10 @@ class TestShouldRetryDispatch:
 
     def test_value_error_never_retries_even_with_transient_message(self) -> None:
         assert not _SHOULD_RETRY_DISPATCH(ValueError("429 rate limit exceeded"))
+
+    def test_preserved_worker_never_retries_even_with_429_run_id(self) -> None:
+        exc = PreservedWorkerRun(1, "node-1-20261001T184404Z-5429e0cf")
+        assert not _SHOULD_RETRY_DISPATCH(exc)
 
     def test_non_transient_exception_does_not_retry(self) -> None:
         assert not _SHOULD_RETRY_DISPATCH(RuntimeError("something broke"))
@@ -1851,11 +1856,17 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
     loop = FakeLoop(id_prefix="wedged-fence")
     loop.force_stop_result = False
     executor = Executor(graph=graph, git=git, loop=loop, crg=FakeCrg())
+    run_id = "node-1-20261001T184404Z-5429e0cf"
+
+    def fixed_run_id(_node_id: int) -> str:
+        return run_id
+
+    monkeypatch.setattr(_executor_module, "make_run_id", fixed_run_id)
     monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
+    retry_config = replace(config, dispatch_max_retries=1, dispatch_backoff_seconds=0)
     with pytest.raises(PreservedWorkerRun) as aborted:
-        _ = executor.dispatch(1, config)
-    assert len(loop.runs_started) == 1
-    run_id = loop.runs_started[0]
+        _ = executor.dispatch(1, retry_config)
+    assert loop.runs_started == [run_id]
     assert aborted.value.run_id == run_id
     assert RUN_ID_RE.match(run_id)
     assert loop.force_stopped == [run_id]
@@ -1863,6 +1874,9 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
     assert row is not None and row["status"] == "running", (
         "unconfirmed stop: row must stay running, not falsely terminal"
     )
+    node = graph.get_node(1)
+    assert node is not None and node.status is NodeStatus.RUNNING
+    assert node.run_id == run_id and node.worktree_path is not None
     assert git.removed == [], "worktree must not be discarded under a live loop"
 
 
