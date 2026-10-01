@@ -25,6 +25,7 @@ from milknado.domains.graph import (
 
 _logger = logging.getLogger(__name__)
 _RECOVERY_TIMEOUT_SECONDS = 8.0
+_HELPER_POLL_SECONDS = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,32 @@ class ReapRequest:
 
 def _identity(record: WorkerRecord) -> WorkerIdentity:
     return WorkerIdentity(record.invocation_id, record.pid, record.pgid, record.start_token)
+
+
+def _helper_observing(process: ProcessTerminationPort, record: WorkerRecord) -> bool:
+    return (
+        record.ended_at is None
+        and record.observation_owner == "helper"
+        and record.helper_pid is not None
+        and record.helper_start_token is not None
+        and process.supervisor_state(record.helper_pid, record.helper_start_token) == "live"
+    )
+
+
+def _await_helper(
+    evidence: WorkerEvidenceStore,
+    process: ProcessTerminationPort,
+    record: WorkerRecord,
+    deadline: float,
+) -> WorkerRecord | None:
+    """Let a live lifeline helper finish its observation; its parent loss races recovery."""
+    current: WorkerRecord | None = record
+    while (
+        current is not None and _helper_observing(process, current) and time.monotonic() < deadline
+    ):
+        time.sleep(_HELPER_POLL_SECONDS)
+        current = evidence.get(record.invocation_id)
+    return current
 
 
 def _prepare_worker(
@@ -183,13 +210,19 @@ def reap_orphaned_workers(
         with WorkerEvidenceStore(path, deadline=deadline) as evidence:
             records = evidence.live_workers(request.selection)
             recoverable, complete = _recoverable_records(records, process, request.selection)
+            settled = tuple(
+                current
+                for record in recoverable
+                if (current := _await_helper(evidence, process, record, deadline)) is not None
+                and current.ended_at is None
+            )
             prepared = tuple(
                 refreshed
-                for record in recoverable
+                for record in settled
                 if time.monotonic() < deadline
                 and (refreshed := _prepare_worker(evidence, process, record)) is not None
             )
-            complete = complete and len(prepared) == len(recoverable)
+            complete = complete and len(prepared) == len(settled)
             if not prepared:
                 return complete
             if time.monotonic() >= deadline:
