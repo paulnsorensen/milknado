@@ -47,3 +47,6 @@
 
 2026-10-01 · cb4d63e098e5d794 · merged · architecture/execution.md · Preserved-worker failures bypass dispatch retries; unconfirmed stops retain ownership and worktrees.
 
+
+2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
+

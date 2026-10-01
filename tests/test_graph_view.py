@@ -54,6 +54,19 @@ def test_project_graph_keeps_primary_tree_and_dag_references() -> None:
     assert projection.children[GraphTreeEntry(3)][0].is_reference
 
 
+def test_project_graph_keeps_missing_parent_roots_in_node_order() -> None:
+    orphan = MikadoNode(3, "orphan", parent_id=99, created_at=_CREATED)
+    child = MikadoNode(2, "child", parent_id=1, created_at=_CREATED)
+    root = MikadoNode(1, "root", kind=NodeKind.GOAL, created_at=_CREATED)
+    snapshot = GraphSnapshot(nodes=(orphan, child, root), edges=(), root_ids=(1,))
+
+    projection = project_graph(snapshot)
+
+    assert projection.roots == (GraphTreeEntry(3), GraphTreeEntry(1))
+    assert projection.children[GraphTreeEntry(1)] == (GraphTreeEntry(2),)
+    assert projection.children[GraphTreeEntry(3)] == ()
+
+
 def test_node_inspector_discloses_every_node_field_and_value() -> None:
     description = "First line of the complete node brief.\nSecond line remains visible."
     node = MikadoNode(
