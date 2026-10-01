@@ -9,6 +9,7 @@ preserve the worktree for inspection.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from milknado.domains.common.errors import GitOperationError
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -131,3 +134,21 @@ def merge_back_isolated(git: GitPort, root: Path, ctx: IsolateContext) -> MergeB
         except (GitOperationError, UnlandedWorkError):
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
     return MergeBackResult(rebased=True, worktree_preserved=None)
+
+
+def merge_back_if_done(
+    git: GitPort,
+    root: Path,
+    context: IsolateContext | None,
+    terminal: str,
+) -> MergeBackResult | None:
+    if context is None or terminal != "done":
+        return None
+    result = merge_back_isolated(git, root, context)
+    if result.worktree_preserved is not None:
+        _logger.warning(
+            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
+            context.worker_branch,
+            result.worktree_preserved,
+        )
+    return result

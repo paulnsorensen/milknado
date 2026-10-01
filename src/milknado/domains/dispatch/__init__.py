@@ -23,7 +23,6 @@ from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
     create_isolated_worktree,
-    merge_back_isolated,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.lifecycle import (
@@ -82,7 +81,6 @@ __all__ = [
     "create_isolated_worktree",
     "claim_with_host_slot",
     "dispatch_node_sync",
-    "merge_back_isolated",
     "exit_code_path",
     "ensure_tmux_ready",
     "fail_stale_running_runs",

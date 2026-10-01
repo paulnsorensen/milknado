@@ -153,6 +153,12 @@ def _rebase_failure(_worktree: Path, _onto: str) -> RebaseResult:
     return RebaseResult(success=False)
 
 
+def _adapter_rebase_failure(
+    _git: adapters.GitAdapter, _worktree: Path, _onto: str
+) -> RebaseResult:
+    return RebaseResult(success=False)
+
+
 def _resolve_worker_oid(_ref: str) -> str:
     return "worker-oid"
 
@@ -520,24 +526,54 @@ class TestIsolateAsync:
         assert node.worktree_path is not None
         assert not Path(node.worktree_path).exists()
 
+    def test_async_opt_out_preserves_worktree(
+        self, tmp_path: Path, worker_writes_pwd: str
+    ) -> None:
+        root = tmp_path / "repo"
+        _init_repo(root)
+        task = cast(
+            NodeSummary,
+            _call(
+                milknado_todo_add, description="async keep", kind="task", project_root=str(root)
+            ),
+        )
+        started = cast(
+            RunDict,
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd=worker_writes_pwd,
+                merge_back=False,
+                project_root=str(root),
+            ),
+        )
+        run_id = started["run_id"]
+        assert run_id is not None
+        final = _wait_for_terminal(run_id, str(root))
+
+        assert final["status"] == "done"
+        assert final["rebased"] is None
+        assert final["worktree_preserved"] is None
+        assert not (root / "deliverable.txt").exists()
+        node = _node(root, task["id"])
+        assert node.worktree_path is not None
+        assert (Path(node.worktree_path) / "deliverable.txt").exists()
+
 
 class TestMergeBackFailure:
     """A merge-back that does not land (e.g. a rebase conflict) fails the node and
     preserves the worktree for inspection rather than falsely reporting DONE."""
 
     def test_sync_merge_failure_fails_node_and_preserves_worktree(
-        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        worker_writes_pwd: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        import milknado.domains.dispatch.lifecycle as lifecycle_mod
-        from milknado.domains.dispatch.isolate import MergeBackResult
-
         root = tmp_path / "repo"
         _init_repo(root)
-
-        def _fail(_git: GitPort, _root: Path, ctx: IsolateContext) -> MergeBackResult:
-            return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
-
-        monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _fail)
+        monkeypatch.setattr(adapters.GitAdapter, "rebase", _adapter_rebase_failure)
         task = cast(
             NodeSummary,
             _call(
@@ -568,21 +604,24 @@ class TestMergeBackFailure:
         assert preserved == str(root / "milknado-1-conflict")
         assert Path(preserved).exists()
         assert node.worktree_path is None
+        assert [record.message for record in caplog.records if record.levelname == "WARNING"] == [
+            "ISOLATE merge-back for branch milknado/1-conflict did not tear down; "
+            + f"preserved worktree {preserved}"
+        ]
 
     def test_sync_merge_back_raise_terminalizes_node_and_run(
         self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A merge-back that RAISES must finalize the node and run FAILED."""
-        import milknado.domains.dispatch.lifecycle as lifecycle_mod
         from milknado.domains.common.errors import RebaseAbortError
 
         root = tmp_path / "repo"
         _init_repo(root)
 
-        def _boom(_git: GitPort, _root: Path, ctx: IsolateContext) -> None:
-            raise RebaseAbortError(ctx.worktree_path, "rebase --abort failed")
+        def _boom(_git: adapters.GitAdapter, worktree: Path, _onto: str) -> RebaseResult:
+            raise RebaseAbortError(worktree, "rebase --abort failed")
 
-        monkeypatch.setattr(lifecycle_mod, "merge_back_isolated", _boom)
+        monkeypatch.setattr(adapters.GitAdapter, "rebase", _boom)
         task = cast(
             NodeSummary,
             _call(
@@ -613,18 +652,15 @@ class TestMergeBackFailure:
         assert latest["status"] == "failed"
 
     def test_async_merge_failure_fails_node(
-        self, tmp_path: Path, worker_writes_pwd: str, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        worker_writes_pwd: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        import milknado.domains.dispatch.async_run as async_mod
-        from milknado.domains.dispatch.isolate import MergeBackResult
-
         root = tmp_path / "repo"
         _init_repo(root)
-
-        def _fail(_git: GitPort, _root: Path, ctx: IsolateContext) -> MergeBackResult:
-            return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
-
-        monkeypatch.setattr(async_mod, "merge_back_isolated", _fail)
+        monkeypatch.setattr(adapters.GitAdapter, "rebase", _adapter_rebase_failure)
         task = cast(
             NodeSummary,
             _call(
@@ -651,6 +687,10 @@ class TestMergeBackFailure:
         assert final["rebased"] is False
         # The unlanded worktree is surfaced on the async poll result too.
         assert final["worktree_preserved"] == str(root / "milknado-1-asyncfail")
+        assert [record.message for record in caplog.records if record.levelname == "WARNING"] == [
+            "ISOLATE merge-back for branch milknado/1-asyncfail did not tear down; "
+            + f"preserved worktree {final['worktree_preserved']}"
+        ]
 
 
 class TestFailClosedPreservation:

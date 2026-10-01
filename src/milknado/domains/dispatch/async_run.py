@@ -35,11 +35,7 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch._runstate import (
     tail as _tail,
 )
-from milknado.domains.dispatch.isolate import (
-    IsolateContext,
-    MergeBackResult,
-    merge_back_isolated,
-)
+from milknado.domains.dispatch.isolate import IsolateContext, merge_back_if_done
 from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
@@ -178,32 +174,6 @@ def _run_in_tmux_window(
     )
 
 
-def _async_merge_back(
-    git: GitPort,
-    project_root: Path,
-    merge_ctx: IsolateContext | None,
-    terminal: str,
-) -> MergeBackResult | None:
-    """Rebase-merge an ISOLATE branch back after a clean worker exit.
-
-    Returns the ``MergeBackResult`` when a merge-back was requested, or None when
-    there was nothing to merge (THIS_BRANCH, merge_back=False, or a non-``done``
-    worker) so the run row's ``rebased`` stays None — matching the old shared-
-    checkout dispatch that never rebased. A preserved (un-torn-down) worktree is
-    both logged and carried on the result so the caller can persist it for poll.
-    """
-    if merge_ctx is None or terminal != "done":
-        return None
-    result = merge_back_isolated(git, project_root, merge_ctx)
-    if result.worktree_preserved is not None:
-        _logger.warning(
-            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
-            merge_ctx.worker_branch,
-            result.worktree_preserved,
-        )
-    return result
-
-
 def _async_worker(context: AsyncWorkerContext) -> None:
     request = context.request
     project_root = request.project_root
@@ -242,7 +212,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
-            merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
+            merge = merge_back_if_done(context.git, project_root, request.merge_ctx, terminal)
             if merge is not None and merge.rebased is False:
                 # ISOLATE merge_back requested but the branch did not land: the
                 # deliverable never reached the dispatch branch, so this is a real
