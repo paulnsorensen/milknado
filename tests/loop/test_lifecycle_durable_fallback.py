@@ -33,7 +33,9 @@ def durable_worker(
     program = (
         "import subprocess,sys,time; from pathlib import Path; "
         "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
-        "start_new_session=True); Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(30)"
+        "start_new_session=True); marker=Path(sys.argv[1]); "
+        "pending=marker.with_suffix('.tmp'); pending.write_text(str(child.pid)); "
+        "pending.replace(marker); time.sleep(30)"
     )
     worker = subprocess.Popen(
         [sys.executable, "-c", program, str(marker)], start_new_session=True, text=True

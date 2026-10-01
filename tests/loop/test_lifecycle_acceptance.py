@@ -51,8 +51,10 @@ worker = spawn_protected(SpawnOptions(
     db_path.parent, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
 ), context)
 record = context.evidence.get_worker(worker.identity.invocation_id)
-marker.write_text(json.dumps({'invocation': worker.identity.invocation_id,
-                              'pid': worker.process.pid, 'helper': record.helper_pid}))
+pending = marker.with_suffix('.tmp')
+pending.write_text(json.dumps({'invocation': worker.identity.invocation_id,
+                               'pid': worker.process.pid, 'helper': record.helper_pid}))
+pending.replace(marker)
 while True:
     time.sleep(1)
 """
@@ -173,9 +175,12 @@ def test_ready_lifeline_reaps_worker_after_supervisor_sigkill(
         assert _until(lambda: not _alive(pid, token), timeout=6), (
             "ready lifeline did not reap worker"
         )
+        live = graph.runs.live_workers(run_id="run-1")
         record = graph.runs.get_worker(facts.invocation)
         assert record is not None
-        assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
+        assert record.ended_at is not None or any(
+            current.invocation_id == facts.invocation for current in live
+        )
     finally:
         if supervisor.poll() is None:
             supervisor.kill()
@@ -284,9 +289,12 @@ def test_repeated_ready_helper_deaths_stop_worker_after_three_replacements(tmp_p
                 assert worker.process.poll() is None
         assert _until(lambda: worker.process.poll() is not None, timeout=8)
         assert worker.process.returncode == -signal.SIGKILL
+        live = graph.runs.live_workers(run_id="run-1")
         record = graph.runs.get_worker(worker.identity.invocation_id)
         assert record is not None and record.helper_generation == 3
-        assert record.ended_at is not None or record in graph.runs.live_workers(run_id="run-1")
+        assert record.ended_at is not None or any(
+            current.invocation_id == worker.identity.invocation_id for current in live
+        )
     finally:
         if worker.process.poll() is None:
             os.killpg(worker.process.pid, signal.SIGKILL)
