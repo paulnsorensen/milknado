@@ -1,5 +1,6 @@
 """Tests for the multi-run manager."""
 
+import subprocess
 import sys
 import threading
 import time
@@ -7,14 +8,20 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock, patch
 
+import psutil
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.domains.common import SessionInput
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import SessionInput, WorkerOwner
+from milknado.domains.graph import open_standalone_worker_evidence
 from milknado.loop._events import (
     EventType,
     QueueEmitter,
 )
+from milknado.loop._process_contract import ProtectionContext, WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._run_types import (
     RUN_ID_LENGTH,
     CompletionVerdict,
@@ -30,6 +37,50 @@ from tests.loop.helpers import (
     make_config,
     ok_proc,
 )
+
+
+class _CompletedWorker:
+    def __init__(self, process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:
+        self.process: subprocess.Popen[bytes] | subprocess.Popen[str] = process
+
+    def cleanup(
+        self,
+        threads: tuple[threading.Thread | None, ...] = (),
+        *,
+        stop: threading.Event | None = None,
+        deadline: float | None = None,
+    ) -> bool:
+        _ = deadline
+        if stop is not None:
+            stop.set()
+        for thread in threads:
+            if thread is not None:
+                thread.join(timeout=1)
+        for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
+            if pipe is not None:
+                pipe.close()
+        return all(thread is None or not thread.is_alive() for thread in threads)
+
+    def complete(self, *, graceful: bool) -> bool:
+        _ = graceful
+        return self.cleanup()
+
+
+def _contextual(config: RunConfig) -> RunConfig:
+    def spawn(options: SpawnOptions) -> WorkerHandle:
+        process = subprocess.Popen(
+            options.command,
+            stdin=options.stdin,
+            stdout=options.stdout,
+            stderr=options.stderr,
+            cwd=options.cwd,
+            env=options.env,
+            text=options.text,
+        )
+        return _CompletedWorker(process)
+
+    config.spawn_worker = spawn
+    return config
 
 
 class TestRunManagerCreateRun:
@@ -66,7 +117,7 @@ class TestRunManagerStartRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_start_run_starts_thread(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
-        config = make_config(tmp_path, max_iterations=1)
+        config = _contextual(make_config(tmp_path, max_iterations=1))
         managed = manager.create_run(config)
         run_id = managed.state.run_id
 
@@ -79,7 +130,7 @@ class TestRunManagerStartRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_start_run_thread_is_daemon(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
-        config = make_config(tmp_path, max_iterations=1)
+        config = _contextual(make_config(tmp_path, max_iterations=1))
         managed = manager.create_run(config)
         run_id = managed.state.run_id
 
@@ -92,7 +143,7 @@ class TestRunManagerStartRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_start_run_emits_events_to_queue(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
-        config = make_config(tmp_path, max_iterations=1)
+        config = _contextual(make_config(tmp_path, max_iterations=1))
         managed = manager.create_run(config)
         run_id = managed.state.run_id
 
@@ -110,7 +161,7 @@ class TestRunManagerStartRunGuards:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_start_run_raises_on_double_start(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
-        config = make_config(tmp_path, max_iterations=1)
+        config = _contextual(make_config(tmp_path, max_iterations=1))
         managed = manager.create_run(config)
         run_id = managed.state.run_id
 
@@ -143,7 +194,7 @@ class TestRunManagerStopRun:
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
     def test_stop_run_stops_running_run(self, mock_run: MagicMock, tmp_path: Path):  # pyright: ignore[reportUnusedParameter]
         manager = RunManager()
-        config = make_config(tmp_path, max_iterations=100, delay=0.1)
+        config = _contextual(make_config(tmp_path, max_iterations=100, delay=0.1))
         managed = manager.create_run(config)
         run_id = managed.state.run_id
 
@@ -162,7 +213,9 @@ class TestRunManagerStopRun:
     ):
         verifier = MagicMock()
         manager = RunManager()
-        managed = manager.create_run(make_config(tmp_path, completion_verifier=verifier))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=verifier))
+        )
 
         def simultaneous_stop(_config: RunConfig, state: RunState, *_args: object):
             state.mark_completed()
@@ -192,7 +245,9 @@ class TestRunManagerStopRun:
             return CompletionVerdict(ok=True, feedback="")
 
         manager = RunManager()
-        managed = manager.create_run(make_config(tmp_path, completion_verifier=blocking_verifier))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=blocking_verifier))
+        )
         manager.start_run(managed.state.run_id)
         assert verifier_started.wait(timeout=1)
 
@@ -217,7 +272,9 @@ class TestRunManagerStopRun:
             raise RuntimeError("verifier failed")
 
         manager = RunManager()
-        managed = manager.create_run(make_config(tmp_path, completion_verifier=failing_verifier))
+        managed = manager.create_run(
+            _contextual(make_config(tmp_path, completion_verifier=failing_verifier))
+        )
         manager.start_run(managed.state.run_id)
         assert verifier_started.wait(timeout=1)
 
@@ -297,6 +354,13 @@ class TestRunManagerForceStop:
                 max_iterations=1,
             )
         )
+        db_path = tmp_path / "worker.sqlite3"
+        with open_standalone_worker_evidence(db_path):
+            pass
+        supervisor = psutil.Process()
+        owner = WorkerOwner(managed.state.run_id, supervisor.pid, supervisor.create_time())
+        context = ProtectionContext(LoopWorkerEvidence(db_path), owner, db_path)
+        managed.config.spawn_worker = lambda options: spawn_protected(options, context)
         manager.start_run(managed.state.run_id)
 
         deadline = time.monotonic() + 5

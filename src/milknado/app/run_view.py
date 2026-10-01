@@ -232,6 +232,8 @@ def confirmation_text(action: str, run_id: str | None, active_run_count: int) ->
     if action == "force":
         return f"Force stop {run_id}? [y] confirm [n/Esc] cancel"
     label = "active run" if active_run_count == 1 else "active runs"
+    if action == "quit":
+        return f"Quit and force stop {active_run_count} {label}? [y] confirm [n/Esc] cancel"
     return (
         f"Stop scheduling and gracefully stop {active_run_count} {label}? "
         "[y] confirm [n/Esc] cancel"

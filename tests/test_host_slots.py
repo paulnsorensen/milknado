@@ -415,7 +415,7 @@ class TestDeferredNodeRetry:
 
         with closing(graph):
             driver = RunLoop(executor=executor, graph=graph, loop=FakeLoop(id_prefix="cadence"))
-            setattr(driver, "_capacity_deferred", True)  # noqa: B010
+            driver._scheduler.defer_capacity()  # pyright: ignore[reportPrivateUsage]
             setattr(driver, "_dispatch_if_scheduling_open", dispatch)  # noqa: B010
             retry = cast(
                 Callable[[ExecutionConfig, int], tuple[int, int]],

@@ -5,14 +5,22 @@ import signal
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
+import psutil
 import pytest
 
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import WorkerOwner
+from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentRunSpec, OutputLineCallback
 from milknado.loop._events import OutputStream
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
+from milknado.loop.sessions import _runtime as session_runtime
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
 
 _SCRIPT = """\
@@ -48,7 +56,9 @@ if mode.endswith("-child"):
         os._exit(0)
     if mode != "detached-pipe-child":
         marker.write_text(str(child_pid), encoding="utf-8")
-if mode == "success-child":
+if mode == "success":
+    emit({"type": "result", "subtype": "success", "result": "done", "session_id": "sid"})
+elif mode == "success-child":
     emit({"type": "result", "subtype": "success", "result": "done", "session_id": "sid"})
 elif mode == "timeout-child":
     time.sleep(30)
@@ -302,3 +312,41 @@ def test_structured_session_hard_cap_stops_at_the_tool_boundary(tmp_path: Path) 
     assert result.returncode == 0
     assert result.turn_capped is True
     assert result.tool_use_count == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")
+def test_structured_session_uses_same_protected_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def legacy_cleanup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("protected worker used legacy process cleanup")
+
+    monkeypatch.setattr(session_runtime, "cleanup_process", legacy_cleanup)
+    monkeypatch.setattr(session_runtime, "finish_process", legacy_cleanup)
+    monkeypatch.setattr(session_runtime, "terminate", legacy_cleanup)
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    supervisor = psutil.Process()
+    owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
+    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    invoked: list[str] = []
+
+    def launch(options: SpawnOptions) -> ProtectedWorker:
+        protected = spawn_protected(options, context)
+        invoked.append(protected.identity.invocation_id)
+        return protected
+
+    try:
+        worker = _worker(tmp_path)
+        spec = replace(
+            _spec(worker, tmp_path, _Scenario("success", tmp_path / "unused")),
+            spawn_worker=launch,
+        )
+        result = run_session(spec, SessionChannel())
+        assert result.result_text == "done"
+        assert len(invoked) == 1
+        record = graph.runs.get_worker(invoked[0])
+        assert record is not None and record.ended_at is not None
+    finally:
+        graph.close()

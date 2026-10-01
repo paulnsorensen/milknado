@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, cast
 
 from milknado.domains.common import MikadoNode, NodeStatus, RunResult, pid_alive
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
-from milknado.domains.dispatch.ports import StaleRunPort
+from milknado.domains.dispatch.ports import ProcessTerminationPort, StaleRunPort
+from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
+from milknado.domains.graph import NodeWorkers
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph, RunRecord
@@ -21,7 +23,9 @@ _logger = logging.getLogger(__name__)
 _STALE_GRACE_SECONDS = 30
 
 
-def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str, object]]:
+def fail_stale_running_runs(
+    graph: StaleRunPort, node_id: int, process: ProcessTerminationPort
+) -> list[dict[str, object]]:
     """Finalize confirmed-dead owners and timeout-stale pid-less runs.
 
     A run row's pid is its worker pid. In-process coordinator runs deliberately
@@ -40,16 +44,17 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
         if not isinstance(run_id, str):
             continue
         worker_pid = state.get("pid")
-        owner_pid = worker_pid if isinstance(worker_pid, int) else None
-        if (
-            owner_pid is None
-            and node is not None
-            and node.run_id == run_id
-            and node.pid is not None
-        ):
-            owner_pid = node.pid
+        owner_pid = (
+            worker_pid
+            if isinstance(worker_pid, int)
+            else node.pid
+            if node is not None and node.run_id == run_id
+            else None
+        )
         if owner_pid is not None:
             if pid_alive(owner_pid):
+                continue
+            if not reap_orphaned_workers(graph, process, ReapRequest(NodeWorkers(node_id))):
                 continue
             error = "worker session gone"
             ended_at = _now_iso()
@@ -90,6 +95,8 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
             continue
         if (now - started).total_seconds() <= timeout + _STALE_GRACE_SECONDS:
             continue
+        if not reap_orphaned_workers(graph, process, ReapRequest(NodeWorkers(node_id))):
+            continue
         ended_at = _now_iso()
         error = "worker vanished before writing terminal state (stale running run)"
         graph.runs.finish(
@@ -115,7 +122,7 @@ def fail_stale_running_runs(graph: StaleRunPort, node_id: int) -> list[dict[str,
     return flipped
 
 
-def reconcile_orphaned_runs(graph: object) -> list[RunRecord]:
+def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> list[RunRecord]:
     """Finalize and release orphaned nodes before a new coordinator dispatches."""
     get_all_nodes = getattr(graph, "get_all_nodes", None)
     if not callable(get_all_nodes):
@@ -127,9 +134,11 @@ def reconcile_orphaned_runs(graph: object) -> list[RunRecord]:
         node = cast(MikadoNode, node_value)
         if node.status is not NodeStatus.RUNNING or node.run_id is None:
             continue
-        _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id)
+        _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id, process)
         terminal = typed_graph.runs.latest_terminal(node.id, node.run_id)
-        if terminal is None:
+        if terminal is None or not reap_orphaned_workers(
+            typed_graph, process, ReapRequest(NodeWorkers(node.id))
+        ):
             continue
         reconcile_node_status(typed_graph, node.id, terminal["status"], run_id=node.run_id)
         reconciled.append(terminal)

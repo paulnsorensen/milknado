@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from milknado.domains.common import NodeStatus, RunResult
+from milknado.domains.common import NodeStatus, RunResult, WorkerIdentity
 from milknado.domains.common.config import MilknadoConfig
 from milknado.domains.graph import MikadoGraph
 
@@ -61,7 +61,12 @@ class RunFinalizerPort(Protocol):
     def runs(self) -> RunFinalizerFacadePort: ...
 
 
-class StaleRunPort(Protocol):
+class WorkerRecoveryPort(Protocol):
+    @property
+    def db_path(self) -> Path: ...
+
+
+class StaleRunPort(WorkerRecoveryPort, Protocol):
     """The graph capability required by stale-run reconciliation."""
 
     @property
@@ -119,10 +124,27 @@ class ProcessPort(Protocol):
     def terminate_group(self, pid: int, timeout: float) -> bool: ...
 
 
+Descendant = tuple[int, float, int]
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerCleanupResult:
+    covered_exited: bool
+    unresolved: tuple[str, ...]
+
+
 class ProcessTerminationPort(Protocol):
     def terminate_group(self, pid: int, timeout: float) -> bool:
         """Request termination, escalate if needed, and return only after exit."""
         ...
+
+    def supervisor_state(self, pid: int, start_token: float) -> str: ...
+
+    def observe_worker(self, worker: WorkerIdentity) -> tuple[Descendant, ...]: ...
+
+    def terminate_worker(
+        self, worker: WorkerIdentity, retained: tuple[Descendant, ...], deadline: float
+    ) -> WorkerCleanupResult: ...
 
 
 class GraphSessionPort(Protocol):

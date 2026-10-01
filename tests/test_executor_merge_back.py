@@ -34,6 +34,7 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import GitOperationError
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.common.types import RebaseResult
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution.executor import ExecutionConfig, Executor, WorktreeManager
 from milknado.domains.graph import MikadoGraph
 
@@ -55,10 +56,6 @@ def _loop_port(value: object) -> LoopPort:
 
 def _crg_port(value: object) -> CrgPort:
     return cast(CrgPort, value)
-
-
-def _worker_run_ids(executor: Executor) -> dict[int, str]:
-    return cast(dict[int, str], attrgetter("_worker_run_id_by_node")(executor))
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -137,6 +134,44 @@ class TestMergeBackIntegration:
         subject = _git(project, "log", "-1", "--format=%s").strip()
         assert subject.startswith("feat(milknado-1):")
 
+    def test_context_pins_worktree_when_graph_path_is_stale(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        git = GitAdapter(project)
+        branch = "milknado/1-added"
+        wt = project / "milknado-1-added"
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
+        _worker_did_work(wt)
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            _ = _running_node(graph, tmp_path / "stale-worktree", branch)
+            ex = Executor(
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
+            )
+            ex._context_by_node[1] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+                worker_run_id="worker-1",
+                owner_fence=None,
+                worktree=wt,
+                session=None,
+                target_branch="feature",
+                target_oid=_git(project, "rev-parse", "HEAD").strip(),
+                base_oid=None,
+                review_round=0,
+                config=ExecutionConfig(
+                    execution_agent="unused",
+                    quality_gates=(Gate(command="true"),),
+                    worktree_pattern="unused",
+                    project_root=project,
+                ),
+            )
+            result = ex.complete(1, "feature")
+        finally:
+            graph.close()
+        assert result.rebased is True
+        assert "def added()" in _git(project, "show", "HEAD:feature.py")
+        assert not wt.exists()
+
     def test_scaffolding_absent_from_feature_commit(self, project: Path, tmp_path: Path) -> None:
         """LOOP.md / .loop-logs/ must never be staged into the merged-back commit."""
         git = GitAdapter(project)
@@ -207,7 +242,22 @@ class TestMergeBackIntegration:
             ex = Executor(
                 graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
             )
-            _worker_run_ids(ex)[1] = "run-1"
+            ex._context_by_node[1] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+                worker_run_id="run-1",
+                owner_fence=None,
+                worktree=wt,
+                session=None,
+                target_branch="feature",
+                target_oid=_git(project, "rev-parse", "HEAD").strip(),
+                base_oid=None,
+                review_round=0,
+                config=ExecutionConfig(
+                    execution_agent="unused",
+                    quality_gates=(Gate(command="true"),),
+                    worktree_pattern="unused",
+                    project_root=project,
+                ),
+            )
 
             result = ex.complete(1, "feature")
             row = graph.runs.get("run-1")

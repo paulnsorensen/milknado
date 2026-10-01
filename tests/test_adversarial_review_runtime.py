@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -13,12 +12,12 @@ import msgspec
 import pytest
 
 from milknado.adapters import FlockSlotPool
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters.loop import (
-    LoopAdapter,
-    _drain_review_run,  # pyright: ignore[reportPrivateUsage]
+from milknado.adapters._loop_local_runs import (
     _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
+    drain_review_run,
 )
+from milknado.adapters._loop_types import ReviewVerdict
+from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     Gate,
     GitPort,
@@ -45,10 +44,11 @@ from milknado.domains.execution import (
     RebaseConflict,
     RunLoop,
 )
-from milknado.domains.execution._models import CompletionResult, DispatchResult
+from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
-from milknado.domains.execution.run_loop._completion import handle_completion
+from milknado.domains.execution.run_loop._completion import CompletionContext, handle_completion
 from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop._events import (
     Event,
@@ -120,25 +120,26 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
     def _complete(_node_id: int, _branch: str) -> CompletionResult:
         return result
 
-    loop = SimpleNamespace(
-        _active={"run-1": 1},
-        _dispatched_at={"run-1": 0.0},
-        _progress_by_run={},
-        _input=SimpleNamespace(overlay_state=None),
-        _graph=SimpleNamespace(get_node=_get_node),
-        _executor=SimpleNamespace(complete=_complete),
-        _completion_durations=deque[float](),
-        _logs=deque[str](),
-        _attempts={},
-        _strict=True,
-        _failure_triggered=False,
-        _stopped_nodes=set(),
-        _stopped=0,
-        _terminal_runs=deque(),
-        _loop=_ReviewLoop([]),
+    loop = RunLoop(
+        executor=cast(Executor, cast(object, SimpleNamespace(complete=_complete))),
+        graph=cast(MikadoGraph, cast(object, SimpleNamespace(get_node=_get_node))),
+        loop=cast(LoopPort, cast(object, _ReviewLoop([]))),
     )
-    # The test double implements only the fields used by the completion handler.
-    return cast(RunLoop, cast(object, loop))
+    loop._strict = True  # pyright: ignore[reportPrivateUsage]
+    loop._scheduler.admit_run("run-1", 1, 0.0)  # pyright: ignore[reportPrivateUsage]
+    return loop
+
+
+def _completion_context(loop: RunLoop) -> CompletionContext:
+    return CompletionContext(
+        loop._scheduler,  # pyright: ignore[reportPrivateUsage]
+        loop._graph,  # pyright: ignore[reportPrivateUsage]
+        loop._executor,  # pyright: ignore[reportPrivateUsage]
+        loop._loop,  # pyright: ignore[reportPrivateUsage]
+        loop._input,  # pyright: ignore[reportPrivateUsage]
+        loop._logs,  # pyright: ignore[reportPrivateUsage]
+        loop._strict,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 class _ReviewLoop:
@@ -207,6 +208,14 @@ class _ReviewLoop:
         _ = run_id, timeout
         return True
 
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = graph_run_id, deadline
+        return True
+
     def list_runs(self) -> Sequence[_Run]:
         return ()
 
@@ -262,8 +271,9 @@ class _ReviewLoop:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
-        _ = project_root
+        _ = project_root, graph_run_id
         self.timeout_seconds_seen.append(timeout_seconds)
         self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
@@ -345,6 +355,28 @@ def _executor(
         git=_as_git_port(git or FakeGit()),
         loop=loop,
         crg=FakeCrg(),
+    )
+
+
+def _seed_context(
+    executor: Executor,
+    node_id: int,
+    root: Path,
+    worker_run_id: str,
+    *,
+    owner_fence: str | None = None,
+    base_oid: str = "base-oid",
+) -> None:
+    executor._context_by_node[node_id] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+        worker_run_id=worker_run_id,
+        owner_fence=owner_fence,
+        worktree=root,
+        session=None,
+        target_branch="main",
+        target_oid=base_oid,
+        base_oid=base_oid,
+        review_round=0,
+        config=_config(root),
     )
 
 
@@ -586,12 +618,16 @@ def test_capture_session_handles_nested_json_and_failures(
         '{"event":{"session_id":"nested"}}',
     ]
     executor = _executor(graph, tmp_path, loop)
-    node = MikadoNode(id=9, description="session", run_id="worker", worktree_path=str(tmp_path))
+    node = MikadoNode(
+        id=9, description="session", run_id="worker", worktree_path=str(tmp_path / "stale")
+    )
+    _seed_context(executor, 9, tmp_path, "worker")
     session = executor._capture_session(  # pyright: ignore[reportPrivateUsage]
         node, _config(tmp_path, agent_family="codex")
     )
     assert session is not None
     assert session.session_id == "nested"
+    assert session.worktree_path == str(tmp_path.resolve())
     assert (
         executor._capture_session(  # pyright: ignore[reportPrivateUsage]
             node, _config(tmp_path, agent_family="codex")
@@ -619,7 +655,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     git = FakeGit()
     executor = _executor(graph, tmp_path, loop, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
-    executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, node.id, tmp_path, "fixture-run-12", base_oid="base-oid")
     _ = (tmp_path / "LOOP.md").write_text("generated context", encoding="utf-8")
     prompt = build_review_prompt(
         node,
@@ -634,6 +670,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
         node, tmp_path, _config(tmp_path, session_mode="fresh")
     )
     assert "diff from base-oid" in loop.reviews[0][1]
+    _ = executor._context_by_node.pop(node.id)  # pyright: ignore[reportPrivateUsage]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="reject", findings_md="finding"
     )
@@ -747,8 +784,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
     from milknado.domains.dispatch._runstate import now_iso
 
     assert node is not None
-    executor._worker_run_id_by_node[1] = "worker-1"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[1] = "base-1"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 1, tmp_path, "worker-1", base_oid="base-1")
     monkeypatch.setattr(graph, "replace_run_id", MagicMock(return_value=False))
     with pytest.raises(ValueError, match="fence lost"):
         _ = executor._redispatch_review_round(  # pyright: ignore[reportPrivateUsage]
@@ -757,9 +793,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
 
     _ = graph.add_node("adopted fence")
     assert graph.claim_node(2, "parent-fence", now=now_iso())
-    executor._owner_fence_by_node[2] = "parent-fence"  # pyright: ignore[reportPrivateUsage]
-    executor._worker_run_id_by_node[2] = "worker-2"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[2] = "base-2"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 2, tmp_path, "worker-2", owner_fence="parent-fence", base_oid="base-2")
     original_get_node = graph.get_node
 
     def changed_fence(node_id: int) -> MikadoNode | None:
@@ -789,7 +823,9 @@ def test_review_failure_blocks_without_redispatch(
             project_root: Path,
             *,
             timeout_seconds: float,
+            graph_run_id: str | None = None,
         ) -> ReviewVerdict:
+            _ = graph_run_id
             raise RuntimeError("review process failed")
 
     executor = _executor(graph, tmp_path, FailingReviewLoop([True]))
@@ -802,6 +838,37 @@ def test_review_failure_blocks_without_redispatch(
     node = graph.get_node(1)
     assert node is not None
     assert node.status.value == "blocked"
+
+
+def test_unconfirmed_reviewer_preserves_node_run_and_worktree(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    class UnconfirmedReviewLoop(_ReviewLoop):
+        def run_node_review(  # pyright: ignore[reportImplicitOverride]
+            self,
+            agent: str,
+            prompt: str,
+            worktree: Path,
+            project_root: Path,
+            *,
+            timeout_seconds: float,
+            graph_run_id: str | None = None,
+        ) -> ReviewVerdict:
+            _ = agent, prompt, worktree, project_root, timeout_seconds
+            assert graph_run_id is not None
+            raise PreservedWorkerRun(1, graph_run_id)
+
+    executor = _executor(graph, tmp_path, UnconfirmedReviewLoop([True]))
+    _ = graph.add_node("review owner")
+    dispatched = executor.dispatch(1, _config(tmp_path))
+    with pytest.raises(PreservedWorkerRun) as failure:
+        _ = executor.complete(1, "main")
+    assert failure.value.run_id == dispatched.run_id
+    node = graph.get_node(1)
+    assert node is not None and node.status.value == "running"
+    assert dispatched.worktree.exists()
+    run = graph.runs.get(dispatched.run_id)
+    assert run is not None and run["status"] == "running"
 
 
 def test_review_findings_write_failure_still_audits_and_blocks(
@@ -848,8 +915,8 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _advance_clock() -> float:
         return next(clock)
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _advance_clock)
-    timed_out = _drain_review_run(
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _advance_clock)
+    timed_out = drain_review_run(
         timeout_manager,
         "timeout",
         queue.Queue[Event[EventData]](),
@@ -871,8 +938,8 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _zero_clock() -> float:
         return 0.0
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _zero_clock)
-    empty = _drain_review_run(
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _zero_clock)
+    empty = drain_review_run(
         empty_manager,
         "empty",
         empty_events,
@@ -890,14 +957,19 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
 
     failed_manager = Manager(RuntimeError("stop failed"))
     failed_events = FailedEvents()
-    failed = _drain_review_run(
-        failed_manager,
-        "failed",
-        failed_events,
-        1800.0,
-    )
-    assert failed.approved is False
-    assert "event stream failed" in failed.findings_md
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = drain_review_run(failed_manager, "failed", failed_events, 1800.0)
+    assert failed_manager.stopped
+
+    unconfirmed_manager = Manager()
+
+    def unconfirmed_stop(run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return False
+
+    unconfirmed_manager.stop_and_join = unconfirmed_stop  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = drain_review_run(unconfirmed_manager, "running", empty_events, 1800.0)
 
 
 def test_agent_session_parser_rejects_bad_shapes() -> None:
@@ -1037,7 +1109,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
     )
     events.put(Event(EventType.RUN_STOPPED, "r", NoData()))
     manager = RunManager()
-    result = _drain_review_run(manager, "r", events, 1800.0)
+    result = drain_review_run(manager, "r", events, 1800.0)
     assert result.approved is True
 
 
@@ -1126,18 +1198,22 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", TerminalRunOutcome("completed"), "main") == (0, 0, [])
-    assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
+    assert handle_completion(
+        _completion_context(loop), "run-1", TerminalRunOutcome("completed"), "main"
+    ) == (0, 0, [])
+    assert [run.run_id for run in loop._scheduler.view().active] == ["run-2"]  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", "completed", "main")[1] == 1
+    assert handle_completion(_completion_context(blocked), "run-1", "completed", "main")[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = _handler_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", "completed", "main")[2] == [conflict]
+    assert handle_completion(_completion_context(failed), "run-1", "completed", "main")[2] == [
+        conflict
+    ]
     passed = _handler_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", "completed", "main")[0] == 1
+    assert handle_completion(_completion_context(passed), "run-1", "completed", "main")[0] == 1
 
 
 def test_completion_handler_surfaces_review_notification_failure() -> None:
@@ -1149,7 +1225,9 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     # The node still completes normally — the notice does not change the outcome.
     assert (completed, failed, conflicts) == (1, 0, [])
@@ -1162,7 +1240,9 @@ def test_completion_handler_surfaces_review_audit_failure() -> None:
     )
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     assert (completed, failed, conflicts) == (0, 1, [])
     assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
@@ -1218,7 +1298,7 @@ def test_rejection_audit_failure_blocks_before_merge(
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
-    executor._review_round_by_node[1] = 1  # pyright: ignore[reportPrivateUsage]
+    executor._context_by_node[1].review_round = 1  # pyright: ignore[reportPrivateUsage]
     result = executor.complete(1, "main")
 
     assert result.blocked is True
@@ -1254,8 +1334,9 @@ class _MalformedReviewLoop(_ReviewLoop):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
-        _ = agent, prompt, worktree, project_root, timeout_seconds
+        _ = agent, prompt, worktree, project_root, timeout_seconds, graph_run_id
         return _parse_review_verdict("progress only")
 
 
@@ -1278,7 +1359,7 @@ def test_invalid_review_blocks_without_worker_revision(
     assert result.redispatch is None
     assert len(loop.created) == 1
     assert not git.rebases
-    assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
+    assert executor._context_by_node[1].review_round == 0  # pyright: ignore[reportPrivateUsage]
     rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"

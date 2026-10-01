@@ -11,12 +11,17 @@ from collections.abc import Callable
 from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 from typing import IO, cast
 
 import pytest
 
 from milknado.domains.common import SessionEvent, SessionInput
-from milknado.loop._agent import AgentRunSpec
+from milknado.loop._agent import (
+    AgentRunSpec,
+    _WindDownContext,  # pyright: ignore[reportPrivateUsage]
+)
+from milknado.loop._process_contract import WorkerHandle
 from milknado.loop.sessions import SessionChannel, run_session
 from milknado.loop.sessions._process import (
     MAX_FRAME_SIZE,
@@ -24,6 +29,7 @@ from milknado.loop.sessions._process import (
     Line,
     reader,
 )
+from milknado.loop.sessions._runtime import _new_execution  # pyright: ignore[reportPrivateUsage]
 
 _SCRIPT_HEADER = """#!/usr/bin/env python3
 import json
@@ -241,3 +247,33 @@ def test_raw_stdout_cannot_claim_structured_completion(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.result_text == "work remains"
     assert result.completion_detected is False
+
+
+def test_unresolved_worker_cleanup_still_closes_native_resources(tmp_path: Path) -> None:
+    worker = _worker(tmp_path, "pending")
+    execution = _new_execution(
+        replace(_spec(worker, tmp_path), log_dir=tmp_path / "logs"), SessionChannel()
+    )
+    wind_dir = tmp_path / "wind-down"
+    wind_dir.mkdir()
+    counter = wind_dir / "counter"
+    _ = counter.write_text("0", encoding="utf-8")
+    execution.wind_down = _WindDownContext(wind_dir, counter, {})
+
+    def unresolved_cleanup(
+        _threads: tuple[threading.Thread | None, ...], *, stop: threading.Event
+    ) -> bool:
+        assert stop is execution.stop
+        return False
+
+    execution.protected = cast(
+        WorkerHandle, cast(object, SimpleNamespace(cleanup=unresolved_cleanup))
+    )
+    assert execution.log_handle is not None
+    log_handle = execution.log_handle
+
+    with pytest.raises(RuntimeError, match="worker cleanup remains unresolved"):
+        execution.cleanup()
+
+    assert log_handle.closed
+    assert not wind_dir.exists()

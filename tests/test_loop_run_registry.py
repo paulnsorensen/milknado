@@ -10,9 +10,11 @@ from typing import Protocol, cast
 from unittest.mock import MagicMock
 
 import pytest
+from typing_extensions import override
 
 import milknado.domains.dispatch.cancel as cancel_module
 import milknado.domains.execution.executor as executor_module
+from milknado.adapters import ProcessAdapter
 from milknado.domains.common import Gate, GitPort, LoopPort
 from milknado.domains.dispatch._runstate import request_cancel, runs_dir
 from milknado.domains.dispatch.cancel import cancel_run
@@ -153,7 +155,8 @@ def test_cancel_marks_loop_run_row_cancelled(graph: MikadoGraph, tmp_path: Path)
     graph.runs.set_pid(result.run_id, 424242)
     graph.set_pid(1, result.run_id, 424242)
 
-    class _Process:
+    class _Process(ProcessAdapter):
+        @override
         def terminate_group(self, pid: int, timeout: float) -> bool:
             _ = pid
             _ = timeout
@@ -351,6 +354,7 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     before this window elapses, so the sweep never fires on a real run."""
     from datetime import UTC, datetime, timedelta
 
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
 
     _ = graph.add_node("pidless dispatch")
@@ -362,7 +366,7 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     graph.runs.start(run_id, 1, str(tmp_path / "pidless.log"), old_started, timeout)
     assert _run_record(graph, run_id)["pid"] is None
 
-    flipped = fail_stale_running_runs(graph, 1)
+    flipped = fail_stale_running_runs(graph, 1, ProcessAdapter())
     assert [f["run_id"] for f in flipped] == [run_id]
     assert _run_record(graph, run_id)["status"] == "failed"
 

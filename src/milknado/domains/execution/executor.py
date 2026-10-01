@@ -58,10 +58,18 @@ from milknado.domains.execution._models import (
     PreservedWorkerRun,
     RebaseConflict,
 )
+from milknado.domains.execution._node_context import ExecutionConfig as ExecutionConfig
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import (
     ReviewNotification,
     build_review_prompt,
     persist_review_findings,
+)
+from milknado.domains.execution._review_policy import ReviewDecision, ReviewPolicy, decide_review
+from milknado.domains.execution._stop import (
+    LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    force_stop_graph_run,
+    stop_graph_run,
 )
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import RunStatus
@@ -81,7 +89,6 @@ _logger = logging.getLogger(__name__)
 # Cancel-watcher cadence for pid-less in-process loop runs: poll the on-disk
 # sentinel often enough that cancel_run's 8s confirm bound is comfortably met.
 _LOOP_CANCEL_POLL_SECS = 0.25
-_LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
 # Ceiling for the watcher's retry backoff on consecutive force-stop failures:
 # a permanently wedged loop stays loud (first failure logs immediately) but
 # the retry cadence caps at one error line per minute (~1.4k lines/day) instead
@@ -104,29 +111,8 @@ class _ReviewCallable(Protocol):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str,
     ) -> ReviewResult: ...
-
-
-@dataclass(frozen=True)
-class ExecutionConfig:
-    execution_agent: str
-    quality_gates: tuple[Gate, ...] | None
-    worktree_pattern: str
-    project_root: Path
-    brief_prepend: str | None = None
-    dispatch_max_retries: int = 2
-    dispatch_backoff_seconds: float = 5.0
-    commit_footer: str | None = None
-    agent_family: str = "claude"
-    review: bool = False
-    review_agent: str | None = None
-    review_max_rounds: int = 0
-    review_timeout_seconds: int = 1800
-    on_reject: str = "warn"
-    session_mode: str = "fresh"
-    completion_timeout_seconds: int | None = None
-    attempt_timeout_seconds: float | None = None
-    max_iterations: int | None = None
 
 
 @dataclass(frozen=True)
@@ -427,24 +413,17 @@ class Executor:
         crg: CrgPort,
     ) -> None:
 
-        self._base_oid_by_node: dict[int, str | None] = {}
-        self._worker_run_id_by_node: dict[int, str] = {}
-        self._owner_fence_by_node: dict[int, str] = {}
+        self._context_by_node: dict[int, NodeExecutionContext] = {}
         # Runs whose dispatch-abort force-stop was never confirmed: the cancel
         # watcher finalizes their rows when the wedged loop later self-exits
         # (no completion path owns these ids — they never enter
-        # _worker_run_id_by_node).
+        # _context_by_node).
         self._unconfirmed_stop_run_ids: set[str] = set()
         self._git: GitPort = git
-        self._target_branch_by_node: dict[int, str] = {}
-        self._target_oid_by_node: dict[int, str] = {}
         self._graph: MikadoGraph = graph
         self._wt: WorktreeManager = WorktreeManager(git)
         self._loop: LoopPort = loop
         self._crg: CrgPort = crg
-        self._config_by_node: dict[int, ExecutionConfig] = {}
-        self._session_by_node: dict[int, NodeAgentSession] = {}
-        self._review_round_by_node: dict[int, int] = {}
         self._slots: SlotLedger = SlotLedger()
 
     def use_host_capacity(self, port: HostCapacityPort) -> None:
@@ -487,13 +466,17 @@ class Executor:
             result = self._dispatch_once(
                 node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
             )
-            self._base_oid_by_node[node_id] = target_oid
-            self._worker_run_id_by_node[node_id] = result.run_id
-            if parent_run_id is not None:
-                self._owner_fence_by_node[node_id] = parent_run_id
-            self._target_branch_by_node[node_id] = target_branch
-            self._target_oid_by_node[node_id] = target_oid
-            self._config_by_node[node_id] = config
+            self._context_by_node[node_id] = NodeExecutionContext(
+                worker_run_id=result.run_id,
+                owner_fence=parent_run_id,
+                worktree=result.worktree,
+                session=None,
+                target_branch=target_branch,
+                target_oid=target_oid,
+                base_oid=target_oid,
+                review_round=0,
+                config=config,
+            )
             return result
 
         return retryer(_attempt)
@@ -698,12 +681,8 @@ class Executor:
         try:
             self._spawn_loop_cancel_watcher(run_id, config.project_root)
         except Exception:
-            # The run is live but its id never escapes _create_loop_run, so
-            # the caller's cleanup cannot see it: tear it down here with the
-            # same confirmed-stop + fenced-finalize discipline as every other
-            # dispatch-abort path. Record the outcome for _dispatch_once's
-            # cleanup so an UNCONFIRMED stop preserves the worktree and fails
-            # loud instead of defaulting to discard under a possibly-live loop.
+            # The run ID cannot reach caller cleanup. Preserve the worktree
+            # when its stop cannot be confirmed.
             stop_confirmed = self._stop_aborted_run(
                 run_id, context=f"post-start setup failed for node {node.id}"
             )
@@ -733,7 +712,8 @@ class Executor:
             _logger.exception("runs-row finalize failed for loop run %s", run_id)
 
     def _finish_node_worker_run(self, node_id: int, result: RunResult) -> None:
-        self._finalize_worker_run(self._worker_run_id_by_node.get(node_id), result)
+        context = self._context_by_node.get(node_id)
+        self._finalize_worker_run(context.worker_run_id if context else None, result)
 
     def _spawn_loop_cancel_watcher(self, run_id: str, project_root: Path) -> None:
         """Watch the on-disk cancel sentinel for a pid-less loop run.
@@ -820,7 +800,7 @@ class Executor:
         backoff)`` once force_stop_run itself resolved either way.
         """
         try:
-            stopped = self.force_stop_run(run_id, timeout=_LOOP_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for cancelled loop run %s; row left "
@@ -890,10 +870,10 @@ class Executor:
     ) -> NodeAgentSession | None:
         if config.session_mode != "resume":
             return None
-        existing = self._session_by_node.get(node.id)
-        if existing is not None:
-            return existing
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        if context is not None and context.session is not None:
+            return context.session
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             raise ValueError(f"node {node.id} has no worker run id to resume")
         family, session_id = self._session_identity(worker_run_id, config.agent_family)
@@ -901,7 +881,10 @@ class Executor:
             raise ValueError(
                 f"node {node.id} worker output did not contain a resumable session id"
             )
-        worktree = Path(node.worktree_path or config.project_root).resolve()
+        session_worktree = (
+            context.worktree if context else Path(node.worktree_path or config.project_root)
+        )
+        worktree = session_worktree.resolve()
         session = NodeAgentSession(
             node_id=node.id,
             family=family,
@@ -912,7 +895,8 @@ class Executor:
         path = config.project_root / ".milknado" / "sessions" / f"node-{node.id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
-        self._session_by_node[node.id] = session
+        if context is not None:
+            context.session = session
         return session
 
     def _notify_review(
@@ -929,7 +913,8 @@ class Executor:
         except Exception:
             audit_succeeded = False
             _logger.exception("node_review_table_write_failed node_id=%d", node.id)
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             _logger.error("node_review_notification_missing_run node_id=%d", node.id)
             return ReviewNotification(audit_succeeded, False)
@@ -961,8 +946,11 @@ class Executor:
         )
         if reviewer is None or config.review_agent is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
-        if not (base_oid := self._base_oid_by_node.get(node.id)):
+        context = self._context_by_node.get(node.id)
+        if context is None or not context.base_oid:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
+        base_oid = context.base_oid
+        graph_run_id = context.worker_run_id
         diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
         result: ReviewResult = reviewer(
             config.review_agent,
@@ -970,6 +958,7 @@ class Executor:
             worktree,
             config.project_root,
             timeout_seconds=float(config.review_timeout_seconds),
+            graph_run_id=graph_run_id,
         )
         approved = result.approved
         findings, review_error = result.findings_md.strip(), result.error
@@ -985,8 +974,9 @@ class Executor:
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> DispatchResult:
-        owner_fence = self._owner_fence_by_node.get(node.id)
-        prior_worker_run_id = self._worker_run_id_by_node.get(node.id)
+        context = self._context_by_node.get(node.id)
+        owner_fence = context.owner_fence if context else None
+        prior_worker_run_id = context.worker_run_id if context else None
         old_worker_run_id = prior_worker_run_id or node.run_id
         if not old_worker_run_id:
             raise ValueError(
@@ -999,7 +989,7 @@ class Executor:
         # leave it zombied 'running'. Only the recorded worker run id is
         # finalized — never the node.run_id fence fallback, which can be a
         # live parent run's row.
-        review_round = self._review_round_by_node.get(node.id, 0)
+        review_round = context.review_round if context else 0
         self._finalize_worker_run(
             prior_worker_run_id,
             RunResult(
@@ -1010,10 +1000,10 @@ class Executor:
                 detail=f"superseded by review round {review_round} redispatch",
             ),
         )
-        base_oid = self._base_oid_by_node.get(node.id)
+        base_oid = context.base_oid if context else None
         if base_oid is None:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
-        session = self._session_by_node.get(node.id)
+        session = context.session if context else None
         try:
             run_id = self._create_loop_run(
                 node,
@@ -1043,7 +1033,8 @@ class Executor:
                 ):
                     raise PreservedWorkerRun(node.id, run_id, owner_fence)
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
-        self._worker_run_id_by_node[node.id] = run_id
+        if context is not None:
+            context.worker_run_id = run_id
 
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
@@ -1058,19 +1049,9 @@ class Executor:
         started_run_id: str | None = None,
         stop_confirmed: bool | None = None,
     ) -> bool:
-        # The loop run may already have been started when dispatch aborted
-        # (fence loss / set_dispatched_at failure): stop it and finalize its
-        # runs row before the worktree it writes into is discarded, so it
-        # can't leak as a live loop with an unrecoverable zombie 'running'
-        # row. On an UNCONFIRMED stop the row stays 'running' and the
-        # worktree is kept — tearing it out from under a live loop is worse
-        # than a recoverable leftover directory.
-        #
-        # stop_confirmed carries a teardown result across the post-start
-        # window: _create_loop_run already stopped the run there (its id
-        # never escaped), so cleanup must NOT stop it again — only honor the
-        # outcome. None means cleanup owns the stop attempt for
-        # started_run_id (the fence-loss paths).
+        # A supplied stop result prevents a second stop of a run whose ID
+        # never escaped _create_loop_run. An unconfirmed stop preserves the
+        # running row and worktree for recovery.
         if stop_confirmed is None:
             stop_confirmed = True
             if started_run_id is not None:
@@ -1079,14 +1060,7 @@ class Executor:
                     context=f"failed-dispatch cleanup for node {node_id}",
                 )
         try:
-            # An unconfirmed stop means the abandoned loop may still be
-            # alive and writing into wt_path: releasing the claim here would
-            # let the caller's transient-retry loop reclaim the node and
-            # start a second worker (race) while the first is still live.
-            # Withhold release until the stop is confirmed (or nothing was
-            # ever started, where stop_confirmed defaults True) — the next
-            # _dispatch_once attempt then hits claim_node failing and raises
-            # ValueError, which the retry loop does not retry.
+            # Keep the claim while the old worker may still write to wt_path.
             if release_claim and stop_confirmed:
                 _ = self._graph.release(node_id, owner_run_id)
         except Exception:
@@ -1115,7 +1089,7 @@ class Executor:
     def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
         """Force-stop and finalize a loop run abandoned after start."""
         try:
-            stopped = self.force_stop_run(run_id, timeout=_LOOP_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
                 "force-stop raised for aborted loop run %s (%s); row left running",
@@ -1143,29 +1117,20 @@ class Executor:
         )
         return True
 
-    def _stop_with_bookkeeping(self, run_id: str, timeout: float | None, *, force: bool) -> bool:
-        self._unconfirmed_stop_run_ids.add(run_id)
-        stopper = self._loop.force_stop_run if force else self._loop.stop_run
-        stopped = stopper(run_id, timeout=timeout)
-        if stopped:
-            self._unconfirmed_stop_run_ids.discard(run_id)
-        return stopped
-
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=False)
+        return stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Force-stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=True)
+        return force_stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
-        target_branch = self._target_branch_by_node.get(node_id)
+        context = self._context_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         if target_branch is None:
             return
         current_branch = self._git.current_branch()
         if feature_branch != target_branch or current_branch != target_branch:
-            target_oid = self._target_oid_by_node.get(node_id, "(unknown)")
+            target_oid = context.target_oid if context else "(unknown)"
             raise GitOperationError(
                 "dispatch-time merge target",
                 f"dispatch captured {target_branch!r} at {target_oid}; "
@@ -1281,77 +1246,57 @@ class Executor:
             review_audit_failed=not notification.audit_succeeded,
         )
 
-    def _handle_review_rejection(
+    def _apply_review_decision(
         self,
         node: MikadoNode,
         worktree: Path,
         config: ExecutionConfig,
         findings: str,
-        review_error: bool,
-    ) -> tuple[CompletionResult | None, ReviewNotification]:
-        node_id = node.id
-        round_number = self._review_round_by_node.get(node_id, 0)
-        review_round = round_number + 1
-        verdict = "error" if review_error else "reject"
-        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
-        if not notification.notification_succeeded:
-            _logger.error(
-                "node_review_notification_degraded node_id=%d policy=%s",
-                node_id,
-                config.on_reject,
-            )
-        if not notification.audit_succeeded:
-            blocked = self._block_review(
-                node, worktree, notification, "review blocked after audit failure"
-            )
-            return blocked, notification
-        if review_error:
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after reviewer error: {findings}"
-            )
-            return blocked, notification
-        if round_number < config.review_max_rounds:
-            self._review_round_by_node[node_id] = review_round
+        notification: ReviewNotification,
+        decision: ReviewDecision,
+    ) -> CompletionResult | None:
+        if decision.action == "block":
+            detail = {
+                "approval_audit_failed": "review approval audit failed",
+                "rejection_audit_failed": "review blocked after audit failure",
+                "reviewer_error": f"review blocked after reviewer error: {findings}",
+                "round_limit": f"review blocked after round {decision.next_round}",
+            }[decision.reason]
+            return self._block_review(node, worktree, notification, detail)
+        if decision.action == "redispatch":
+            context = self._context_by_node[node.id]
+            context.review_round = decision.next_round
             redispatch = self._redispatch_review_round(
-                node,
-                config,
-                worktree,
-                prior_findings=findings,
-                findings_round=review_round,
+                node, config, worktree, prior_findings=findings, findings_round=decision.next_round
             )
             _logger.warning(
                 "node_review_rejected node_id=%d round=%d/%d; redispatching",
-                node_id,
-                review_round,
+                node.id,
+                decision.next_round,
                 config.review_max_rounds,
             )
-            return (
-                CompletionResult(
-                    node_id=node_id,
-                    rebased=False,
-                    newly_ready=[],
-                    redispatch=redispatch,
-                    review_notification_failed=not notification.notification_succeeded,
-                ),
-                notification,
+            return CompletionResult(
+                node_id=node.id,
+                rebased=False,
+                newly_ready=[],
+                redispatch=redispatch,
+                review_notification_failed=not notification.notification_succeeded,
             )
-        if config.on_reject == "block":
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after round {review_round}"
+        if decision.reason == "round_limit_warn":
+            _logger.warning(
+                "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
+                node.id,
+                config.review_max_rounds,
             )
-            return blocked, notification
-        _logger.warning(
-            "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
-            node_id,
-            config.review_max_rounds,
-        )
-        return None, notification
+        return None
 
     def _gate_review(
         self, node: MikadoNode, worktree: Path, config: ExecutionConfig
     ) -> tuple[CompletionResult | None, ReviewNotification]:
         try:
             approved, findings, review_error = self._run_review(node, worktree, config)
+        except PreservedWorkerRun as exc:
+            raise PreservedWorkerRun(node.id, exc.run_id, node.run_id) from exc
         except Exception as exc:
             review_error = True
             approved = False
@@ -1360,30 +1305,34 @@ class Executor:
                 persist_review_findings(node, worktree, findings)
             except OSError:
                 _logger.exception(
-                    "adversarial review findings recovery failed for node %d",
-                    node.id,
+                    "adversarial review findings recovery failed for node %d", node.id
                 )
             _logger.exception("adversarial review failed for node %d", node.id)
-        if approved and not review_error:
-            notification = self._notify_review(node, verdict="approve", findings_md=findings)
-            if not notification.audit_succeeded:
-                blocked = self._block_review(
-                    node, worktree, notification, "review approval audit failed"
-                )
-                return blocked, notification
-            return None, notification
-        return self._handle_review_rejection(node, worktree, config, findings, review_error)
+        verdict = "error" if review_error else "approve" if approved else "reject"
+        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
+        if not notification.notification_succeeded and verdict != "approve":
+            _logger.error(
+                "node_review_notification_degraded node_id=%d policy=%s",
+                node.id,
+                config.on_reject,
+            )
+        context = self._context_by_node.get(node.id)
+        decision = decide_review(
+            verdict,
+            notification.audit_succeeded,
+            context.review_round if context else 0,
+            ReviewPolicy(config.review_max_rounds, config.on_reject),
+        )
+        return (
+            self._apply_review_decision(node, worktree, config, findings, notification, decision),
+            notification,
+        )
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         try:
             return self._complete(node_id, feature_branch)
         finally:
-            try:
-                current = self._graph.get_node(node_id)
-                in_flight = current is not None and current.status is NodeStatus.RUNNING
-                self._slots.settle(node_id, running=in_flight)
-            except Exception:
-                _logger.exception("host slot settle failed node_id=%d", node_id)
+            self._settle_node_slot(node_id)
 
     def _complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
@@ -1406,22 +1355,41 @@ class Executor:
                 tuple(VALID_TRANSITIONS[node.status]),
             )
 
+        self._require_worker_cleanup(node)
         self._validate_completion_target(node_id, feature_branch)
+        context = self._context_by_node.get(node_id)
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        config = self._config_by_node.get(node_id)
+        if context is not None:
+            worktree = context.worktree
+        config = context.config if context else None
         notification = ReviewNotification(True, True)
         if worktree is not None and config is not None and self._review_enabled(config):
             early, notification = self._gate_review(node, worktree, config)
             if early is not None:
                 return early
 
-        target_branch = self._target_branch_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
         result = self._finalize_completion(node, rebase_result)
         return replace(
             result,
             review_notification_failed=not notification.notification_succeeded,
         )
+
+    def _require_worker_cleanup(self, node: MikadoNode) -> None:
+        records = self._graph.runs.live_workers(node_id=node.id)
+        if records:
+            run_id = records[0].graph_run_id or records[0].runtime_run_id
+            raise PreservedWorkerRun(node.id, run_id, node.run_id)
+
+    def _settle_node_slot(self, node_id: int) -> None:
+        try:
+            current = self._graph.get_node(node_id)
+            self._slots.settle(
+                node_id, running=current is not None and current.status is NodeStatus.RUNNING
+            )
+        except Exception:
+            _logger.exception("host slot settle failed node_id=%d", node_id)
 
     def _mark_terminal(
         self, node: MikadoNode, status: NodeStatus, *, preserve_recovery: bool = False
@@ -1464,6 +1432,8 @@ class Executor:
     def finish_preserved_abort(self, node_id: int, owner_run_id: str, run_id: str) -> None:
         try:
             node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
             if (
                 node is not None
                 and node.status is NodeStatus.RUNNING
@@ -1483,12 +1453,14 @@ class Executor:
                 ),
             )
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)
 
     def fail(self, node_id: int, detail: str | None = None) -> None:
         try:
-            self._wt.ensure_clean(node_id)
             node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
+            self._wt.ensure_clean(node_id)
             preserved = self._discard_worktree(node_id, node, "failed") if node else None
             self._graph.mark_failed(node_id)
             self._finish_node_worker_run(
@@ -1502,7 +1474,7 @@ class Executor:
                 ),
             )
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)
 
     def cancel(self, node_id: int) -> None:
         """Clean a stopped run and make its graph node schedulable next invocation."""
@@ -1510,6 +1482,7 @@ class Executor:
             node = self._graph.get_node(node_id)
             if node is None:
                 raise ValueError(f"Node {node_id} not found")
+            self._require_worker_cleanup(node)
             self._finish_node_worker_run(
                 node_id,
                 RunResult(
@@ -1526,4 +1499,4 @@ class Executor:
             else:
                 self._graph.mark_pending(node_id)
         finally:
-            self._slots.drop(node_id)
+            self._settle_node_slot(node_id)

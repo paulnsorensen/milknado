@@ -1,21 +1,28 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
-import re
 import shlex
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
+import psutil
+
+from milknado.adapters._loop_local_runs import (
+    UnconfirmedReviewStop,
+    drain_review_run,
+    drain_verify_run,
+)
 from milknado.adapters._loop_session import LoopSessionMixin
 from milknado.adapters._loop_types import ReviewVerdict
 from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
     build_verify_prompt as _build_verify_prompt_impl,
 )
-from milknado.adapters._loop_types import event_text as _event_text
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
@@ -23,10 +30,15 @@ from milknado.domains.common import (
     ProgressEvent,
     TerminalRunOutcome,
     VerifySpecResult,
+    WorkerOwner,
     build_resume_command,
 )
-from milknado.domains.execution import build_completion_verifier
+from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
+from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
 from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions
+from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData
@@ -40,6 +52,34 @@ _logger = logging.getLogger(__name__)
 
 
 class LoopAdapter(LoopSessionMixin):
+    def _launch_worker(
+        self, options: SpawnOptions, runtime_run_id: str, graph_run_id: str | None
+    ) -> ProtectedWorker:
+        graph = self._graph
+        if graph_run_id is not None:
+            if graph is None:
+                raise RuntimeError("graph run requires graph evidence")
+            run = graph.runs.get(graph_run_id)
+            if run is None or run["status"] != "running":
+                raise RuntimeError("running graph run is required before worker launch")
+            node_id = run["node_id"]
+        else:
+            node_id = None
+        if graph is None:
+            db_path = default_worker_db_path()
+            with open_standalone_worker_evidence(db_path):
+                pass
+        else:
+            db_path = graph.db_path
+        supervisor = psutil.Process()
+        owner = WorkerOwner(
+            runtime_run_id, supervisor.pid, supervisor.create_time(), graph_run_id, node_id
+        )
+        protection = ProtectionContext(
+            LoopWorkerEvidence(db_path), owner, db_path, self._worker_registry
+        )
+        return spawn_protected(options, protection)
+
     def create_run(
         self,
         agent: str,
@@ -92,7 +132,13 @@ class LoopAdapter(LoopSessionMixin):
             config.completion_verifier = build_completion_verifier(
                 loop_dir, quality_gates, base_oid=base_oid
             )
+        if os.name != "nt" and self._graph is not None and run_id is None:
+            raise RuntimeError("graph node run requires a graph run ID")
         run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)
+        if os.name != "nt":
+            config.spawn_worker = lambda options: self._launch_worker(
+                options, run.state.run_id, run_id
+            )
         if context is not None:
             self._attach_session_sink(run)
         return run
@@ -102,6 +148,17 @@ class LoopAdapter(LoopSessionMixin):
 
     def request_stop_run(self, run_id: str) -> None:
         self._manager.stop_run(run_id)
+
+    def bind_shutdown_intent(self, requested: Callable[[], bool]) -> None:
+        self._worker_registry.bind_shutdown_intent(requested)
+
+    def stop_active_workers(self, deadline: float) -> bool:
+        return self._worker_registry.stop_all(deadline)
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        stopped = self._worker_registry.stop_run_workers(graph_run_id, deadline)
+        graph = self._graph
+        return stopped and (graph is None or not graph.runs.live_workers(run_id=graph_run_id))
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         return self._manager.force_stop_and_join(run_id, timeout)
@@ -238,12 +295,14 @@ class LoopAdapter(LoopSessionMixin):
             )
             local_run = local_manager.create_run(config)
             run_id = local_run.state.run_id
+            if os.name != "nt":
+                config.spawn_worker = lambda options: self._launch_worker(options, run_id, None)
             ev_queue = cast(
                 QueueEmitter,
                 cast(object, local_run.emitter),
             ).queue
             local_manager.start_run(run_id)
-            return _drain_verify_run(local_manager, run_id, ev_queue)
+            return drain_verify_run(local_manager, run_id, ev_queue)
 
     def run_node_review(
         self,
@@ -253,9 +312,12 @@ class LoopAdapter(LoopSessionMixin):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
         """Run one bounded, read-only reviewer turn in the pinned worktree."""
         del project_root
+        if self._graph is not None and graph_run_id is None:
+            raise RuntimeError("graph node review requires its running worker run ID")
         import tempfile
 
         with tempfile.TemporaryDirectory(prefix="milknado-review-") as tmpdir:
@@ -277,8 +339,34 @@ class LoopAdapter(LoopSessionMixin):
                 log_dir=worktree / ".loop-logs" / "review",
             )
             run = local_manager.create_run(config, emitter=local_emitter)
+            if os.name != "nt":
+                config.spawn_worker = lambda options: self._launch_worker(
+                    options, run.state.run_id, graph_run_id
+                )
             local_manager.start_run(run.state.run_id)
-            return _drain_review_run(local_manager, run.state.run_id, local_queue, timeout_seconds)
+            try:
+                verdict = drain_review_run(
+                    local_manager, run.state.run_id, local_queue, timeout_seconds
+                )
+                try:
+                    unconfirmed = self._graph is not None and any(
+                        record.runtime_run_id == run.state.run_id
+                        for record in self._graph.runs.live_workers(run_id=graph_run_id)
+                    )
+                except Exception as exc:
+                    raise UnconfirmedReviewStop(run.state.run_id) from exc
+                if unconfirmed:
+                    raise UnconfirmedReviewStop(run.state.run_id)
+                return verdict
+            except UnconfirmedReviewStop as exc:
+                if self._graph is None or graph_run_id is None:
+                    raise
+                graph_run = self._graph.runs.get(graph_run_id)
+                if graph_run is None:
+                    raise RuntimeError(
+                        "review owner row vanished before stop confirmation"
+                    ) from exc
+                raise PreservedWorkerRun(graph_run["node_id"], graph_run_id) from exc
 
     def generate_loop_md(
         self,
@@ -306,100 +394,6 @@ class LoopAdapter(LoopSessionMixin):
 
 def _build_verify_prompt(spec_text: str, graph_state: object | None) -> str:
     return _build_verify_prompt_impl(spec_text, graph_state, MILKNADO_COMPLETION_SIGNAL)
-
-
-def _drain_verify_run(
-    local_manager: RunManager,
-    run_id: str,
-    ev_queue: queue.Queue[Event[EventData]],
-) -> VerifySpecResult:
-    _ITERATION_EVENTS = frozenset((EventType.ITERATION_COMPLETED, EventType.ITERATION_FAILED))
-    output_parts: list[str] = []
-    deadline = time.monotonic() + 120.0
-    try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
-                return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
-            try:
-                event = ev_queue.get(timeout=remaining)
-            except queue.Empty:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
-                return VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
-            if event.type in _ITERATION_EVENTS:
-                text = _event_text(event.data, "result_text")
-                if text:
-                    output_parts.append(text)
-            elif event.type == EventType.RUN_STOPPED:
-                break
-    except Exception as exc:
-        _logger.exception("verify_spec drain failed for run_id=%s", run_id)
-        try:
-            _ = local_manager.stop_and_join(run_id, timeout=5.0)
-        except Exception:
-            _logger.exception("verify_spec stop failed for run_id=%s", run_id)
-        return VerifySpecResult(outcome="gaps", goal_delta=f"verification failed: {exc}")
-    return _parse_verify_output("\n".join(output_parts))
-
-
-def _drain_review_run(
-    local_manager: RunManager,
-    run_id: str,
-    ev_queue: queue.Queue[Event[EventData]],
-    timeout_seconds: float,
-) -> ReviewVerdict:
-    """Drain one reviewer run and convert its final output into a verdict."""
-    output_parts: list[str] = []
-    deadline = time.monotonic() + timeout_seconds
-    try:
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
-                return ReviewVerdict(
-                    approved=False,
-                    findings_md="reviewer timed out before producing a verdict",
-                    error=True,
-                )
-            try:
-                event = ev_queue.get(timeout=remaining)
-            except queue.Empty:
-                _ = local_manager.stop_and_join(run_id, timeout=5.0)
-                return ReviewVerdict(
-                    approved=False,
-                    findings_md="reviewer timed out before producing a verdict",
-                    error=True,
-                )
-            if event.type in {
-                EventType.ITERATION_COMPLETED,
-                EventType.ITERATION_FAILED,
-            }:
-                text = _event_text(event.data, "result_text", "echo_stdout")
-                if text:
-                    output_parts.append(text)
-            elif event.type == EventType.RUN_STOPPED:
-                break
-    except Exception as exc:
-        _logger.exception("node review drain failed for run_id=%s", run_id)
-        try:
-            _ = local_manager.stop_and_join(run_id, timeout=5.0)
-        except Exception:
-            _logger.exception("node review stop failed for run_id=%s", run_id)
-        return ReviewVerdict(approved=False, findings_md=f"reviewer failed: {exc}", error=True)
-    return _parse_review_verdict("\n".join(output_parts))
-
-
-def _parse_verify_output(output: str) -> VerifySpecResult:
-
-    if "<result>done</result>" in output:
-        return VerifySpecResult(outcome="done")
-    if "<result>gaps</result>" in output:
-        m = re.search(r"<goal_delta>(.*?)</goal_delta>", output, re.DOTALL)
-        delta = m.group(1).strip() if m else None
-        return VerifySpecResult(outcome="gaps", goal_delta=delta)
-    _logger.warning("verify_spec: unparseable output, returning gaps")
-    return VerifySpecResult(outcome="gaps", goal_delta="verification produced no explicit result")
 
 
 def _build_loop_content(
@@ -443,15 +437,3 @@ def _build_loop_content(
         f"emit `<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>` on its own line\n"
         "so the run can stop before the iteration budget.\n"
     )
-
-
-def _parse_review_verdict(output: str) -> ReviewVerdict:
-    verdicts = list(re.finditer(r"<verdict>\s*(approve|reject|revise)\s*</verdict>", output, re.I))
-    marker_count = len(re.findall(r"</?verdict\b", output, re.I))
-    if len(verdicts) != 1 or marker_count != 2:
-        _logger.warning("run_node_review: unparseable or conflicting reviewer output")
-        findings = output.strip() or "reviewer produced no parseable <verdict> tag"
-        return ReviewVerdict(approved=False, findings_md=findings, error=True)
-    match = verdicts[0]
-    findings_md = output[: match.start()].strip()
-    return ReviewVerdict(approved=match.group(1).lower() == "approve", findings_md=findings_md)

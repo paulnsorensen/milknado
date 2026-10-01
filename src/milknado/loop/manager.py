@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from dataclasses import dataclass
 
@@ -82,6 +83,8 @@ class RunManager:
             managed = self._lookup(run_id)
             if managed.thread is not None:
                 raise RuntimeError(f"Run '{run_id}' has already been started")
+            if os.name != "nt" and managed.config.spawn_worker is None:
+                raise RuntimeError("durable worker context is required before POSIX launch")
             if managed.state.session is not None and managed.config.session_context is not None:
                 managed.state.session.start(managed.config.session_context, ())
             managed.thread = threading.Thread(

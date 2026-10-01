@@ -1,0 +1,71 @@
+"""Typed evidence callbacks supplied to the graph-free loop runtime."""
+
+from __future__ import annotations
+
+import subprocess
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
+from milknado.loop._process_identity import Descendant
+from milknado.loop._process_registry import WorkerRegistry
+
+
+class WorkerHandle(Protocol):
+    @property
+    def process(self) -> subprocess.Popen[str] | subprocess.Popen[bytes]: ...
+
+    def cleanup(
+        self,
+        threads: tuple[threading.Thread | None, ...] = (),
+        *,
+        stop: threading.Event | None = None,
+        deadline: float | None = None,
+    ) -> bool: ...
+
+    def complete(self, *, graceful: bool) -> bool: ...
+
+
+class WorkerRecordView(Protocol):
+    @property
+    def invocation_id(self) -> str: ...
+    @property
+    def snapshot_seq(self) -> int: ...
+    @property
+    def ready_generation(self) -> int: ...
+    @property
+    def helper_generation(self) -> int: ...
+    @property
+    def helper_pid(self) -> int | None: ...
+    @property
+    def helper_start_token(self) -> float | None: ...
+    @property
+    def observation_owner(self) -> str | None: ...
+    @property
+    def descendants(self) -> tuple[Descendant, ...]: ...
+    @property
+    def ended_at(self) -> str | None: ...
+
+
+class WorkerEvidence(Protocol):
+    def with_deadline(self, deadline: float) -> WorkerEvidence: ...
+    def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None: ...
+    def get_worker(self, invocation_id: str) -> WorkerRecordView | None: ...
+    def record_helper(self, helper: HelperIdentity) -> None: ...
+    def begin_worker_observation(self, key: ObservationKey) -> None: ...
+    def commit_worker_observation(
+        self, key: ObservationKey, descendants: tuple[Descendant, ...]
+    ) -> None: ...
+    def end_worker(
+        self, invocation_id: str, snapshot_seq: int, helper_generation: int | None = None
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionContext:
+    evidence: WorkerEvidence
+    owner: WorkerOwner
+    db_path: Path
+    registry: WorkerRegistry | None = None

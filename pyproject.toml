@@ -25,6 +25,7 @@ dependencies = [
     "uvicorn>=0.35.0",
     "sse-starlette>=3.0.0",
     "filelock>=3.19.1",
+    "psutil>=7.0.0",
     "pywin32>=311; sys_platform == 'win32'",
 ]
 
@@ -42,6 +43,9 @@ markers = [
     "e2e: live-API end-to-end tests (claude CLI + ANTHROPIC_API_KEY required; slow)",
     "browser: Playwright end-to-end tests over a real committed build; excluded from the xdist coverage run",
 ]
+
+[tool.coverage.run]
+patch = ["subprocess", "execv"]
 
 [tool.importlinter]
 root_package = "milknado"

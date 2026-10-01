@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
+from milknado.adapters import ProcessAdapter
 from milknado.cli._helpers import (
     DEFAULT_PROJECT_ROOT,
     typer_argument,
@@ -191,6 +192,7 @@ def _run(options: RunCommandOptions) -> None:
         )
         raise typer.Exit(code=2)
     project_root, strict, allow_protected, web, port, no_open = options
+    from milknado.app._shutdown import ShutdownSignal
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
@@ -235,7 +237,7 @@ def _run(options: RunCommandOptions) -> None:
 
         interactive = _is_interactive_terminal()
         if not interactive:
-            _ = reconcile_orphaned_runs(graph)
+            _ = reconcile_orphaned_runs(graph, ProcessAdapter())
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
@@ -270,6 +272,8 @@ def _run(options: RunCommandOptions) -> None:
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)
+    except ShutdownSignal as shutdown:
+        raise typer.Exit(code=128 + shutdown.signum) from None
     except ProtectedBranchRefusal as refusal:
         if refusal.reason == "detached":
             console.print(

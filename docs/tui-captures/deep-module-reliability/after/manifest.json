@@ -1,0 +1,137 @@
+{
+  "source_revision": "7e06824b4834be760a558b2dfbf8954738adab8a",
+  "presentation_sha256": {
+    "src/milknado/app/run_tui.py": "f9acd29698c1dbabf718c0d5958a2ef20ed6a4ce6220ca0377837b47ac1cf9d3",
+    "src/milknado/app/run_view.py": "5a4c0b8af2a807ee629a6c40f5676e034741426626a9d8b1492f31f4407131e1",
+    "src/milknado/app/run_view_app.py": "6b53d834158bb258f945887b877b0be411c8188f784027b4ce7d410a9556a56b",
+    "src/milknado/app/watch_tui.py": "f96377bcf8123eaae0e96bbfcb570fe988b4b188b98d008cf698c74ca35a32f8",
+    "src/milknado/app/run_overlays.py": "803439c1624ea0a00812bca94c63eac6e8712622d10971d4923fb2b03b48b3bc",
+    "src/milknado/app/run_layout.py": "5eeb963a940e50c43d0e26b0f96af0c3b9108de11735b191bdb789352cbd0145",
+    "docs/tui-captures/agent-steering/fixture.py": "81d544d502ed211031fc40685c45aec6a04d5f8b1584d83f04d9cc0e1ebb2992"
+  },
+  "theme": "textual-dark",
+  "clock": "12:00:00",
+  "fixture": "docs/tui-captures/agent-steering/fixture.py",
+  "watch_quit_local": "q exited each watch app with zero fixture stop calls",
+  "limits": [
+    "Synthetic snapshots; no live worker, controller, CLI, provider, or database.",
+    "Fixture call evidence does not prove live-worker cleanup.",
+    "Chromium renders Textual SVG; this does not prove terminal palette fidelity."
+  ],
+  "records": [
+    {
+      "stem": "run-main-120x40",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-quit-confirmation-120x40",
+      "surface": "run",
+      "state": "quit-confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-stop-confirmation-120x40",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        120,
+        40
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "watch-main-120x40",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        120,
+        40
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-main-80x24",
+      "surface": "run",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-quit-confirmation-80x24",
+      "surface": "run",
+      "state": "quit-confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "run-stop-confirmation-80x24",
+      "surface": "run",
+      "state": "stop-confirmation",
+      "size": [
+        80,
+        24
+      ],
+      "focus": null,
+      "screen": "_ConfirmationOverlay",
+      "active_runs": 1
+    },
+    {
+      "stem": "watch-main-80x24",
+      "surface": "watch",
+      "state": "main",
+      "size": [
+        80,
+        24
+      ],
+      "focus": "graph-tree",
+      "screen": "Screen",
+      "active_runs": 1
+    }
+  ],
+  "warning_records": [
+    {
+      "stem": "run-unconfirmed-stop-warning-120x40",
+      "size": [
+        120,
+        40
+      ],
+      "force_stop_all_calls": 1
+    },
+    {
+      "stem": "run-unconfirmed-stop-warning-80x24",
+      "size": [
+        80,
+        24
+      ],
+      "force_stop_all_calls": 1
+    }
+  ]
+}

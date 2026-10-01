@@ -1,10 +1,4 @@
-"""Application-layer policy for detached, worktree-isolated loop runs.
-
-The MCP ``milknado_run_loop_start`` tool is a thin registration veneer over
-``start_loop_run`` here, which owns the claim/spawn policy and constructs the
-git / process / tmux adapters. Entry modules therefore build no adapters and
-hold no dispatch policy inline.
-"""
+"""Application policy and adapter composition for detached loop runs."""
 
 from __future__ import annotations
 
@@ -20,6 +14,7 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 from milknado.adapters import FlockSlotPool, GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
@@ -27,9 +22,11 @@ from milknado.domains.common import (
     RunResult,
     SlotLease,
     UnlandedWorkError,
+    pid_alive,
 )
 from milknado.domains.dispatch import (
     ProcessPort,
+    ReapRequest,
     RunWindow,
     build_worker_env,
     claim_with_host_slot,
@@ -38,11 +35,12 @@ from milknado.domains.dispatch import (
     fail_stale_running_runs,
     make_run_id,
     now_iso,
+    reap_orphaned_workers,
     reconcile_node_status,
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull
+from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull, NodeWorkers
 
 _logger = logging.getLogger(__name__)
 
@@ -88,7 +86,18 @@ def _claim_loop(graph: MikadoGraph, git: GitAdapter, request: LoopStartRequest) 
         )
     stale_worktree = Path(node.worktree_path) if node.worktree_path else None
     if node.status == NodeStatus.RUNNING:
-        _ = fail_stale_running_runs(graph, request.node_id)
+        process = ProcessAdapter()
+        if (
+            node.pid is not None
+            and not pid_alive(node.pid)
+            and not reap_orphaned_workers(
+                graph, process, ReapRequest(NodeWorkers(request.node_id))
+            )
+        ):
+            raise RuntimeError(
+                f"node {request.node_id} worker recovery unresolved; claim and worktree preserved"
+            )
+        _ = fail_stale_running_runs(graph, request.node_id, process)
         if node.run_id is not None:
             winner = graph.runs.latest_terminal(request.node_id, node.run_id)
             if winner is not None:
@@ -219,14 +228,10 @@ def _record_start_failure(
 
 
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
-    """Claim a task node and spawn its detached loop; return the run state dict.
-
-    Returns a deferred result instead when the graph is at its concurrency limit.
-    Owns the adapter composition (git, process, tmux) and the claim/spawn policy
-    so the MCP tool never constructs an adapter or holds this policy inline.
-    """
+    """Claim a task node and spawn its detached loop, or return a deferred result."""
     graph.register_controller_master()
-    _ = reconcile_orphaned_runs(graph)
+    reconcile_loop_workers(graph)
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     tmux = TmuxAdapter(request.root) if request.use_tmux else None
     if tmux is not None:
         ensure_tmux_ready(tmux)

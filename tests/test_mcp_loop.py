@@ -710,6 +710,7 @@ def test_runner_writes_done_on_successful_outcome(
     poll reads — preserving the base schema (log_path/timeout_seconds)."""
     import milknado.adapters as adapters
     import milknado.app.project as project
+    import milknado.app.worker_recovery as worker_recovery
     import milknado.domains.execution as execution
     from milknado.domains.execution import NodeLoopOutcome
     from milknado.mcp import _loop_node_runner
@@ -760,10 +761,15 @@ def test_runner_writes_done_on_successful_outcome(
     def open_graph_stub(_root: Path) -> tuple[_Graph, _Cfg]:
         return graph, _Cfg()
 
+    recovered: list[_Graph] = []
+    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", recovered.append)
     monkeypatch.setattr(project, "open_graph", open_graph_stub)
     monkeypatch.setattr(adapters, "GitAdapter", _Git)
 
     class _StubLoop:
+        def bind_shutdown_intent(self, _requested: object) -> None:
+            pass
+
         def poll_progress_events(self) -> list[object]:
             return []
 
@@ -813,6 +819,7 @@ def test_runner_writes_done_on_successful_outcome(
         ]
     )
     assert rc == 0
+    assert recovered == [graph]
     assert graph.closed is True  # the graph handle is always released
     assert graph.finished is not None
     assert graph.finished["status"] == "done"
@@ -826,6 +833,7 @@ def test_runner_calls_force_stop_on_timeout(
     """A completion deadline force-stops the worker before recording timeout."""
     import milknado.adapters as adapters
     import milknado.app.project as project
+    import milknado.app.worker_recovery as worker_recovery
     import milknado.domains.execution as execution
     from milknado.domains.common.errors import CompletionTimeout
     from milknado.domains.execution._models import DispatchResult
@@ -878,6 +886,9 @@ def test_runner_calls_force_stop_on_timeout(
             self.stopped: list[str] = []
             self.force_stopped: list[str] = []
 
+        def bind_shutdown_intent(self, _requested: object) -> None:
+            pass
+
         def wait_for_next_completion(
             self, active_run_ids: set[str], timeout: float | None = None
         ) -> NoReturn:
@@ -923,6 +934,8 @@ def test_runner_calls_force_stop_on_timeout(
 
     stub_loop = _StubLoop()
     graph = _Graph()
+    recovered: list[_Graph] = []
+    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", recovered.append)
 
     def open_graph_stub(_root: Path) -> tuple[_Graph, _Cfg]:
         return graph, _Cfg()
@@ -967,6 +980,7 @@ def test_runner_calls_force_stop_on_timeout(
         ]
     )
     assert rc == 1
+    assert recovered == [graph]
     assert stub_loop.force_stopped == ["run-1"], "timeout must force-stop the loop run"
     assert graph.finished is not None
     assert graph.finished["timed_out"] is True

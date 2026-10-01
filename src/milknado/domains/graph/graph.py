@@ -90,6 +90,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     github: _GithubFacade
 
     @property
+    def db_path(self) -> Path:
+        return self._db_path
+
+    @property
     def synchronization_lock(self) -> AbstractContextManager[object]:
         return self._lock
 
