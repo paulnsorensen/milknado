@@ -1,0 +1,17 @@
+inheritance: true
+reviews:
+  path_filters:
+    - "src/**"
+    - "!src/milknado/_vendor/**"
+    - "!src/milknado/web/static/**"
+    - "tests/**"
+    - "web/**"
+    - "!web/vendor/milknado/**"
+    - "scripts/**"
+    - "integrations/**"
+    - "plugins/**"
+    - ".github/workflows/**"
+    - "pyproject.toml"
+    - "milknado.toml"
+    - "justfile"
+    - "codecov.yml"
