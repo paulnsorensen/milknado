@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import cast
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Static, Tree
 
 from milknado.app.run import ExecutionRunStatus, TerminalRunSnapshot
 from milknado.domains.graph import GraphSnapshot, NodeDetailResponse
@@ -266,6 +267,30 @@ async def test_graphless_refresh_replaces_missing_run_and_clears_empty(kind: str
         assert (app.selected_node_id, app.selected_run_id) == (2, "run-2")
 
         app.show_snapshot(replace(source_value.current, graph=None, active_runs=()))
+        await pilot.pause()
+        assert (app.selected_node_id, app.selected_run_id) == (None, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["run", "watch"])
+@pytest.mark.parametrize("graph", [None, GraphSnapshot((), (), ())])
+async def test_stale_tree_highlight_cannot_select_node_after_graph_disappears(
+    kind: str, graph: GraphSnapshot | None
+) -> None:
+    source_value = source()
+    app = run_app(source_value, kind)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        tree = cast(Tree[object], app.query_one("#graph-tree", Tree))
+        old_cursor = tree.cursor_node
+        assert old_cursor is not None and old_cursor.data is not None
+
+        app.show_snapshot(replace(source_value.current, graph=graph, active_runs=()))
+        assert (app.selected_node_id, app.selected_run_id) == (None, None)
+
+        app.select_tree_node(Tree.NodeHighlighted(old_cursor))
+        assert (app.selected_node_id, app.selected_run_id) == (None, None)
         await pilot.pause()
         assert (app.selected_node_id, app.selected_run_id) == (None, None)
 

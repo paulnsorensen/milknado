@@ -96,12 +96,15 @@ class RunNavigationMixin(metaclass=type(MessagePump)):
     @on(Tree.NodeHighlighted, "#graph-tree")
     def select_tree_node(self, event: Tree.NodeHighlighted[object]) -> None:
         host = _navigation_host(self)
+        graph = host.snapshot.graph
+        if graph is None or not graph.nodes:
+            return
         tree = cast(Tree[object], host.query_one("#graph-tree", Tree))
         if event.node is not tree.cursor_node:
             return
         node_id = getattr(event.node.data, "node_id", None)
         if isinstance(node_id, int):
-            _navigation_host(self).select_node(node_id)
+            host.select_node(node_id)
 
     @on(Tree.NodeSelected, "#graph-tree")
     def open_tree_node(self, _event: Tree.NodeSelected[object]) -> None:

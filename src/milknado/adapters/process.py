@@ -45,7 +45,12 @@ class ProcessAdapter:
                 env=env,
             )
             if on_started is not None:
-                on_started(proc.pid)
+                try:
+                    on_started(proc.pid)
+                except BaseException:
+                    proc.kill()
+                    _ = proc.wait()
+                    raise
             if cancel_requested is None:
                 try:
                     _ = proc.communicate(input=stdin, timeout=timeout)
