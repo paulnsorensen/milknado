@@ -103,6 +103,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     def group_connection(self) -> sqlite3.Connection:
         return self._conn
 
+    def group_notifications(self) -> AbstractContextManager[None]:
+        return self._pipeline.defer_after()
+
     def __init__(
         self,
         db_path: Path,

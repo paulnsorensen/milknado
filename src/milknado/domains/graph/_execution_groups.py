@@ -26,6 +26,8 @@ class _GroupGraph(Protocol):
     @property
     def group_connection(self) -> sqlite3.Connection: ...
 
+    def group_notifications(self) -> AbstractContextManager[None]: ...
+
     def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
     def release(self, node_id: int, run_id: str) -> bool: ...
     def set_worktree(
@@ -230,7 +232,7 @@ class ExecutionGroupStore:
     def start_task(self, group_id: str, node_id: int, run_id: str) -> TaskAttempt:  # noqa: V105
         if not run_id:
             raise ValueError("run identity must be nonempty")
-        with self._graph.synchronization_lock:
+        with self._graph.synchronization_lock, self._graph.group_notifications():
             conn = self._graph.group_connection
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
@@ -251,7 +253,7 @@ class ExecutionGroupStore:
     def finish_task(self, attempt: TaskAttempt, outcome: TaskOutcome) -> None:  # noqa: V105
         if outcome.status not in {"done", "failed", "blocked"}:
             raise ValueError("invalid task result status")
-        with self._graph.synchronization_lock:
+        with self._graph.synchronization_lock, self._graph.group_notifications():
             conn = self._graph.group_connection
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")

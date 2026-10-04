@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import MikadoNode, NodeStatus, PluginMeta
 from milknado.domains.graph import (
     ConcurrencyLimitReached,
     GroupWorkspace,
@@ -227,3 +227,65 @@ def test_late_internal_dependency_must_match_group_order(graph: MikadoGraph) -> 
     node = graph.get_node(first.id)
     assert node is not None
     assert node.status is NodeStatus.PENDING
+
+
+class _StatusRecorder:
+    def __init__(self, db_path: Path) -> None:
+        self.db_path: Path = db_path
+        self.events: list[NodeStatus] = []
+        self.visible: list[NodeStatus] = []
+
+    @property
+    def meta(self) -> PluginMeta:
+        return PluginMeta(name="group-recorder", version="0.1.0", description="")
+
+    def on_node_status_change(
+        self, node: MikadoNode, old_status: NodeStatus, new_status: NodeStatus
+    ) -> None:
+        del old_status
+        self.events.append(new_status)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            row = cast(
+                tuple[str] | None,
+                conn.execute("SELECT status FROM nodes WHERE id = ?", (node.id,)).fetchone(),
+            )
+        assert row is not None
+        self.visible.append(NodeStatus(row[0]))
+
+
+def test_group_notifications_follow_commit_and_drop_on_rollback(tmp_path: Path) -> None:
+    db_path = tmp_path / "notifications.db"
+    recorder = _StatusRecorder(db_path)
+    graph = MikadoGraph(db_path, plugins=(recorder,))
+    try:
+        task = graph.add_node("task")
+        group = graph.groups.create("graph-a", (task.id,), _workspace("one"))
+        with closing(sqlite3.connect(graph.db_path)) as conn, conn:
+            _ = conn.execute(
+                "CREATE TRIGGER fail_group_claim BEFORE UPDATE OF worktree_path ON nodes "
+                + "WHEN NEW.worktree_path IS NOT NULL "
+                + "BEGIN SELECT RAISE(ABORT, 'claim interrupted'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="claim interrupted"):
+            _ = graph.groups.start_task(group.id, task.id, "run-a")
+        assert recorder.events == []
+        with closing(sqlite3.connect(graph.db_path)) as conn, conn:
+            _ = conn.execute("DROP TRIGGER fail_group_claim")
+        attempt = graph.groups.start_task(group.id, task.id, "run-a")
+        assert recorder.events == [NodeStatus.RUNNING]
+        with closing(sqlite3.connect(graph.db_path)) as conn, conn:
+            _ = conn.execute(
+                "CREATE TRIGGER fail_group_result BEFORE UPDATE OF status "
+                + "ON execution_group_tasks "
+                + "BEGIN SELECT RAISE(ABORT, 'result interrupted'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="result interrupted"):
+            graph.groups.finish_task(attempt, TaskOutcome("done", "result"))
+        assert recorder.events == [NodeStatus.RUNNING]
+        with closing(sqlite3.connect(graph.db_path)) as conn, conn:
+            _ = conn.execute("DROP TRIGGER fail_group_result")
+        graph.groups.finish_task(attempt, TaskOutcome("done", "result"))
+        assert recorder.events == [NodeStatus.RUNNING, NodeStatus.DONE]
+        assert recorder.visible == recorder.events
+    finally:
+        graph.close()
