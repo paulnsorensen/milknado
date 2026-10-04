@@ -62,6 +62,40 @@ def test_coordinator_stream_rejects_invalid_cursor_and_missing_session() -> None
     assert missing.json() == {"error": "Coordinator session does not exist."}
 
 
+def test_coordinator_routes_report_unavailable_port() -> None:
+    login = LaunchToken("test-token")
+    app = create_app(FixtureSnapshotSource(), WebCommands(), login)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    client.cookies.set(login.cookie_name, login.value)
+    session = "/api/coordinators/session-1"
+    responses = (
+        client.get(f"{session}/snapshot"),
+        client.post(
+            f"{session}/commands", json={"kind": "recover", "command_id": "cmd"}, headers=headers()
+        ),
+        client.get(f"{session}/stream"),
+    )
+    for response in responses:
+        assert response.status_code == 409
+        assert response.json() == {"error": "Coordinator is unavailable."}
+
+
+def test_start_goal_rejects_session_command_route() -> None:
+    login = LaunchToken("test-token")
+    app = create_app(FixtureSnapshotSource(), WebCommands(coordinator=CoordinatorStub()), login)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    client.cookies.set(login.cookie_name, login.value)
+    payload = {
+        "kind": "start_goal",
+        "command_id": "start",
+        "description": "Deliver",
+        "provider": "codex",
+    }
+    response = client.post("/api/coordinators/session-1/commands", json=payload, headers=headers())
+    assert response.status_code == 400
+    assert response.json() == {"error": "start_goal uses /api/coordinators/commands"}
+
+
 def test_coordinator_command_route_validates_and_delegates() -> None:
     login = LaunchToken("test-token")
     stub = CoordinatorStub()
