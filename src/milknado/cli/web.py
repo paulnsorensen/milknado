@@ -71,6 +71,7 @@ def _host_dependencies(
     owner: Callable[[str | None], OwnerCapabilities | None] | None = None,
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
+    from milknado.domains.coordinator import CoordinatorControl
 
     git = _ProjectGitInspection(project_root)
 
@@ -83,6 +84,7 @@ def _host_dependencies(
         review_decision=graph.decide_goal_review,
         git=git,
         owner_capabilities=owner,
+        coordinator=CoordinatorControl(graph, project_root),
     )
 
 
@@ -121,6 +123,17 @@ def web(
     finally:
         source.close()
         graph.close()
+
+
+def launch(
+    project_root: Annotated[
+        Path, typer_option("--project-root", help="Project root directory")
+    ] = DEFAULT_PROJECT_ROOT,
+    port: PortOption = 8000,
+    no_open: NoOpenOption = False,
+) -> None:
+    """Launch the repository-local browser application."""
+    web(project_root, port, no_open)
 
 
 def _watch_source(project_root: Path, db_path: Path) -> ExecutionSnapshotSource:
@@ -211,5 +224,6 @@ __all__ = [
     "OwnerWebOptions",
     "OwnerWebServices",
     "run_owner_web",
+    "launch",
     "web",
 ]

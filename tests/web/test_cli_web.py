@@ -44,6 +44,15 @@ def test_web_command_accepts_port_and_no_open(tmp_path: Path) -> None:
     assert options.no_open is True
 
 
+def test_launch_delegates_repository_and_browser_options(tmp_path: Path) -> None:
+    with patch("milknado.cli.web.web") as host:
+        result = runner.invoke(
+            app, ["launch", "--project-root", str(tmp_path), "--port", "8125", "--no-open"]
+        )
+    assert result.exit_code == 0, result.output
+    host.assert_called_once_with(tmp_path, 8125, True)
+
+
 def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
     with (
         patch("milknado.cli.run._load_or_default", return_value=(object(), [])),
