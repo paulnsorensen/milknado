@@ -113,40 +113,50 @@ def _write_turn_event(conn: sqlite3.Connection, coordinator_id: str, turn: Provi
         turn.status,
         timestamp,
     )
-    with conn:
-        cursor = conn.execute(
-            "INSERT OR IGNORE INTO coordinator_turn_events "
-            + "(coordinator_id, provider_family, provider_session_id, "
-            + "turn_id, status, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
-            values,
-        )
-        if cursor.rowcount == 0:
-            return
-        _ = conn.execute(
-            "INSERT INTO coordinator_events "
-            + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, created_at) "
-            + "VALUES (?, 'provider_turn', 'provider turn transition', ?, ?, ?, ?, ?)",
-            values,
-        )
+    _ = conn.execute(
+        "INSERT INTO coordinator_turn_events "
+        + "(coordinator_id, provider_family, provider_session_id, "
+        + "turn_id, status, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
+        values,
+    )
+    _ = conn.execute(
+        "INSERT INTO coordinator_events "
+        + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, created_at) "
+        + "VALUES (?, 'provider_turn', 'provider turn transition', ?, ?, ?, ?, ?)",
+        values,
+    )
+
+
+def _transition_allowed(current: str | None, target: TurnStatus) -> bool:
+    if current == "confirmed" or current == target:
+        return False
+    if target == "submitted":
+        return current is None
+    return target == "confirmed" or current == "submitted"
 
 
 def _append_turn_transition(
     conn: sqlite3.Connection, coordinator_id: str, turn: ProviderTurn
-) -> None:
+) -> TurnStatus | None:
     if not turn.turn_id:
         raise ValueError("provider turn identity must not be empty")
-    bound = cast(
-        tuple[int] | None,
-        conn.execute(
-            "SELECT 1 FROM coordinator_provider_bindings WHERE coordinator_id = ? "
-            + "AND provider_family = ? AND provider_session_id = ?",
-            (coordinator_id, turn.identity.family, turn.identity.session_id),
-        ).fetchone(),
-    )
-    if bound is None:
-        raise ValueError("provider turn has no coordinator binding")
-    if _latest_turn_status(conn, coordinator_id, turn) != turn.status:
-        _write_turn_event(conn, coordinator_id, turn)
+    with conn:
+        _ = conn.execute("BEGIN IMMEDIATE")
+        bound = cast(
+            tuple[int] | None,
+            conn.execute(
+                "SELECT 1 FROM coordinator_provider_bindings WHERE coordinator_id = ? "
+                + "AND provider_family = ? AND provider_session_id = ?",
+                (coordinator_id, turn.identity.family, turn.identity.session_id),
+            ).fetchone(),
+        )
+        if bound is None:
+            raise ValueError("provider turn has no coordinator binding")
+        current = _latest_turn_status(conn, coordinator_id, turn)
+        if _transition_allowed(current, turn.status):
+            _write_turn_event(conn, coordinator_id, turn)
+            return turn.status
+        return cast(TurnStatus | None, current)
 
 
 def record_provider_turn(
@@ -154,7 +164,7 @@ def record_provider_turn(
 ) -> None:
     if turn.status not in {"submitted", "confirmed"}:
         raise ValueError("only provider evidence can confirm a turn")
-    _append_turn_transition(conn, coordinator_id, turn)
+    _ = _append_turn_transition(conn, coordinator_id, turn)
 
 
 def _mark_unknown_turns(conn: sqlite3.Connection, coordinator_id: str) -> tuple[UnknownTurn, ...]:
@@ -174,11 +184,11 @@ def _mark_unknown_turns(conn: sqlite3.Connection, coordinator_id: str) -> tuple[
         if status not in {"submitted", "unknown"}:
             continue
         identity = ProviderIdentity(family, provider_id)
-        if status == "submitted":
-            _append_turn_transition(
-                conn, coordinator_id, ProviderTurn(identity, turn_id, "unknown")
-            )
-        unknown.append(UnknownTurn(identity, turn_id))
+        persisted = _append_turn_transition(
+            conn, coordinator_id, ProviderTurn(identity, turn_id, "unknown")
+        )
+        if persisted == "unknown":
+            unknown.append(UnknownTurn(identity, turn_id))
     return tuple(unknown)
 
 

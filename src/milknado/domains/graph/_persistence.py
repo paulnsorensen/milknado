@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import milknado.domains.graph._coordinator_recovery_schema as _coordinator_recovery_schema
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
 import milknado.domains.graph._group_schema as _group_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
@@ -232,39 +233,9 @@ MIGRATIONS: list[tuple[int, str]] = [
     (28, _group_schema.ADD_ATTEMPT_ID),
     (29, _group_schema.CREATE_GRAPH_ALTERNATIVES),
     (30, _group_schema.CREATE_GROUP_CLAIM_TRIGGER),
-    (
-        31,
-        "CREATE TABLE IF NOT EXISTS coordinator_provider_bindings ("
-        + "coordinator_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE, "
-        + "scope_kind TEXT NOT NULL CHECK (scope_kind IN ('coordinator', 'execution_group')), "
-        + "scope_id TEXT NOT NULL, "
-        + "provider_family TEXT NOT NULL CHECK (provider_family IN ('claude', 'codex')), "
-        + "provider_session_id TEXT NOT NULL, "
-        + "PRIMARY KEY (coordinator_id, scope_kind, scope_id), "
-        + "UNIQUE (coordinator_id, provider_family, provider_session_id), "
-        + "UNIQUE (provider_family, provider_session_id))",
-    ),
-    (
-        32,
-        "CREATE TABLE IF NOT EXISTS coordinator_turn_events ("
-        + "seq INTEGER PRIMARY KEY AUTOINCREMENT, "
-        + "coordinator_id TEXT NOT NULL, "
-        + "provider_family TEXT NOT NULL, "
-        + "provider_session_id TEXT NOT NULL, "
-        + "turn_id TEXT NOT NULL, "
-        + "status TEXT NOT NULL CHECK (status IN ('submitted', 'confirmed', 'unknown')), "
-        + "recorded_at TEXT NOT NULL, "
-        + "FOREIGN KEY (coordinator_id, provider_family, provider_session_id) "
-        + "REFERENCES coordinator_provider_bindings "
-        + "(coordinator_id, provider_family, provider_session_id) ON DELETE CASCADE)",
-    ),
-    (
-        33,
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinator_turn_unknown "
-        + "ON coordinator_turn_events "
-        + "(coordinator_id, provider_family, provider_session_id, turn_id) "
-        + "WHERE status = 'unknown'",
-    ),
+    (31, _coordinator_recovery_schema.CREATE_PROVIDER_BINDINGS),
+    (32, _coordinator_recovery_schema.CREATE_TURN_EVENTS),
+    (33, _coordinator_recovery_schema.CREATE_UNKNOWN_TURN_INDEX),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
