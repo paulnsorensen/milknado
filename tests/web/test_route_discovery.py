@@ -25,6 +25,10 @@ def test_routes_are_discovered() -> None:
         "/api/runs/{run_id}/changes",
         "/api/runs/{run_id}/diff",
         "/api/scheduling/stop",
+        "/api/coordinators/commands",
+        "/api/coordinators/{session_id}/commands",
+        "/api/coordinators/{session_id}/snapshot",
+        "/api/coordinators/{session_id}/stream",
     }
     writes = {
         (route.path, method)
@@ -42,4 +46,6 @@ def test_routes_are_discovered() -> None:
         ("/api/runs/{run_id}/cancel", "POST"),
         ("/api/runs/{run_id}/force-stop", "POST"),
         ("/api/scheduling/stop", "POST"),
+        ("/api/coordinators/commands", "POST"),
+        ("/api/coordinators/{session_id}/commands", "POST"),
     }
