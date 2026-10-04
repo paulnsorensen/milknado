@@ -1,0 +1,92 @@
+from pathlib import Path
+from typing import cast
+
+import pytest
+
+from milknado.domains.common import SessionInput
+from milknado.domains.coordinator import CoordinatorControl
+from milknado.domains.coordinator.control_models import (
+    CoordinatorCommandReceipt,
+    CreateGroup,
+    DispatchTask,
+    Recover,
+    RuntimeAction,
+    StartGoal,
+)
+from milknado.domains.graph import MikadoGraph
+
+
+def _result(receipt: CoordinatorCommandReceipt) -> dict[str, object]:
+    return cast(dict[str, object], receipt.result)
+
+
+def test_commands_are_durable_and_reject_changed_payloads(tmp_path: Path) -> None:
+    path = tmp_path / "graph.db"
+    graph = MikadoGraph(path)
+    control = CoordinatorControl(graph, tmp_path)
+    start = StartGoal("start-1", "Deliver", "codex")
+    first = control.send_coordinator_command("", start)
+    assert first.status == "accepted"
+    assert control.send_coordinator_command("", start) == first
+    session_id = cast(str, _result(first)["id"])
+    with pytest.raises(ValueError, match="reused"):
+        _ = control.send_coordinator_command("", StartGoal("start-1", "Changed", "codex"))
+    graph.close()
+
+    reopened = MikadoGraph(path)
+    control = CoordinatorControl(reopened, tmp_path)
+    assert control.send_coordinator_command("", start) == first
+    unavailable = control.send_coordinator_command(session_id, Recover("recover-1"))
+    assert unavailable.status == "unavailable"
+    assert control.send_coordinator_command(session_id, Recover("recover-1")) == unavailable
+    with pytest.raises(KeyError):
+        _ = control.read_coordinator_snapshot("foreign", 0)
+    reopened.close()
+
+
+def test_snapshot_orders_events_and_links_group_run(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    start = control.send_coordinator_command("", StartGoal("start-1", "Deliver", "codex"))
+    session_id = cast(str, _result(start)["id"])
+    task = graph.add_node("Implement", cast(int, _result(start)["goal_id"]), files=("src/a.py",))
+    group = control.send_coordinator_command(
+        session_id,
+        CreateGroup(
+            "group-1", "main", (task.id,), str(tmp_path / "group"), "branch", "provider-1"
+        ),
+    )
+    assert group.status == "accepted"
+    group_id = cast(str, _result(group)["id"])
+    run = control.send_coordinator_command(
+        session_id, DispatchTask("dispatch-1", group_id, task.id, "run-1")
+    )
+    assert run.status == "accepted"
+    snapshot = control.read_coordinator_snapshot(session_id, 0)
+    assert [event.seq for event in snapshot.events] == sorted(
+        event.seq for event in snapshot.events
+    )
+    assert {link.kind for link in snapshot.links} >= {"execution_group", "run", "provider_session"}
+    assert snapshot.groups[0].id == group_id
+    assert snapshot.cursor == snapshot.events[-1].seq
+    assert control.read_coordinator_snapshot(session_id, snapshot.cursor).events == ()
+    graph.close()
+
+
+def test_missing_runtime_returns_receipt_without_claiming_action(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    start = control.send_coordinator_command("", StartGoal("start-1", "Deliver", "codex"))
+    session_id = cast(str, _result(start)["id"])
+    result = control.send_coordinator_command(
+        session_id,
+        RuntimeAction("action-1", "provider-1", SessionInput(action="interrupt")),
+    )
+    assert result.status == "unavailable"
+    assert (
+        control.send_coordinator_command(
+            session_id, RuntimeAction("action-1", "provider-1", SessionInput(action="interrupt"))
+        )
+        == result
+    )
+    graph.close()
