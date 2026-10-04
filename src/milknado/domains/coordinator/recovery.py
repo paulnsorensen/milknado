@@ -159,7 +159,7 @@ def _append_turn_transition(
         return cast(TurnStatus | None, current)
 
 
-def record_provider_turn(
+def record_provider_turn(  # noqa: V103
     conn: sqlite3.Connection, coordinator_id: str, turn: ProviderTurn
 ) -> None:
     if turn.status not in {"submitted", "confirmed"}:
@@ -249,7 +249,7 @@ def _record_receipt(
     return receipt
 
 
-def recover_coordinator(
+def recover_coordinator(  # noqa: V103
     conn: sqlite3.Connection, session_id: str, runtime: RecoveryRuntime
 ) -> CoordinatorRecovery:
     """Resolve all identities before restoring worktrees or provider sessions."""

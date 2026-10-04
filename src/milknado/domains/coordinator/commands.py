@@ -117,7 +117,7 @@ def _record_action_event(
     )
 
 
-def submit_coordinator_action(
+def submit_coordinator_action(  # noqa: V103
     conn: sqlite3.Connection,
     session: CoordinatorSession,
     runtime_session: RuntimeSession,

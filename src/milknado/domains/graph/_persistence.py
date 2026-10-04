@@ -746,12 +746,7 @@ def set_pid(conn: sqlite3.Connection, node_id: int, run_id: str, pid: int) -> No
 def set_worktree(
     conn: sqlite3.Connection, node_id: int, run_id: str, worktree_path: str, branch_name: str
 ) -> None:
-    """Attach worktree/branch to a node without a status transition, gated on the
-    fence (current run_id). Used by the executor when the node was already claimed
-    RUNNING by the dispatching parent: re-marking RUNNING would be an illegal
-    RUNNING -> RUNNING transition, so only the worktree metadata is written, and
-    only if this run still owns the node.
-    """
+    """Attach worktree metadata only while this run owns the node."""
     cur = conn.execute(
         "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ? AND run_id = ?",
         (worktree_path, branch_name, node_id, run_id),

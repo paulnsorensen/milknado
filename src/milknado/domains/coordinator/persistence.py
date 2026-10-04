@@ -155,7 +155,7 @@ def links_for_session(conn: sqlite3.Connection, session_id: str) -> tuple[Entity
     return tuple(EntityLink(str(row[0]), str(row[1])) for row in rows)
 
 
-def bind_provider_session(
+def bind_provider_session(  # noqa: V103
     conn: sqlite3.Connection, coordinator_id: str, binding: ProviderBinding
 ) -> None:
     if binding.scope_kind not in {"coordinator", "execution_group"}:
