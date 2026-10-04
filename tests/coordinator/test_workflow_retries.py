@@ -14,6 +14,7 @@ from milknado.domains.coordinator import (
     EntityLink,
     submit_coordinator_action,
 )
+from milknado.domains.coordinator.commands import record_control_once
 from milknado.domains.coordinator.journal import append_control_event, control_history
 from milknado.domains.coordinator.persistence import link_entity, links_for_session
 from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
@@ -148,4 +149,19 @@ def test_dispatch_retry_repairs_link_and_launch_history(
             if event.kind == "run_transition"
         ]
         assert transitions == ["claimed", "running"]
+    graph.close()
+
+
+def test_control_event_identity_is_database_enforced(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
+        event = ControlEvent(
+            kind="command", entity_kind="coordinator_command", entity_id="op-1", status="queued"
+        )
+        record_control_once(conn, session.id, event)
+        record_control_once(conn, session.id, event)
+        assert len(control_history(conn, session.id)) == 1
+        with pytest.raises(sqlite3.IntegrityError):
+            _ = append_control_event(conn, session.id, event)
     graph.close()

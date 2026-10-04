@@ -14,6 +14,7 @@ from milknado.domains.coordinator.commands import (
 )
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import link_entity, start_coordinator
+from milknado.domains.coordinator.plans import begin_plan, finish_plan
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
     ExecutionGroup,
@@ -68,15 +69,18 @@ class CoordinatorWorkflow:
         return start_coordinator(self._conn, goal.id, provider)
 
     def plan_goal(  # noqa: V105
-        self, session: CoordinatorSession, planner: Planner, project_root: Path
+        self, session: CoordinatorSession, planner: Planner, project_root: Path, operation_id: str
     ) -> PlanResult:
-        goal = self._graph.get_node(session.goal_id)
-        if goal is None:
-            raise ValueError("coordinator goal does not exist")
-        result = planner.launch(goal.description, project_root, target_goal_id=session.goal_id)
-        self.record_plan(
-            session, str(result.context_path), "accepted" if result.success else "failed"
-        )
+        fresh, result = begin_plan(self._conn, session.id, operation_id)
+        if fresh:
+            goal = self._graph.get_node(session.goal_id)
+            if goal is None:
+                raise ValueError("coordinator goal does not exist")
+            result = planner.launch(goal.description, project_root, target_goal_id=session.goal_id)
+            finish_plan(self._conn, operation_id, result)
+        if result is None:
+            raise RuntimeError("planning operation has no result")
+        self.record_plan(session, operation_id, "accepted" if result.success else "failed")
         return result
 
     def record_plan(self, session: CoordinatorSession, plan_id: str, status: str) -> None:
@@ -129,6 +133,8 @@ class CoordinatorWorkflow:
         self, session: CoordinatorSession, group_id: str, node_id: int, run_id: str
     ) -> DispatchHandoff:
         _ = self._owned_group(session, group_id, node_id)
+        if not self._graph.goal_admission(node_id).allowed:
+            raise ValueError("goal review pauses task dispatch")
         create_dispatch_table(self._conn)
         attempt = self._graph.groups.active_attempt(group_id)
         if attempt is None:
@@ -256,23 +262,7 @@ class CoordinatorWorkflow:
     ) -> GoalReviewRecord:
         if request.goal_id != session.goal_id:
             raise ValueError("review addresses another coordinator goal")
-        latest = self._graph.latest_goal_review(session.goal_id)
-        if latest is not None and (
-            latest.goal_revision,
-            latest.evidence,
-            latest.proposed_change,
-            latest.affected_node_ids,
-            latest.reviewer,
-        ) == (
-            request.goal_revision,
-            request.evidence,
-            request.proposed_change,
-            request.affected_node_ids,
-            request.reviewer,
-        ):
-            review = latest
-        else:
-            review = self._graph.request_goal_review(request)
+        review = self._graph.request_goal_review(request, reconcile=True)
         link_entity(self._conn, session.id, "approval", str(review.review_id))
         self._event_once(
             session,

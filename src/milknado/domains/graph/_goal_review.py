@@ -74,7 +74,11 @@ def _record(row: object) -> GoalReviewRecord:
 
 
 def request_goal_review(
-    conn: sqlite3.Connection, request: GoalReviewRequest, *, _in_transaction: bool = False
+    conn: sqlite3.Connection,
+    request: GoalReviewRequest,
+    *,
+    _in_transaction: bool = False,
+    reconcile: bool = False,
 ) -> GoalReviewRecord:
     if not _in_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
@@ -87,6 +91,14 @@ def request_goal_review(
         affected = validate_scope(conn, goal_id, request.affected_node_ids)
         latest = latest_goal_review(conn, goal_id)
         if latest is not None and latest.decision is GoalReviewDecision.PENDING:
+            if reconcile and (
+                latest.goal_revision,
+                latest.evidence,
+                latest.proposed_change,
+                latest.affected_node_ids,
+                latest.reviewer,
+            ) == (revision, evidence, proposed_change, affected, reviewer):
+                return latest
             raise ValueError(f"goal {goal_id} already has a pending review")
         assessed_at = request.assessed_at or datetime.now(UTC).isoformat()
         cursor = conn.execute(
