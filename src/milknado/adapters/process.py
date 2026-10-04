@@ -49,7 +49,7 @@ class ProcessAdapter:
                     on_started(proc.pid)
                 except BaseException:
                     proc.kill()
-                    _ = proc.wait()
+                    _ = proc.communicate()
                     raise
             if cancel_requested is None:
                 try:
