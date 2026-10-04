@@ -4,6 +4,8 @@ from milknado.domains.graph._execution_groups import (
     ExecutionGroup,
     ExecutionGroupStore,
     GroupWorkspace,
+    TaskAttempt,
+    TaskOutcome,
 )
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._goal_review_scope import top_level_goal
@@ -81,6 +83,8 @@ __all__ = [
     "ExecutionGroup",
     "ExecutionGroupStore",
     "GroupWorkspace",
+    "TaskAttempt",
+    "TaskOutcome",
     "ConcurrencyLimitReached",
     "HostCapacityFull",
     "connect_readonly",
