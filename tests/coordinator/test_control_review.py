@@ -64,7 +64,10 @@ def test_review_requires_identity_and_projects_decision_history(
     assert accepted.status == "accepted"
     after = control.read_coordinator_snapshot(session_id, first.cursor)
     assert after.reviews[0].decision.value == "accepted"
-    assert [event.status for event in after.events] == ["accepted"]
+    assert [(event.kind, event.status) for event in after.events] == [
+        ("approval", "accepted"),
+        ("command", "accepted"),
+    ]
     assert after.cursor > first.cursor
     graph.close()
 
@@ -123,7 +126,7 @@ def test_projection_cursor_matches_node_state_across_external_commit(
     monkeypatch.setattr(coordinator_projection, "_goal_nodes", interleave)
     before = control.read_coordinator_snapshot(session_id, 0)
     assert before.goal.description == "Deliver"
-    assert before.events == ()
+    assert [(event.entity_id, event.status) for event in before.events] == [("start", "accepted")]
     monkeypatch.setattr(coordinator_projection, "_goal_nodes", original)
     after = control.read_coordinator_snapshot(session_id, before.cursor)
     assert after.goal.description == "Changed"
@@ -182,4 +185,38 @@ def test_recovery_receipt_serializes_worktree_path_and_replays(tmp_path: Path) -
     assert receipts[0]["worktree_path"] == str(tmp_path)
     assert receipts[0]["outcome"] == "resumed"
     assert control.send_coordinator_command(session_id, command) == first
+    graph.close()
+
+
+def test_command_receipts_append_one_redacted_event_per_outcome(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    start = control.send_coordinator_command("", StartGoal("start", "password=private", "codex"))
+    session_id = cast(str, cast(dict[str, object], start.result)["id"])
+    unavailable = Recover("recover-secret")
+    rejected = RequestGoalReview("reject-secret", "rev", "secret=private", "change", " ")
+    assert control.send_coordinator_command(session_id, unavailable).status == "unavailable"
+    assert control.send_coordinator_command(session_id, rejected).status == "rejected"
+    assert control.send_coordinator_command(session_id, unavailable).status == "unavailable"
+    events = [
+        event
+        for event in control.read_coordinator_snapshot(session_id, 0).events
+        if event.kind == "command"
+    ]
+    assert [(event.entity_id, event.status) for event in events] == [
+        ("start", "accepted"),
+        ("recover-secret", "unavailable"),
+        ("reject-secret", "rejected"),
+    ]
+    assert all("private" not in event.text for event in events)
+    graph.close()
+
+
+def test_fresh_database_missing_session_raises_key_error(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    with pytest.raises(KeyError):
+        _ = control.read_coordinator_snapshot("missing", 0)
+    with pytest.raises(KeyError):
+        _ = control.send_coordinator_command("missing", Recover("recover"))
     graph.close()

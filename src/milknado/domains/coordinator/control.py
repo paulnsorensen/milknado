@@ -31,18 +31,23 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
-from milknado.domains.coordinator.persistence import get_coordinator
+from milknado.domains.coordinator.persistence import create_coordinator_tables, get_coordinator
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
 )
 from milknado.domains.coordinator.receipt_results import receipt_payload
 from milknado.domains.coordinator.recovery import recover_coordinator
+from milknado.domains.coordinator.review_decisions import (
+    decide_coordinator_review,
+    decide_goal_review,
+)
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
     ControllerAuthorizationError,
     GoalReviewDecisionRequest,
+    GoalReviewRecord,
     GoalReviewRequest,
     GroupWorkspace,
     MikadoGraph,
@@ -65,6 +70,11 @@ class CoordinatorControl:
     def read_coordinator_snapshot(self, session_id: str, cursor: int) -> CoordinatorSnapshot:
         return read_coordinator_snapshot(self._graph, self._conn, session_id, cursor)
 
+    def decide_goal_review(
+        self, request: GoalReviewDecisionRequest, *, decided_by: str
+    ) -> GoalReviewRecord:
+        return decide_goal_review(self._graph, self._services, request, decided_by)
+
     def send_coordinator_command(
         self, session_id: str, command: CoordinatorCommand
     ) -> CoordinatorCommandReceipt:
@@ -75,6 +85,7 @@ class CoordinatorControl:
                 "start_goal requires an empty session ID; other commands require a session ID"
             )
         with self._graph.synchronization_lock:
+            create_coordinator_tables(self._conn)
             if session_id and get_coordinator(self._conn, session_id) is None:
                 raise KeyError(session_id)
             fingerprint = hashlib.sha256(msgspec.json.encode(command)).hexdigest()
@@ -85,7 +96,7 @@ class CoordinatorControl:
                 status, result = self._execute(session_id, command)
             except (ValueError, PermissionError, ControllerAuthorizationError) as error:
                 status, result = "rejected", str(error)
-            return self._complete(session_id, command.command_id, status, result)
+            return self._complete(session_id, command, status, result)
 
     def _reserve(
         self, session_id: str, command_id: str, fingerprint: str
@@ -131,16 +142,31 @@ class CoordinatorControl:
     def _complete(
         self,
         session_id: str,
-        command_id: str,
+        command: CoordinatorCommand,
         status: Literal["accepted", "unavailable", "unsupported", "rejected"],
         result: object,
     ) -> CoordinatorCommandReceipt:
         built = receipt_payload(result)
+        command_id = command.command_id
+        event_session_id = (
+            cast(CoordinatorSession, result).id if isinstance(command, StartGoal) else session_id
+        )
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_web_receipts SET status = ?, result_json = ? "
                 + "WHERE command_id = ?",
                 (status, msgspec.json.encode(built).decode(), command_id),
+            )
+            record_control_once(
+                self._conn,
+                event_session_id,
+                ControlEvent(
+                    kind="command",
+                    text=type(command).__name__,
+                    entity_kind="coordinator_command",
+                    entity_id=command_id,
+                    status=status,
+                ),
             )
         return CoordinatorCommandReceipt(command_id, session_id, status, built)
 
@@ -245,35 +271,7 @@ class CoordinatorControl:
     def _decide_review(
         self, session: CoordinatorSession, command: DecideGoalReview
     ) -> tuple[Literal["accepted", "unavailable"], object]:
-        linked = cast(
-            tuple[int] | None,
-            self._conn.execute(
-                "SELECT 1 FROM coordinator_links WHERE session_id = ? "
-                + "AND kind = 'approval' AND entity_id = ?",
-                (session.id, str(command.review_id)),
-            ).fetchone(),
-        )
-        if linked is None:
-            raise ValueError("review belongs to another coordinator")
-        if self._services.review_decision is None:
-            return "unavailable", "Controller credential is unavailable."
-        if not command.decided_by.strip():
-            raise ValueError("decision identity is required")
-        review = self._services.review_decision(
-            GoalReviewDecisionRequest(command.review_id, command.decision),
-            decided_by=command.decided_by.strip(),
-        )
-        record_control_once(
-            self._conn,
-            session.id,
-            ControlEvent(
-                kind="approval",
-                entity_kind="goal_review",
-                entity_id=str(review.review_id),
-                status=review.decision.value,
-            ),
-        )
-        return "accepted", review
+        return decide_coordinator_review(self._graph, self._services, session, command)
 
     def _runtime_command(
         self, session: CoordinatorSession, command: RuntimeAction | Recover
