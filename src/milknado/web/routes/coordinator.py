@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from asyncio import sleep
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import cast
 
 import msgspec
@@ -11,9 +11,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Route
 
-from milknado.domains.coordinator import CoordinatorCommand, CoordinatorSnapshot
-from milknado.domains.coordinator.control_models import StartGoal
+from milknado.domains.coordinator import CoordinatorCommand, CoordinatorSnapshot, StartGoal
 from milknado.web.app import WebContext
+from milknado.web.commands import CoordinatorPort
 from milknado.web.encoding import json_response
 
 
@@ -81,20 +81,26 @@ async def stream_route(request: Request) -> Response:
     except KeyError:
         return json_response({"error": "Coordinator session does not exist."}, status_code=404)
 
-    async def events() -> AsyncIterator[dict[str, str]]:
-        nonlocal cursor
-        snapshot = initial
-        while not await request.is_disconnected():
-            if snapshot.events:
-                cursor = snapshot.cursor
-                yield {"event": "coordinator", "data": msgspec.json.encode(snapshot).decode()}
-            await sleep(0.5)
-            snapshot = cast(
-                CoordinatorSnapshot,
-                await run_in_threadpool(port.read_coordinator_snapshot, session_id, cursor),
-            )
+    return EventSourceResponse(_events(request, port, initial, (session_id, cursor)))
 
-    return EventSourceResponse(events())
+
+async def _events(
+    request: Request,
+    port: CoordinatorPort,
+    initial: CoordinatorSnapshot,
+    position: tuple[str, int],
+) -> AsyncGenerator[dict[str, str]]:
+    session_id, cursor = position
+    snapshot = initial
+    while not await request.is_disconnected():
+        if snapshot.events:
+            cursor = snapshot.cursor
+            yield {"event": "coordinator", "data": msgspec.json.encode(snapshot).decode()}
+        await sleep(0.5)
+        snapshot = cast(
+            CoordinatorSnapshot,
+            await run_in_threadpool(port.read_coordinator_snapshot, session_id, cursor),
+        )
 
 
 ROUTES = (

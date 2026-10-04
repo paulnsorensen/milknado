@@ -2,6 +2,7 @@ from milknado.domains.coordinator.control import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     CoordinatorCommand,
     CoordinatorCommandReceipt,
+    StartGoal,
 )
 from milknado.domains.coordinator.model import (
     ControlEvent,
@@ -22,4 +23,5 @@ __all__ = [
     "CoordinatorSession",
     "EntityLink",
     "ProviderBinding",
+    "StartGoal",
 ]

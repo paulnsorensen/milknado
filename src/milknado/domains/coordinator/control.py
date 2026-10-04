@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
@@ -12,6 +10,7 @@ import msgspec
 from milknado.domains.coordinator.commands import (
     CoordinatorAction,
     DispatchHandoff,
+    record_control_once,
     submit_coordinator_action,
 )
 from milknado.domains.coordinator.control_models import (
@@ -30,30 +29,25 @@ from milknado.domains.coordinator.control_models import (
     RuntimeAction,
     StartGoal,
 )
+from milknado.domains.coordinator.control_services import CoordinatorServices
+from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import get_coordinator
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
 )
-from milknado.domains.coordinator.recovery import RecoveryRuntime, recover_coordinator
+from milknado.domains.coordinator.receipt_results import receipt_payload
+from milknado.domains.coordinator.recovery import recover_coordinator
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
+    ControllerAuthorizationError,
     GoalReviewDecisionRequest,
     GoalReviewRequest,
     GroupWorkspace,
     MikadoGraph,
     TaskAttempt,
 )
-from milknado.domains.planning import Planner
-from milknado.loop.sessions import RuntimeSession
-
-
-@dataclass(frozen=True, slots=True)
-class CoordinatorServices:
-    planner: Planner | None = None
-    runtime_session: Callable[[str], RuntimeSession | None] | None = None
-    recovery_runtime: RecoveryRuntime | None = None
 
 
 class CoordinatorControl:
@@ -89,7 +83,7 @@ class CoordinatorControl:
                 return existing
             try:
                 status, result = self._execute(session_id, command)
-            except ValueError as error:
+            except (ValueError, PermissionError, ControllerAuthorizationError) as error:
                 status, result = "rejected", str(error)
             return self._complete(session_id, command.command_id, status, result)
 
@@ -143,7 +137,7 @@ class CoordinatorControl:
         status: Literal["accepted", "unavailable", "unsupported", "rejected"],
         result: object,
     ) -> CoordinatorCommandReceipt:
-        built = cast(object, msgspec.to_builtins(result))
+        built = receipt_payload(result)
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_web_receipts SET status = ?, result_json = ? "
@@ -160,6 +154,22 @@ class CoordinatorControl:
             return "accepted", workflow.start_goal(command.description, command.provider)
         session = get_coordinator(self._conn, session_id)
         assert session is not None
+        match command:
+            case PlanGoal() | CreateGroup() | DispatchTask() | RecordRevision():
+                return self._workflow_command(workflow, session, command)
+            case AttemptCommand() | FailLaunch() | FinishTask():
+                return "accepted", self._attempt_command(workflow, session, command)
+            case RequestGoalReview() | DecideGoalReview():
+                return self._review_command(workflow, session, command)
+            case RuntimeAction() | Recover():
+                return self._runtime_command(session, command)
+
+    def _workflow_command(
+        self,
+        workflow: CoordinatorWorkflow,
+        session: CoordinatorSession,
+        command: PlanGoal | CreateGroup | DispatchTask | RecordRevision,
+    ) -> tuple[Literal["accepted", "unavailable"], object]:
         match command:
             case PlanGoal():
                 if self._services.planner is None:
@@ -178,73 +188,104 @@ class CoordinatorControl:
                 return "accepted", workflow.dispatch_task(
                     session, command.group_id, command.node_id, command.run_id
                 )
-            case AttemptCommand() | FailLaunch() | FinishTask():
-                attempt = TaskAttempt(
-                    command.group_id, command.node_id, command.run_id, command.attempt_id
-                )
-                if isinstance(command, AttemptCommand):
-                    return "accepted", workflow.acknowledge_launch(
-                        session, DispatchHandoff(attempt, "awaiting_launch")
-                    )
-                if isinstance(command, FailLaunch):
-                    workflow.fail_launch(
-                        session, DispatchHandoff(attempt, "awaiting_launch"), command.reason
-                    )
-                    return "accepted", None
-                workflow.finish_task(
-                    session,
-                    attempt,
-                    NodeLoopOutcome(
-                        command.node_id,
-                        command.success,
-                        command.detail,
-                        ownership_preserved=command.ownership_preserved,
-                    ),
-                )
-                return "accepted", None
             case RecordRevision():
                 workflow.record_revision(session, command.revision_id, command.affected_node_ids)
                 return "accepted", None
-            case RequestGoalReview():
-                request = GoalReviewRequest(
-                    session.goal_id,
-                    command.goal_revision,
-                    command.evidence,
-                    command.proposed_change,
-                    command.affected_node_ids,
-                    operation_id=command.command_id,
-                )
-                return "accepted", workflow.review_goal_change(session, request)
-            case DecideGoalReview():
-                linked = cast(
-                    tuple[int] | None,
-                    self._conn.execute(
-                        "SELECT 1 FROM coordinator_links WHERE session_id = ? "
-                        + "AND kind = 'approval' AND entity_id = ?",
-                        (session_id, str(command.review_id)),
-                    ).fetchone(),
-                )
-                if linked is None:
-                    raise ValueError("review belongs to another coordinator")
-                return "accepted", self._graph.decide_goal_review(
-                    GoalReviewDecisionRequest(command.review_id, command.decision),
-                    decided_by=command.decided_by,
-                )
-            case RuntimeAction():
-                if self._services.runtime_session is None:
-                    return "unavailable", "Provider runtime is not connected."
-                runtime = self._services.runtime_session(command.provider_session_id)
-                if runtime is None:
-                    return "unavailable", "Provider session is not active."
-                return "accepted", submit_coordinator_action(
-                    self._conn,
-                    session,
-                    runtime,
-                    CoordinatorAction(command.command_id, command.input),
-                )
-            case Recover():
-                if self._services.recovery_runtime is None:
-                    return "unavailable", "Recovery runtime is not connected."
-                return "accepted", recover_coordinator(
-                    self._conn, session_id, self._services.recovery_runtime
-                )
+
+    def _attempt_command(
+        self,
+        workflow: CoordinatorWorkflow,
+        session: CoordinatorSession,
+        command: AttemptCommand | FailLaunch | FinishTask,
+    ) -> object:
+        attempt = TaskAttempt(
+            command.group_id, command.node_id, command.run_id, command.attempt_id
+        )
+        if isinstance(command, AttemptCommand):
+            return workflow.acknowledge_launch(
+                session, DispatchHandoff(attempt, "awaiting_launch")
+            )
+        if isinstance(command, FailLaunch):
+            workflow.fail_launch(
+                session, DispatchHandoff(attempt, "awaiting_launch"), command.reason
+            )
+            return None
+        workflow.finish_task(
+            session,
+            attempt,
+            NodeLoopOutcome(
+                command.node_id,
+                command.success,
+                command.detail,
+                ownership_preserved=command.ownership_preserved,
+            ),
+        )
+        return None
+
+    def _review_command(
+        self,
+        workflow: CoordinatorWorkflow,
+        session: CoordinatorSession,
+        command: RequestGoalReview | DecideGoalReview,
+    ) -> tuple[Literal["accepted", "unavailable"], object]:
+        if isinstance(command, RequestGoalReview):
+            reviewer = command.reviewer.strip()
+            if not reviewer:
+                raise ValueError("reviewer identity is required")
+            request = GoalReviewRequest(
+                session.goal_id,
+                command.goal_revision,
+                command.evidence,
+                command.proposed_change,
+                command.affected_node_ids,
+                reviewer=reviewer,
+                operation_id=command.command_id,
+            )
+            return "accepted", workflow.review_goal_change(session, request)
+        linked = cast(
+            tuple[int] | None,
+            self._conn.execute(
+                "SELECT 1 FROM coordinator_links WHERE session_id = ? "
+                + "AND kind = 'approval' AND entity_id = ?",
+                (session.id, str(command.review_id)),
+            ).fetchone(),
+        )
+        if linked is None:
+            raise ValueError("review belongs to another coordinator")
+        if self._services.review_decision is None:
+            return "unavailable", "Controller credential is unavailable."
+        if not command.decided_by.strip():
+            raise ValueError("decision identity is required")
+        review = self._services.review_decision(
+            GoalReviewDecisionRequest(command.review_id, command.decision),
+            decided_by=command.decided_by.strip(),
+        )
+        record_control_once(
+            self._conn,
+            session.id,
+            ControlEvent(
+                kind="approval",
+                entity_kind="goal_review",
+                entity_id=str(review.review_id),
+                status=review.decision.value,
+            ),
+        )
+        return "accepted", review
+
+    def _runtime_command(
+        self, session: CoordinatorSession, command: RuntimeAction | Recover
+    ) -> tuple[Literal["accepted", "unavailable"], object]:
+        if isinstance(command, Recover):
+            if self._services.recovery_runtime is None:
+                return "unavailable", "Recovery runtime is not connected."
+            return "accepted", recover_coordinator(
+                self._conn, session.id, self._services.recovery_runtime
+            )
+        if self._services.runtime_session is None:
+            return "unavailable", "Provider runtime is not connected."
+        runtime = self._services.runtime_session(command.provider_session_id)
+        if runtime is None:
+            return "unavailable", "Provider session is not active."
+        return "accepted", submit_coordinator_action(
+            self._conn, session, runtime, CoordinatorAction(command.command_id, command.input)
+        )
