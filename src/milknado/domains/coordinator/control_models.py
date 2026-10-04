@@ -104,6 +104,7 @@ class RequestGoalReview(
     goal_revision: str
     evidence: str
     proposed_change: str
+    reviewer: str
     affected_node_ids: tuple[int, ...] | None = None
 
 

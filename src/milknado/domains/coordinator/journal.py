@@ -145,3 +145,19 @@ def control_history(  # noqa
         ).fetchall(),
     )
     return tuple(_record(row) for row in rows)
+
+
+def snapshot_control_history(
+    conn: sqlite3.Connection, session_id: str, *, now: datetime | None = None
+) -> tuple[ControlRecord, ...]:
+    timestamp = _utc(now).isoformat()
+    rows = cast(
+        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        conn.execute(
+            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, "
+            + "created_at FROM coordinator_events WHERE session_id = ? "
+            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
+            (session_id, timestamp),
+        ).fetchall(),
+    )
+    return tuple(_record(row) for row in rows)
