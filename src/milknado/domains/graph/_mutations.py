@@ -40,6 +40,9 @@ def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int
 
 def _delete_one(conn: sqlite3.Connection, node_id: int) -> None:
     """Delete one node and its dependent rows without committing."""
+    if fetchone(conn, "SELECT 1 FROM execution_groups WHERE active_node_id = ?", (node_id,)):
+        raise ValueError(f"Node {node_id} has an active execution group")
+    _ = conn.execute("DELETE FROM execution_group_tasks WHERE node_id = ?", (node_id,))
     _ = conn.execute("DELETE FROM edges WHERE parent_id = ? OR child_id = ?", (node_id, node_id))
     _ = conn.execute("DELETE FROM goal_claims WHERE goal_id = ?", (node_id,))
     _ = conn.execute("DELETE FROM file_ownership WHERE node_id = ?", (node_id,))

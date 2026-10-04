@@ -63,6 +63,8 @@ def setup_group_worktree(
     request: GroupWorktreeRequest,
 ) -> ExecutionGroup:
     """Create a distinct checkout and persist its group owner."""
+    if request.source_group_id is not None and request.task_ids:
+        raise ValueError("fork copies source tasks; task_ids must be empty")
     if request.source_group_id is not None:
         source = store.get(request.source_group_id)
         if source is None:
@@ -81,7 +83,7 @@ def setup_group_worktree(
         workspace = GroupWorkspace(str(path), branch, request.provider_session_id)
         if request.source_group_id is None:
             return store.create(request.graph_id, request.task_ids, workspace)
-        return store.fork(request.source_group_id, request.task_ids, workspace)
+        return store.fork(request.source_group_id, workspace)
     except Exception:
         discard_isolated_worktree(git, path, branch)
         raise
