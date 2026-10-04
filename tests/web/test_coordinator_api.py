@@ -48,6 +48,20 @@ def test_coordinator_routes_require_login_and_validate_cursor() -> None:
     assert client.get("/api/coordinators/foreign/snapshot").status_code == 404
 
 
+def test_coordinator_stream_rejects_invalid_cursor_and_missing_session() -> None:
+    login = LaunchToken("test-token")
+    app = create_app(FixtureSnapshotSource(), WebCommands(coordinator=CoordinatorStub()), login)
+    client = TestClient(app, base_url="http://127.0.0.1")
+    client.cookies.set(login.cookie_name, login.value)
+    stream = "/api/coordinators/session-1/stream"
+    invalid = client.get(f"{stream}?cursor=-1")
+    assert invalid.status_code == 400
+    assert invalid.json() == {"error": "cursor must be a non-negative integer"}
+    missing = client.get("/api/coordinators/foreign/stream")
+    assert missing.status_code == 404
+    assert missing.json() == {"error": "Coordinator session does not exist."}
+
+
 def test_coordinator_command_route_validates_and_delegates() -> None:
     login = LaunchToken("test-token")
     stub = CoordinatorStub()

@@ -6,9 +6,11 @@ import pytest
 from milknado.domains.common import SessionInput
 from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
+    AttemptCommand,
     CoordinatorCommandReceipt,
     CreateGroup,
     DispatchTask,
+    FinishTask,
     Recover,
     RuntimeAction,
     StartGoal,
@@ -70,6 +72,41 @@ def test_snapshot_orders_events_and_links_group_run(tmp_path: Path) -> None:
     assert snapshot.groups[0].id == group_id
     assert snapshot.cursor == snapshot.events[-1].seq
     assert control.read_coordinator_snapshot(session_id, snapshot.cursor).events == ()
+    graph.close()
+
+
+def test_attempt_lifecycle_through_commands(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    start = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, _result(start)["id"])
+    task = graph.add_node("Implement", cast(int, _result(start)["goal_id"]))
+    group = control.send_coordinator_command(
+        session_id,
+        CreateGroup("group", "main", (task.id,), str(tmp_path / "group"), "branch", "provider"),
+    )
+    group_id = cast(str, _result(group)["id"])
+    dispatch = control.send_coordinator_command(
+        session_id, DispatchTask("dispatch", group_id, task.id, "run")
+    )
+    attempt = cast(dict[str, object], _result(dispatch)["attempt"])
+    attempt_id = cast(str, attempt["attempt_id"])
+    launch = control.send_coordinator_command(
+        session_id, AttemptCommand("launch", group_id, task.id, "run", attempt_id)
+    )
+    assert launch.status == "accepted"
+    assert _result(launch)["state"] == "launched"
+    finish = control.send_coordinator_command(
+        session_id, FinishTask("finish", group_id, task.id, "run", attempt_id, True, "verified")
+    )
+    assert finish.status == "accepted"
+    assert graph.groups.task_result(task.id) == ("done", "verified")
+    transitions = [
+        event.status
+        for event in control.read_coordinator_snapshot(session_id, 0).events
+        if event.kind == "run_transition"
+    ]
+    assert transitions == ["claimed", "running", "done"]
     graph.close()
 
 
