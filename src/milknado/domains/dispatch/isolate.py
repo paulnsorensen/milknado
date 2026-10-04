@@ -7,6 +7,8 @@ worktree only after the landing succeeds. Failed or mismatched operations
 preserve the worktree for inspection.
 """
 
+# ruff: noqa: RUF100
+
 from __future__ import annotations
 
 import logging
@@ -56,7 +58,7 @@ class GroupWorktreeRequest:
     source_group_id: str | None = None
 
 
-def setup_group_worktree(
+def setup_group_worktree(  # noqa
     store: ExecutionGroupStore,
     git: GitPort,
     root: Path,

@@ -12,8 +12,8 @@ from milknado.domains.graph import (
     ConcurrencyLimitReached,
     GroupWorkspace,
     MikadoGraph,
-    TaskOutcome,
 )
+from milknado.domains.graph._execution_groups import TaskOutcome
 
 
 def _workspace(name: str) -> GroupWorkspace:

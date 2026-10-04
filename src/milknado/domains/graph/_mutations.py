@@ -39,7 +39,6 @@ def _collect_subtree_post_order(children_map: dict[int, list[int]], node_id: int
 
 
 def _delete_one(conn: sqlite3.Connection, node_id: int) -> None:
-    """Delete one node and its dependent rows without committing."""
     if fetchone(conn, "SELECT 1 FROM execution_groups WHERE active_node_id = ?", (node_id,)):
         raise ValueError(f"Node {node_id} has an active execution group")
     _ = conn.execute("DELETE FROM execution_group_tasks WHERE node_id = ?", (node_id,))
@@ -189,7 +188,6 @@ def unarchive_subtree(conn: sqlite3.Connection, node_id: int) -> int:
 def _validate_kind_change_containment(
     conn: sqlite3.Connection, node_id: int, new_kind: NodeKind
 ) -> None:
-    """Reject kind changes that violate existing containment edges."""
     parent = fetchone(
         conn,
         "SELECT n.kind FROM edges e JOIN nodes n ON n.id = e.parent_id WHERE e.child_id = ?",
@@ -238,7 +236,6 @@ def update_node_fields(
                 raise ValueError(
                     "flavor is only valid for task nodes; cannot set flavor with non-task kind"
                 )
-            # Changing to non-task: clear flavor to preserve the invariant
             fields.append("flavor = ?")
             values.append(None)
     elif flavor is not None:

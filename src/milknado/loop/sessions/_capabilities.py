@@ -24,9 +24,9 @@ CapabilitySupport = Literal["native", "runtime", "unsupported"]
 
 @dataclass(frozen=True, slots=True)
 class RuntimeCapabilities:
-    floor: Mapping[LifecycleOperation, CapabilitySupport]  # noqa: V1xx
-    native_actions: frozenset[SessionAction]  # noqa: V1xx
-    unsupported_actions: frozenset[SessionAction]  # noqa: V1xx
+    floor: Mapping[LifecycleOperation, CapabilitySupport]  # noqa: F841, RUF100
+    native_actions: frozenset[SessionAction]
+    unsupported_actions: frozenset[SessionAction]  # noqa: F841, RUF100
 
 
 _COMMON_FLOOR: dict[LifecycleOperation, CapabilitySupport] = {

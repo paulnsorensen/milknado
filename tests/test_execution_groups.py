@@ -7,8 +7,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from milknado.domains.common.errors import GitOperationError
-from milknado.domains.dispatch import GroupWorktreeRequest, setup_group_worktree
-from milknado.domains.graph import GroupWorkspace, MikadoGraph, TaskOutcome
+from milknado.domains.dispatch.isolate import GroupWorktreeRequest, setup_group_worktree
+from milknado.domains.graph import GroupWorkspace, MikadoGraph
+from milknado.domains.graph._execution_groups import TaskOutcome
 
 
 def _tasks(graph: MikadoGraph) -> tuple[int, int]:

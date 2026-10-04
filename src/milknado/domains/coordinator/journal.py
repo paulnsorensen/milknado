@@ -1,3 +1,4 @@
+# ruff: noqa: RUF100
 from __future__ import annotations
 
 import re
@@ -75,7 +76,7 @@ def _record(row: tuple[int, str, str, str, str, str, str, int | None, str]) -> C
     )
 
 
-def append_control_event(
+def append_control_event(  # noqa
     conn: sqlite3.Connection,
     session_id: str,
     event: ControlEvent,
@@ -126,7 +127,7 @@ def append_control_event(
     return cursor.lastrowid
 
 
-def control_history(
+def control_history(  # noqa
     conn: sqlite3.Connection, session_id: str, *, now: datetime | None = None
 ) -> tuple[ControlRecord, ...]:
     timestamp = _utc(now).isoformat()

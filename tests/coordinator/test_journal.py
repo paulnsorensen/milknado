@@ -10,12 +10,9 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.coordinator import (
-    ControlEvent,
-    append_control_event,
-    control_history,
-    start_coordinator,
-)
+from milknado.domains.coordinator import ControlEvent
+from milknado.domains.coordinator.journal import append_control_event, control_history
+from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.graph._persistence import create_tables
 
 

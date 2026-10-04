@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.coordinator import (
-    ControlEvent,
-    append_control_event,
-    control_history,
+from milknado.domains.coordinator import ControlEvent
+from milknado.domains.coordinator.journal import append_control_event, control_history
+from milknado.domains.coordinator.persistence import (
     get_coordinator,
     link_entity,
     links_for_session,

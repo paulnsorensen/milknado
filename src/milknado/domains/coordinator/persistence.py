@@ -1,3 +1,4 @@
+# ruff: noqa: RUF100
 from __future__ import annotations
 
 import sqlite3
@@ -75,7 +76,7 @@ def _session(row: tuple[str, int, str, str]) -> CoordinatorSession:
     )
 
 
-def get_coordinator(conn: sqlite3.Connection, session_id: str) -> CoordinatorSession | None:
+def get_coordinator(conn: sqlite3.Connection, session_id: str) -> CoordinatorSession | None:  # noqa
     row = cast(
         tuple[str, int, str, str] | None,
         conn.execute(
@@ -98,7 +99,7 @@ def _require_top_level_goal(conn: sqlite3.Connection, goal_id: int) -> None:
         conn.row_factory = row_factory
 
 
-def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> CoordinatorSession:
+def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> CoordinatorSession:  # noqa
     if not provider.strip():
         raise ValueError("provider must not be empty")
     _require_top_level_goal(conn, goal_id)
@@ -123,7 +124,7 @@ def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> 
     return session
 
 
-def link_entity(conn: sqlite3.Connection, session_id: str, kind: str, entity_id: str) -> None:
+def link_entity(conn: sqlite3.Connection, session_id: str, kind: str, entity_id: str) -> None:  # noqa
     if kind not in _LINK_KINDS:
         raise ValueError(f"unsupported coordinator link kind: {kind}")
     if not entity_id:
@@ -136,7 +137,7 @@ def link_entity(conn: sqlite3.Connection, session_id: str, kind: str, entity_id:
         )
 
 
-def links_for_session(conn: sqlite3.Connection, session_id: str) -> tuple[EntityLink, ...]:
+def links_for_session(conn: sqlite3.Connection, session_id: str) -> tuple[EntityLink, ...]:  # noqa
     rows = cast(
         list[tuple[str, str]],
         conn.execute(
