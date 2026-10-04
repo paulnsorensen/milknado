@@ -139,7 +139,10 @@ def test_rejected_start_goal_receipt_replays_without_session(tmp_path: Path) -> 
     assert first.session_id == ""
     assert isinstance(first.result, str) and first.result
     assert control.send_coordinator_command("", command) == first
-    count = graph.group_connection.execute("SELECT COUNT(*) FROM coordinator_sessions").fetchone()
+    count = cast(
+        tuple[int] | None,
+        graph.group_connection.execute("SELECT COUNT(*) FROM coordinator_sessions").fetchone(),
+    )
     assert count is not None and count[0] == 0
     graph.close()
 
