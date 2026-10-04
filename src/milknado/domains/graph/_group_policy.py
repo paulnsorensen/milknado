@@ -22,16 +22,30 @@ def validate_external_prerequisites(conn: sqlite3.Connection, tasks: tuple[int, 
 
 
 def validate_task_prerequisites(conn: sqlite3.Connection, group_id: str, node_id: int) -> None:
+    invalid_order = fetchone(
+        conn,
+        "SELECT 1 FROM edges e JOIN execution_group_tasks parent "
+        + "ON parent.node_id = e.parent_id AND parent.group_id = ? "
+        + "JOIN execution_group_tasks child "
+        + "ON child.node_id = e.child_id AND child.group_id = parent.group_id "
+        + "WHERE e.parent_id = ? AND child.position >= parent.position LIMIT 1",
+        (group_id, node_id),
+    )
+    if invalid_order is not None:
+        raise ValueError("execution group violates dependency order")
     blocked = fetchone(
         conn,
-        "SELECT 1 FROM edges e JOIN nodes child ON child.id = e.child_id "
-        + "WHERE e.parent_id = ? AND e.child_id NOT IN "
-        + "(SELECT node_id FROM execution_group_tasks WHERE group_id = ?) "
-        + "AND child.status != 'done' LIMIT 1",
-        (node_id, group_id),
+        "SELECT member.node_id FROM edges e JOIN nodes child ON child.id = e.child_id "
+        + "LEFT JOIN execution_group_tasks member "
+        + "ON member.node_id = child.id AND member.group_id = ? "
+        + "WHERE e.parent_id = ? AND child.status != 'done' "
+        + "ORDER BY member.node_id IS NOT NULL LIMIT 1",
+        (group_id, node_id),
     )
     if blocked is not None:
-        raise ValueError("execution group task has an incomplete external prerequisite")
+        if blocked[0] is None:
+            raise ValueError("execution group task has an incomplete external prerequisite")
+        raise ValueError("execution group predecessor has not completed")
 
 
 def validate_membership(conn: sqlite3.Connection, graph_id: str, tasks: tuple[int, ...]) -> None:

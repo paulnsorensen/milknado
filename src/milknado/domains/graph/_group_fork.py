@@ -36,7 +36,7 @@ def clone_alternative(
             + "VALUES (?, 'pending', ?, ?, 'task', ?)",
             (
                 cast(str, row[1]),
-                cast(int | None, row[2]),
+                None,
                 datetime.now(UTC).isoformat(),
                 cast(str | None, row[3]),
             ),
@@ -45,6 +45,12 @@ def clone_alternative(
     for row in rows:
         old_id = cast(int, row[0])
         new_id = task_ids[old_id]
+        old_parent_id = cast(int | None, row[2])
+        if old_parent_id in task_ids:
+            _ = conn.execute(
+                "UPDATE nodes SET parent_id = ? WHERE id = ?",
+                (task_ids[old_parent_id], new_id),
+            )
         _ = conn.execute(
             "INSERT INTO file_ownership (node_id, file_path) "
             + "SELECT ?, file_path FROM file_ownership WHERE node_id = ?",

@@ -23,6 +23,9 @@ class _GroupGraph(Protocol):
     @property
     def synchronization_lock(self) -> AbstractContextManager[object]: ...
 
+    @property
+    def group_connection(self) -> sqlite3.Connection: ...
+
     def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
     def release(self, node_id: int, run_id: str) -> bool: ...
     def set_worktree(
@@ -224,59 +227,52 @@ class ExecutionGroupStore:
         workspace = GroupWorkspace(cast(str, group[1]), cast(str, group[2]), cast(str, group[3]))
         return attempt, workspace
 
-    def _clear_writer(self, attempt: TaskAttempt) -> None:
-        with closing(self._connect()) as conn, conn:
-            _ = conn.execute(
-                "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
-                + "active_attempt_id = NULL WHERE id = ? AND active_attempt_id = ?",
-                (attempt.group_id, attempt.attempt_id),
-            )
-
     def start_task(self, group_id: str, node_id: int, run_id: str) -> TaskAttempt:  # noqa: V105
         if not run_id:
             raise ValueError("run identity must be nonempty")
         with self._graph.synchronization_lock:
-            with closing(self._connect()) as conn, conn:
+            conn = self._graph.group_connection
+            with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
                 attempt, workspace = self._admit_writer(conn, group_id, node_id, run_id)
-            claimed = False
-            try:
-                claimed = self._graph.claim_node(
+                if not self._graph.claim_node(
                     node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
-                )
-                if not claimed:
+                ):
                     raise ValueError("execution group task is not ready")
-                self._graph.set_worktree(
-                    node_id, attempt.attempt_id, workspace.worktree_path, workspace.branch_name
+                cursor = conn.execute(
+                    "UPDATE nodes SET worktree_path = ?, branch_name = ? "
+                    + "WHERE id = ? AND run_id = ? AND status = 'running'",
+                    (workspace.worktree_path, workspace.branch_name, node_id, attempt.attempt_id),
                 )
-            except Exception as error:
-                if claimed and not self._graph.release(node_id, attempt.attempt_id):
-                    raise RuntimeError("execution group claim could not be released") from error
-                self._clear_writer(attempt)
-                raise
-            return attempt
+                if cursor.rowcount != 1:
+                    raise ValueError("execution group writer fence lost")
+                return attempt
 
     def finish_task(self, attempt: TaskAttempt, outcome: TaskOutcome) -> None:  # noqa: V105
         if outcome.status not in {"done", "failed", "blocked"}:
             raise ValueError("invalid task result status")
         with self._graph.synchronization_lock:
-            with closing(self._connect()) as conn:
+            conn = self._graph.group_connection
+            with conn:
+                _ = conn.execute("BEGIN IMMEDIATE")
                 writer = fetchone(
                     conn,
                     "SELECT active_node_id, active_run_id FROM execution_groups "
                     + "WHERE id = ? AND active_attempt_id = ?",
                     (attempt.group_id, attempt.attempt_id),
                 )
-            if writer is None or (writer[0], writer[1]) != (attempt.node_id, attempt.run_id):
-                raise ValueError("execution group writer fence lost")
-            if outcome.status == "blocked":
-                landed = self._graph.mark_blocked_fenced(attempt.node_id, attempt.attempt_id)
-            else:
-                status = NodeStatus.DONE if outcome.status == "done" else NodeStatus.FAILED
-                landed = self._graph.mark_terminal(attempt.node_id, attempt.attempt_id, status)
-            if not landed:
-                raise ValueError("execution group writer fence lost")
-            with closing(self._connect()) as conn, conn:
+                if writer is None or (writer[0], writer[1]) != (
+                    attempt.node_id,
+                    attempt.run_id,
+                ):
+                    raise ValueError("execution group writer fence lost")
+                if outcome.status == "blocked":
+                    landed = self._graph.mark_blocked_fenced(attempt.node_id, attempt.attempt_id)
+                else:
+                    status = NodeStatus.DONE if outcome.status == "done" else NodeStatus.FAILED
+                    landed = self._graph.mark_terminal(attempt.node_id, attempt.attempt_id, status)
+                if not landed:
+                    raise ValueError("execution group writer fence lost")
                 _ = conn.execute(
                     "UPDATE execution_group_tasks SET status = ?, result = ? "
                     + "WHERE group_id = ? AND node_id = ?",

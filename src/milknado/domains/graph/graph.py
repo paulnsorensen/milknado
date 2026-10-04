@@ -99,6 +99,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     def synchronization_lock(self) -> AbstractContextManager[object]:
         return self._lock
 
+    @property
+    def group_connection(self) -> sqlite3.Connection:
+        return self._conn
+
     def __init__(
         self,
         db_path: Path,

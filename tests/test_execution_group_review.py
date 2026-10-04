@@ -169,3 +169,61 @@ def test_lost_canonical_fence_cannot_complete_group(graph: MikadoGraph) -> None:
     with pytest.raises(ValueError, match="fence"):
         graph.groups.finish_task(attempt, TaskOutcome("done", "wrong"))
     assert graph.groups.task_result(task.id) is None
+
+
+def test_terminal_group_write_rolls_back_canonical_status(graph: MikadoGraph) -> None:
+    task = graph.add_node("task")
+    group = graph.groups.create("graph-a", (task.id,), _workspace("one"))
+    attempt = graph.groups.start_task(group.id, task.id, "run-a")
+    with closing(sqlite3.connect(graph.db_path)) as conn, conn:
+        _ = conn.execute(
+            "CREATE TRIGGER fail_group_result BEFORE UPDATE OF status ON execution_group_tasks "
+            + "BEGIN SELECT RAISE(ABORT, 'result write interrupted'); END"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="result write interrupted"):
+        graph.groups.finish_task(attempt, TaskOutcome("done", "result"))
+    node = graph.get_node(task.id)
+    assert node is not None
+    assert node.status is NodeStatus.RUNNING
+    assert graph.groups.task_result(task.id) is None
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        writer = cast(
+            tuple[str] | None,
+            conn.execute(
+                "SELECT active_attempt_id FROM execution_groups WHERE id = ?", (group.id,)
+            ).fetchone(),
+        )
+    assert writer == (attempt.attempt_id,)
+
+
+def test_fork_remaps_internal_containment_and_detaches_external_parent(
+    graph: MikadoGraph,
+) -> None:
+    outside = graph.add_node("outside")
+    parent = graph.add_node("parent", parent_id=outside.id)
+    child = graph.add_node("child", parent_id=parent.id)
+    graph.mark_running(outside.id)
+    graph.mark_done(outside.id)
+    source = graph.groups.create("graph-a", (child.id, parent.id), _workspace("source"))
+    fork = graph.groups.fork(source.id, _workspace("fork"))
+    fork_child, fork_parent = graph.groups.tasks(fork.id)
+    copied_parent = graph.get_node(fork_parent)
+    copied_child = graph.get_node(fork_child)
+    assert copied_parent is not None and copied_child is not None
+    assert copied_parent.parent_id is None
+    assert copied_child.parent_id == fork_parent
+    assert graph.delete_node(outside.id, cascade=True) == 3
+    assert graph.get_node(fork_parent) is not None
+    assert graph.get_node(fork_child) is not None
+
+
+def test_late_internal_dependency_must_match_group_order(graph: MikadoGraph) -> None:
+    first = graph.add_node("first")
+    second = graph.add_node("second")
+    group = graph.groups.create("graph-a", (first.id, second.id), _workspace("one"))
+    _ = graph.add_edge(first.id, second.id)
+    with pytest.raises(ValueError, match="order"):
+        _ = graph.groups.start_task(group.id, first.id, "run-a")
+    node = graph.get_node(first.id)
+    assert node is not None
+    assert node.status is NodeStatus.PENDING
