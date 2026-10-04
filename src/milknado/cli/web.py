@@ -30,6 +30,7 @@ from milknado.web import (
 if TYPE_CHECKING:
     from milknado.adapters import ChangedFile, GitAdapter
     from milknado.domains.common import GitPort, MilknadoConfig, PluginHook, SessionContext
+    from milknado.domains.coordinator.control_services import ReviewDecisionPort
     from milknado.domains.execution import RunLoopResult
     from milknado.domains.graph import MikadoGraph, OwnerCapabilities
 
@@ -68,12 +69,17 @@ def _host_dependencies(
     graph: MikadoGraph,
     config: MilknadoConfig,
     project_root: Path,
-    owner: Callable[[str | None], OwnerCapabilities | None] | None = None,
+    ports: tuple[
+        Callable[[str | None], OwnerCapabilities | None] | None,
+        ReviewDecisionPort | None,
+    ],
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
     from milknado.domains.coordinator import CoordinatorControl
+    from milknado.domains.coordinator.control_services import CoordinatorServices
 
     git = _ProjectGitInspection(project_root)
+    owner, review_decision = ports
 
     return HostDependencies(
         graph=graph,
@@ -81,10 +87,12 @@ def _host_dependencies(
         project_root=project_root,
         git_port=git.port,
         process=ProcessAdapter(),
-        review_decision=graph.decide_goal_review,
+        review_decision=review_decision,
         git=git,
         owner_capabilities=owner,
-        coordinator=CoordinatorControl(graph, project_root),
+        coordinator=CoordinatorControl(
+            graph, project_root, CoordinatorServices(review_decision=review_decision)
+        ),
     )
 
 
@@ -106,17 +114,25 @@ def web(
     port: PortOption = 8000,
     no_open: NoOpenOption = False,
 ) -> None:
-    """Serve the read-only local web view."""
+    """Serve the local web application."""
     project_root = project_root.resolve()
     config, plugins = load_or_default(project_root)
     graph = ensure_db(config, plugins)
+    from milknado.domains.graph import ControllerAuthorizationError
+
+    try:
+        graph.register_controller_master()
+    except ControllerAuthorizationError:
+        review_decision = None
+    else:
+        review_decision = graph.decide_goal_review
     source = PolledSnapshotSource(_watch_source(project_root, config.db_path))
     login = LaunchToken()
     try:
         source.start()
         owner = partial(_owner_capabilities, source, graph)
         commands = observer_commands(
-            dependencies=_host_dependencies(graph, config, project_root, owner)
+            dependencies=_host_dependencies(graph, config, project_root, (owner, review_decision))
         )
         app = create_app(source, commands, login)
         run_server(app, login, ServerOptions(port=port, no_open=no_open))
@@ -189,7 +205,9 @@ def run_owner_web(
         def owner(run_id: str | None = None) -> OwnerCapabilities | None:
             return _owner_capabilities(controller, graph, run_id)
 
-        dependencies = _host_dependencies(graph, context.config, context.project_root, owner)
+        dependencies = _host_dependencies(
+            graph, context.config, context.project_root, (owner, graph.decide_goal_review)
+        )
         app = create_app(controller, owner_commands(controller, dependencies), login)
         errors, results, server_thread, controller_thread = start_owner_tasks(
             OwnerLaunch(controller, context, options, services, app, login)
