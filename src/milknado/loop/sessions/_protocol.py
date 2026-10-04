@@ -7,7 +7,7 @@ from typing import Literal, Protocol
 from milknado.domains.common import SessionAction, SessionEvent, SessionInput
 
 ProviderFamily = Literal["claude", "codex"]
-RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable"]
+RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
 
 
 @dataclass(frozen=True, slots=True)
