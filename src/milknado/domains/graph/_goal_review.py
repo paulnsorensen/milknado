@@ -70,15 +70,12 @@ def _record(row: object) -> GoalReviewRecord:
         assessed_at=cast(str, _value(row, "assessed_at")),
         decided_at=cast(str | None, _value(row, "decided_at")),
         decided_by=cast(str | None, _value(row, "decided_by")),
+        operation_id=cast(str | None, _value(row, "operation_id")),
     )
 
 
 def request_goal_review(
-    conn: sqlite3.Connection,
-    request: GoalReviewRequest,
-    *,
-    _in_transaction: bool = False,
-    reconcile: bool = False,
+    conn: sqlite3.Connection, request: GoalReviewRequest, *, _in_transaction: bool = False
 ) -> GoalReviewRecord:
     if not _in_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
@@ -89,23 +86,36 @@ def request_goal_review(
         proposed_change = _text(request.proposed_change, "proposed_change")
         reviewer = _text(request.reviewer, "reviewer")
         affected = validate_scope(conn, goal_id, request.affected_node_ids)
+        operation_id = (
+            _text(request.operation_id, "operation_id")
+            if request.operation_id is not None
+            else None
+        )
+        if operation_id is not None:
+            known = fetchone(
+                conn, "SELECT * FROM goal_reviews WHERE operation_id = ?", (operation_id,)
+            )
+            if known is not None:
+                record = _record(known)
+                if (
+                    record.goal_id,
+                    record.goal_revision,
+                    record.evidence,
+                    record.proposed_change,
+                    record.affected_node_ids,
+                    record.reviewer,
+                ) != (goal_id, revision, evidence, proposed_change, affected, reviewer):
+                    raise ValueError("goal review operation identity was reused")
+                return record
         latest = latest_goal_review(conn, goal_id)
         if latest is not None and latest.decision is GoalReviewDecision.PENDING:
-            if reconcile and (
-                latest.goal_revision,
-                latest.evidence,
-                latest.proposed_change,
-                latest.affected_node_ids,
-                latest.reviewer,
-            ) == (revision, evidence, proposed_change, affected, reviewer):
-                return latest
             raise ValueError(f"goal {goal_id} already has a pending review")
         assessed_at = request.assessed_at or datetime.now(UTC).isoformat()
         cursor = conn.execute(
             "INSERT INTO goal_reviews "
             + "(goal_id, goal_revision, evidence, proposed_change, decision, "
-            + "affected_node_ids, reviewer, assessed_at, decided_at, decided_by) "
-            + "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL)",
+            + "affected_node_ids, reviewer, assessed_at, decided_at, decided_by, operation_id) "
+            + "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL, ?)",
             (
                 goal_id,
                 revision,
@@ -114,6 +124,7 @@ def request_goal_review(
                 None if affected is None else json.dumps(list(affected)),
                 reviewer,
                 assessed_at,
+                operation_id,
             ),
         )
         if cursor.lastrowid is None:

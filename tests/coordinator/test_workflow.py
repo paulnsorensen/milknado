@@ -10,6 +10,7 @@ import pytest
 from typing_extensions import override
 
 from milknado.domains.common import (
+    CONTROLLER_MASTER_ENV,
     CrgPort,
     NodeKind,
     NodeStatus,
@@ -26,7 +27,13 @@ from milknado.domains.coordinator import (
 from milknado.domains.coordinator.journal import control_history
 from milknado.domains.coordinator.persistence import link_entity, links_for_session
 from milknado.domains.execution import NodeLoopOutcome
-from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
+from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRequest,
+    GroupWorkspace,
+    MikadoGraph,
+)
 from milknado.domains.planning import Planner, PlanningPorts, PlanningProcessResult
 from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
 
@@ -80,7 +87,13 @@ def test_revision_policy_pauses_only_affected_work(tmp_path: Path) -> None:
         review = workflow.review_goal_change(
             session,
             GoalReviewRequest(
-                session.goal_id, "rev-1", "new evidence", "change outcome", (affected.id,), "agent"
+                session.goal_id,
+                "rev-1",
+                "new evidence",
+                "change outcome",
+                (affected.id,),
+                "agent",
+                operation_id="review-1",
             ),
         )
         assert review.affected_node_ids == (affected.id,)
@@ -100,7 +113,13 @@ def test_unbounded_goal_change_pauses_all_work(tmp_path: Path) -> None:
         review = workflow.review_goal_change(
             session,
             GoalReviewRequest(
-                session.goal_id, "rev-2", "unknown impact", "change outcome", None, "agent"
+                session.goal_id,
+                "rev-2",
+                "unknown impact",
+                "change outcome",
+                None,
+                "agent",
+                operation_id="review-2",
             ),
         )
         assert review.unbounded
@@ -241,7 +260,7 @@ def test_finish_rejects_foreign_goal_and_launch_failure_is_visible(tmp_path: Pat
         assert workflow.dispatch_state(handoff.attempt.attempt_id) == "launch_failed"
         assert graph.groups.task_result(task.id) == ("failed", "spawn failed")
         node = graph.get_node(task.id)
-        assert node is not None and node.status is NodeStatus.FAILED
+        assert node is not None and node.status is NodeStatus.PENDING
         assert [
             event.status
             for event in control_history(conn, owner.id)
@@ -299,6 +318,8 @@ def test_reserved_task_rejects_competing_claim(tmp_path: Path) -> None:
         assert not graph.claim_node(
             task.id, handoff.attempt.attempt_id, now="2026-01-01T00:00:00+00:00"
         )
+        with pytest.raises(ValueError):
+            graph.mark_running(task.id, run_id=handoff.attempt.attempt_id)
         node = graph.get_node(task.id)
         assert node is not None and node.status is NodeStatus.PENDING
         workflow.fail_launch(session, handoff, "spawn failed")
@@ -414,11 +435,23 @@ def test_goal_review_retry_matches_canonical_text(tmp_path: Path) -> None:
         session = workflow.start_goal("Goal", "codex")
         task = graph.add_node("Task", session.goal_id)
         original = GoalReviewRequest(
-            session.goal_id, "rev", "evidence", "change", (task.id,), "agent"
+            session.goal_id,
+            "rev",
+            "evidence",
+            "change",
+            (task.id,),
+            "agent",
+            operation_id="review-whitespace",
         )
         first = workflow.review_goal_change(session, original)
         spaced = GoalReviewRequest(
-            session.goal_id, " rev ", " evidence ", " change ", (task.id,), " agent "
+            session.goal_id,
+            " rev ",
+            " evidence ",
+            " change ",
+            (task.id,),
+            " agent ",
+            operation_id="review-whitespace",
         )
         retried = workflow.review_goal_change(session, spaced)
         assert retried.review_id == first.review_id
@@ -428,4 +461,79 @@ def test_goal_review_retry_matches_canonical_text(tmp_path: Path) -> None:
             if event.kind == "approval"
         ]
         assert approvals == [str(first.review_id)]
+    graph.close()
+
+
+def test_claim_before_reservation_is_rejected(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        assert graph.claim_node(task.id, "prior-run", now="2026-01-01T00:00:00+00:00")
+        with pytest.raises(ValueError, match="active node"):
+            _ = workflow.create_group(
+                session, "main", (task.id,), GroupWorkspace("/tmp/prior", "prior", "provider")
+            )
+    graph.close()
+
+
+@pytest.mark.parametrize("status", [NodeStatus.FAILED, NodeStatus.BLOCKED])
+def test_launch_failure_preserves_prelaunch_state(tmp_path: Path, status: NodeStatus) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        if status is NodeStatus.FAILED:
+            graph.mark_failed(task.id)
+        else:
+            assert graph.claim_node(task.id, "prior-run", now="2026-01-01T00:00:00+00:00")
+            graph.mark_blocked(task.id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/retry-state", "state", "provider")
+        )
+        handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+        workflow.fail_launch(session, handoff, "spawn failed")
+        node = graph.get_node(task.id)
+        assert node is not None and node.status is status
+        if status is NodeStatus.BLOCKED:
+            prior_run = cast(
+                tuple[str] | None,
+                conn.execute("SELECT run_id FROM nodes WHERE id = ?", (task.id,)).fetchone(),
+            )
+            assert prior_run == ("prior-run",)
+        assert graph.groups.task_result(task.id) == ("failed", "spawn failed")
+    graph.close()
+
+
+@pytest.mark.parametrize("decision", [GoalReviewDecision.ACCEPTED, GoalReviewDecision.REJECTED])
+def test_decided_review_retry_keeps_original_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: GoalReviewDecision
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "controller-secret")
+    graph.register_controller_master()
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        request = GoalReviewRequest(
+            session.goal_id,
+            "rev",
+            "evidence",
+            "change",
+            (task.id,),
+            "agent",
+            operation_id=f"review-{decision.value}",
+        )
+        first = workflow.review_goal_change(session, request)
+        _ = graph.decide_goal_review(
+            GoalReviewDecisionRequest(first.review_id, decision), decided_by="human"
+        )
+        retried = workflow.review_goal_change(session, request)
+        assert retried.review_id == first.review_id
+        assert retried.decision is decision
+        latest = graph.latest_goal_review(session.goal_id)
+        assert latest is not None and latest.review_id == first.review_id
     graph.close()

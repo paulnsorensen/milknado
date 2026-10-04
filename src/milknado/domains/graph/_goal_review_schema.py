@@ -14,3 +14,9 @@ CREATE_PENDING_GOAL_REVIEW_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_reviews_pending "
     + "ON goal_reviews(goal_id) WHERE decision = 'pending'"
 )
+
+ADD_REVIEW_OPERATION_ID = "ALTER TABLE goal_reviews ADD COLUMN operation_id TEXT"
+CREATE_REVIEW_OPERATION_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_goal_reviews_operation "
+    + "ON goal_reviews(operation_id) WHERE operation_id IS NOT NULL"
+)

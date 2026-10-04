@@ -262,7 +262,9 @@ class CoordinatorWorkflow:
     ) -> GoalReviewRecord:
         if request.goal_id != session.goal_id:
             raise ValueError("review addresses another coordinator goal")
-        review = self._graph.request_goal_review(request, reconcile=True)
+        if not request.operation_id:
+            raise ValueError("goal review operation identity must not be empty")
+        review = self._graph.request_goal_review(request)
         link_entity(self._conn, session.id, "approval", str(review.review_id))
         self._event_once(
             session,
