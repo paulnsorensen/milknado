@@ -124,7 +124,7 @@ class TestEnsureGraph:
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
         mock_run.assert_called_once_with(
-            ["code-review-graph", "build"],
+            ["code-review-graph", "build", "--repo", str(tmp_path)],
             cwd=tmp_path,
             stderr=subprocess.PIPE,
             text=True,
@@ -149,7 +149,7 @@ class TestEnsureGraph:
         adapter = CrgAdapter(tmp_path)
         adapter.ensure_graph(tmp_path)
         mock_run.assert_called_once_with(
-            ["code-review-graph", "update"],
+            ["code-review-graph", "update", "--repo", str(tmp_path)],
             cwd=tmp_path,
             stderr=subprocess.PIPE,
             text=True,

@@ -74,9 +74,6 @@ def _write_fake_planner(project_root: Path) -> Path:
 
 
 def _start_plan_proc(project_root: Path, spec: Path) -> tuple[subprocess.Popen[bytes], int]:
-    crg_dir = project_root / ".code-review-graph"
-    crg_dir.mkdir()
-    (crg_dir / "graph.db").touch()
     master_fd, slave_fd = os.openpty()
     try:
         env = dict(os.environ)
