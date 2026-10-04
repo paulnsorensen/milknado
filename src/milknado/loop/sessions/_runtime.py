@@ -40,7 +40,12 @@ from milknado.loop.sessions._process import (
     terminate,
     write_commands,
 )
-from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
+from milknado.loop.sessions._protocol import (
+    ProtocolStep,
+    ProviderFamily,
+    ProviderSessionIdentity,
+    SessionProtocol,
+)
 from milknado.loop.sessions._stream import StreamContext, consume, drain
 
 
@@ -106,7 +111,13 @@ class _SessionExecution:
         channel, outcome, wind_down = self.channel, self.outcome, self.wind_down
         actions = tuple(self.protocol.actions)
         if step.session_id is not None:
-            outcome.session_id = step.session_id
+            family = channel.view().context.family if channel.view().context else ""
+            if family in {"claude", "codex"}:
+                identity = ProviderSessionIdentity.from_step(cast(ProviderFamily, family), step)
+                if identity is not None:
+                    outcome.session_id = identity.session_id
+            else:
+                outcome.session_id = step.session_id
         if (context := channel.view().context) is not None and step.done:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
         for event in step.events:
