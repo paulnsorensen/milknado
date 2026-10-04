@@ -75,10 +75,19 @@ def _host_dependencies(
     ],
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
+    from milknado.app.plan import build_planner
     from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 
     git = _ProjectGitInspection(project_root)
     owner, review_decision = ports
+    coordinator = CoordinatorControl(
+        graph,
+        project_root,
+        CoordinatorServices(
+            planner=build_planner(graph, project_root, config),
+            review_decision=review_decision,
+        ),
+    )
 
     return HostDependencies(
         graph=graph,
@@ -86,12 +95,10 @@ def _host_dependencies(
         project_root=project_root,
         git_port=git.port,
         process=ProcessAdapter(),
-        review_decision=review_decision,
+        review_decision=coordinator.decide_goal_review if review_decision is not None else None,
         git=git,
         owner_capabilities=owner,
-        coordinator=CoordinatorControl(
-            graph, project_root, CoordinatorServices(review_decision=review_decision)
-        ),
+        coordinator=coordinator,
     )
 
 
