@@ -147,6 +147,26 @@ def test_action_port_uses_active_actions_and_rejects_unsupported(
     )
 
 
+def test_stale_handle_cannot_submit_after_channel_restart(tmp_path: Path) -> None:
+    channel = SessionChannel()
+    context = SessionContext(family="claude", cwd=str(tmp_path))
+    channel.start(context, ("interrupt",), invocation_id="process-a")
+    first = RuntimeSession.from_step("claude", ProtocolStep(session_id="same-id"), channel)
+    assert first is not None
+
+    channel.close()
+    channel.start(context, ("interrupt",), invocation_id="process-b")
+    second = RuntimeSession.from_step("claude", ProtocolStep(session_id="same-id"), channel)
+    assert second is not None
+
+    stale = submit_runtime_action("same-id", SessionInput(action="interrupt"), first)
+    assert stale.state == "unknown_session"
+    assert channel.drain() == ()
+    current = submit_runtime_action("same-id", SessionInput(action="interrupt"), second)
+    assert current.state == "queued"
+    assert [command.action for command in channel.drain()] == ["interrupt"]
+
+
 def test_resume_port_reports_explicit_unsupported_result(tmp_path: Path) -> None:
     identity = ProviderSessionIdentity("codex", "provider-1")
     spec = AgentRunSpec(

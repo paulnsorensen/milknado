@@ -36,13 +36,17 @@ class RuntimeResult:
 class RuntimeSession:
     identity: ProviderSessionIdentity
     channel: SessionChannel
+    incarnation: int
 
     @classmethod
     def from_step(  # noqa: V1xx
         cls, family: ProviderFamily, step: ProtocolStep, channel: SessionChannel
     ) -> RuntimeSession | None:
         identity = ProviderSessionIdentity.from_step(family, step)
-        return cls(identity, channel) if identity is not None else None
+        incarnation = channel.capture_incarnation()
+        if identity is None or incarnation is None:
+            return None
+        return cls(identity, channel, incarnation)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +74,7 @@ def submit_runtime_action(
         state: ActionState = "unknown_session"
     elif action.action not in runtime_capabilities(session.identity.family).native_actions:
         state = "unsupported"
-    elif session.channel.submit(action):
-        state = "queued"
     else:
-        state = "rejected"
+        submitted = session.channel.submit_for_incarnation(session.incarnation, action)
+        state = "unknown_session" if submitted is None else "queued" if submitted else "rejected"
     return RuntimeActionReceipt(provider_session_id, action, state)

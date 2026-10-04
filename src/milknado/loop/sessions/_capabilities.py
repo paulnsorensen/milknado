@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from milknado.domains.common import SessionAction, SessionContext
+from milknado.domains.common import SessionAction, SessionContext, SessionEvent
 from milknado.loop.sessions._protocol import ProviderFamily
 
 LifecycleOperation = Literal[
@@ -71,6 +71,23 @@ CapabilityState = tuple[
     str,
     PermissionCapabilities,
 ]
+
+
+def snapshot(
+    context: SessionContext | None,
+    actions: tuple[SessionAction, ...],
+    invocation_id: str,
+    permissions: tuple[SessionEvent, ...],
+) -> CapabilityState:
+    return (
+        context,
+        actions,
+        invocation_id,
+        (
+            tuple(event.event_id for event in permissions),
+            tuple((event.event_id, event.text) for event in permissions),
+        ),
+    )
 
 
 def refresh(sink: CapabilitySink | None, state: CapabilityState) -> None:
