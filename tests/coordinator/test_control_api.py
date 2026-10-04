@@ -127,3 +127,45 @@ def test_missing_runtime_returns_receipt_without_claiming_action(tmp_path: Path)
         == result
     )
     graph.close()
+
+
+def test_rejected_start_goal_receipt_replays_without_session(tmp_path: Path) -> None:
+    path = tmp_path / "graph.db"
+    graph = MikadoGraph(path)
+    control = CoordinatorControl(graph, tmp_path)
+    command = StartGoal("empty-goal", " ", "codex")
+    first = control.send_coordinator_command("", command)
+    assert first.status == "rejected"
+    assert first.session_id == ""
+    assert isinstance(first.result, str) and first.result
+    assert control.send_coordinator_command("", command) == first
+    count = graph.group_connection.execute("SELECT COUNT(*) FROM coordinator_sessions").fetchone()
+    assert count is not None and count[0] == 0
+    graph.close()
+
+    reopened = MikadoGraph(path)
+    assert CoordinatorControl(reopened, tmp_path).send_coordinator_command("", command) == first
+    reopened.close()
+
+
+def test_redacted_command_ids_keep_distinct_journal_events(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    started = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, _result(started)["id"])
+    first = Recover("token=first")
+    second = Recover("token=second")
+    assert control.send_coordinator_command(session_id, first).status == "unavailable"
+    assert control.send_coordinator_command(session_id, second).status == "unavailable"
+    assert control.send_coordinator_command(session_id, first).status == "unavailable"
+    events = [
+        event
+        for event in control.read_coordinator_snapshot(session_id, 0).events
+        if event.kind == "command" and event.text == "Recover"
+    ]
+    assert len(events) == 2
+    assert len({event.entity_id for event in events}) == 2
+    assert all(
+        "first" not in event.entity_id and "second" not in event.entity_id for event in events
+    )
+    graph.close()
