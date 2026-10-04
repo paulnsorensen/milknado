@@ -104,7 +104,7 @@ class CrgAdapter:
         # #79: re-raise with stderr so callers can log/surface the failure reason
         try:
             return subprocess.run(
-                ["code-review-graph", command],
+                ["code-review-graph", command, "--repo", str(self._root)],
                 cwd=self._root,
                 stderr=subprocess.PIPE,
                 text=True,
