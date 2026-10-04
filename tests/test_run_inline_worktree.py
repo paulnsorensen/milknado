@@ -860,6 +860,14 @@ class TestAsyncStartFailure:
         # The claim was released with a fenced terminal write — not stranded RUNNING.
         assert _node(root, task["id"]).status.value == "failed"
         assert not (root / "milknado-1-boom").exists()
+        branches = subprocess.run(
+            ["git", "branch", "--list", "milknado/*"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert branches.strip() == ""
 
 
 def test_start_failure_surfaces_worktree_cleanup_error(

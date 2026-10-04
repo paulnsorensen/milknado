@@ -457,7 +457,6 @@ def prepare_isolation(
     node: MikadoNode,
     run_id: str,
     worktree: WorktreeMode,
-    merge_back: bool,
     worktree_pattern: str,
 ) -> tuple[Path, IsolateContext | None]:
     from milknado.domains.dispatch import setup_isolated_worktree
@@ -465,7 +464,7 @@ def prepare_isolation(
     if worktree != WorktreeMode.ISOLATE:
         return root, None
     context = setup_isolated_worktree(graph, git, root, node, run_id, worktree_pattern)
-    return context.worktree_path, context if merge_back else None
+    return context.worktree_path, context
 
 
 @dataclass(frozen=True)
@@ -566,6 +565,7 @@ def run_inline_start(
         AsyncRunRequest,
         GraphSessionPort,
         claim_with_host_slot,
+        discard_isolated_worktree,
         ensure_tmux_ready,
         isolated_orientation,
         make_run_id,
@@ -595,20 +595,17 @@ def run_inline_start(
     lease = claim_with_host_slot(
         graph, FlockSlotPool(cfg.host_worker_limit), (request.node_id, run_id), root
     )
-    isolated_worktree: Path | None = None
+    isolate: IsolateContext | None = None
     try:
-        worker_cwd, merge_ctx = prepare_isolation(
+        worker_cwd, isolate = prepare_isolation(
             graph,
             git,
             root,
             node,
             run_id,
             request.worktree,
-            request.merge_back,
             cfg.worktree_pattern,
         )
-        if request.worktree is WorktreeMode.ISOLATE:
-            isolated_worktree = worker_cwd
         brief = render_brief(
             graph,
             request.node_id,
@@ -626,7 +623,7 @@ def run_inline_start(
                 run_id=run_id,
                 default_cmd=profile.execution_agent,
                 cwd=worker_cwd,
-                merge_ctx=merge_ctx,
+                merge_ctx=isolate if request.merge_back else None,
                 lease=lease,
             ),
             _GraphSessions(),
@@ -638,9 +635,9 @@ def run_inline_start(
         if lease is not None:
             lease.release()
         cleanup_error: Exception | None = None
-        if isolated_worktree is not None:
+        if isolate is not None:
             try:
-                git.force_remove_worktree(isolated_worktree)
+                discard_isolated_worktree(git, isolate.worktree_path, isolate.worker_branch)
             except Exception as error:
                 cleanup_error = error
         if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):

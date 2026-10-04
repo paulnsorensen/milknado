@@ -23,7 +23,12 @@ from milknado.domains.common import (
     resolve_flavor_profile,
     resolve_worker_tools,
 )
-from milknado.domains.dispatch import create_isolated_worktree, current_branch_or_none, now_iso
+from milknado.domains.dispatch import (
+    create_isolated_worktree,
+    current_branch_or_none,
+    discard_isolated_worktree,
+    now_iso,
+)
 from milknado.domains.graph import CLAIM_ROLE
 
 if TYPE_CHECKING:
@@ -152,20 +157,23 @@ def _provision_claim_run(
 
 
 def _release_failed_claim(
-    graph: MikadoGraph, root: Path, claim: tuple[int, str], wt_path: Path | None
+    graph: MikadoGraph,
+    root: Path,
+    claim: tuple[int, str],
+    worktree: tuple[Path, str] | None,
 ) -> None:
     """Release a provisioned claim whose later setup failed; call from an except block.
 
-    Remove the worktree, then fail the node with a fenced terminal write so it is
+    Remove the worktree and its branch, then fail the node with a fenced terminal write so it is
     not stranded RUNNING. The caller re-raises the original exception.
     """
     from milknado.adapters import GitAdapter
 
     node_id, run_id = claim
     cleanup_error: GitOperationError | None = None
-    if wt_path is not None:
+    if worktree is not None:
         try:
-            GitAdapter(root).force_remove_worktree(wt_path)
+            discard_isolated_worktree(GitAdapter(root), *worktree)
         except GitOperationError as error:
             cleanup_error = error
     try:

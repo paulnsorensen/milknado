@@ -156,7 +156,8 @@ def milknado_todo_claim(
                 orientation=WorkerOrientation(run_id, wt_path or root, branch),
             )
         except Exception:
-            _release_failed_claim(graph, root, (node_id, run_id), wt_path)
+            claimed = (wt_path, branch) if wt_path is not None and branch is not None else None
+            _release_failed_claim(graph, root, (node_id, run_id), claimed)
             raise
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None

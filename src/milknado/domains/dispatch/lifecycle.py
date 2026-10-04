@@ -27,6 +27,7 @@ from milknado.domains.dispatch.brief import (
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
+    discard_isolated_worktree,
     merge_back_if_done,
     setup_isolated_worktree,
 )
@@ -212,7 +213,7 @@ def _run_claimed_node(
                     f"terminal persistence lost its fence for run {run_id}"
                 )
             if isolate is not None and not started:
-                git.force_remove_worktree(isolate.worktree_path)
+                discard_isolated_worktree(git, isolate.worktree_path, isolate.worker_branch)
         except Exception as persist_exc:
             terminal_error = persist_exc
         if terminal_error is not None:

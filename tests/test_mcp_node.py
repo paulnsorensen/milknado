@@ -155,15 +155,13 @@ def test_claim_brief_states_orientation(repo: Path) -> None:
 def test_claim_render_failure_removes_worktree_and_fails_claim(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import milknado.mcp.node as mcp_node
-
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)
 
     def _boom(*_args: object, **_kwargs: object) -> str:
         raise RuntimeError("render boom")
 
-    monkeypatch.setattr(mcp_node, "render_brief", _boom)
+    monkeypatch.setattr("milknado.mcp.node.render_brief", _boom)
     with pytest.raises(RuntimeError, match="render boom"):
         _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
 
@@ -183,12 +181,27 @@ def test_claim_render_failure_removes_worktree_and_fails_claim(
         text=True,
     ).stdout
     assert listing.count("worktree ") == 1
+    assert _worker_branches(repo) == ""
+
+    monkeypatch.undo()
+    _ = _call(milknado_todo_set_status, node_id=node_id, status="pending", project_root=str(repo))
+    retried = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert retried["worktree_path"] is not None
+
+
+def _worker_branches(repo: Path) -> str:
+    return subprocess.run(
+        ["git", "branch", "--list", "milknado/*"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def test_claim_render_failure_reports_worktree_cleanup_failure_after_failing_node(
     repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import milknado.mcp.node as mcp_node
     from milknado.adapters import GitAdapter
     from milknado.domains.common import GitOperationError
 
@@ -201,7 +214,7 @@ def test_claim_render_failure_reports_worktree_cleanup_failure_after_failing_nod
     def _cleanup_boom(*_args: object, **_kwargs: object) -> None:
         raise GitOperationError("cleanup boom")
 
-    monkeypatch.setattr(mcp_node, "render_brief", _render_boom)
+    monkeypatch.setattr("milknado.mcp.node.render_brief", _render_boom)
     monkeypatch.setattr(GitAdapter, "force_remove_worktree", _cleanup_boom)
     with pytest.raises(GitOperationError, match="cleanup boom") as raised:
         _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))

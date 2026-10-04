@@ -28,6 +28,7 @@ from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
     create_isolated_worktree,
+    discard_isolated_worktree,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.lifecycle import (
@@ -105,6 +106,7 @@ __all__ = [
     "resolve_attach_target",
     "request_cancel",
     "setup_isolated_worktree",
+    "discard_isolated_worktree",
     "run_headless",
     "runs_dir",
     "tail",

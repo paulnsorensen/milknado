@@ -2348,3 +2348,11 @@ class TestWorkerOrientation:
             text=True,
         ).stdout
         assert listing.count("worktree ") == 1
+        branches = subprocess.run(
+            ["git", "branch", "--list", "milknado/*"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert branches.strip() == ""

@@ -84,6 +84,12 @@ def create_isolated_worktree(
     return _create_node_worktree(git, root, node_id, description, worktree_pattern)
 
 
+def discard_isolated_worktree(git: GitPort, worktree_path: Path, branch: str) -> None:
+    """Remove a never-started worker checkout and its fresh branch so a retry can recreate both."""
+    git.force_remove_worktree(worktree_path)
+    git.delete_branch(branch)
+
+
 @contextmanager
 def _merge_back_lock(root: Path) -> Generator[None, None, None]:
     """Serialize merge-backs with a portable, process-scoped file lock."""
