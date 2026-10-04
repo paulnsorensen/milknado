@@ -179,11 +179,16 @@ def test_worker_evidence_connection_respects_one_deadline_under_writer_lock(
             ("inv-1",),
         )
         start = time.monotonic()
-        with WorkerEvidenceStore(graph.db_path, deadline=start + 0.3) as store:
+        observation = ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5)
+        with WorkerEvidenceStore(graph.db_path, deadline=start + 0.1) as store:
             assert len(store.live_workers(RunWorkers("run-1"))) == 1
-            with pytest.raises((sqlite3.OperationalError, TimeoutError)):
-                store.begin(ObservationKey("inv-1", "supervisor", 1, -1, 2345, 123.5))
-        assert time.monotonic() - start < 0.8
+            # Each write must derive its own wait from the deadline, not inherit one.
+            _ = store._conn.execute("PRAGMA busy_timeout=1000")  # pyright: ignore[reportPrivateUsage]
+            for _attempt in range(2):
+                with pytest.raises((sqlite3.OperationalError, TimeoutError)):
+                    store.begin(observation)
+        # Without one shared deadline, each blocked write waits the full 1 s busy cap.
+        assert time.monotonic() - start < 1.5
     finally:
         lock.rollback()
         lock.close()

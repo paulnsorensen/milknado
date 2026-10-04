@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -1120,8 +1121,9 @@ def test_concurrent_loop_run_start_spawns_exactly_one_worker(tmp_path: Path) -> 
     root = str(tmp_path)
     task = _call(milknado_todo_add, description="concurrent-loop", kind="task", project_root=root)
     node_id = task["id"]
-    # leave the node RUNNING under two run_ids and we'd see two successes.
-    noop = f"{sys.executable} -c pass"
+    # The worker must outlive both starts. An instant-exit worker lets the second
+    # caller legitimately reclaim a dead owner, which is not concurrent dispatch.
+    live_worker = f"{sys.executable} -c 'import time; time.sleep(30)'"
 
     results: list[_LoopResponse] = []
     errors: list[str] = []
@@ -1134,7 +1136,7 @@ def test_concurrent_loop_run_start_spawns_exactly_one_worker(tmp_path: Path) -> 
             r = _call(
                 milknado_run_loop_start,
                 node_id=node_id,
-                runner_cmd=noop,
+                runner_cmd=live_worker,
                 project_root=root,
             )
             with result_lock:
@@ -1146,12 +1148,17 @@ def test_concurrent_loop_run_start_spawns_exactly_one_worker(tmp_path: Path) -> 
     threads = [threading.Thread(target=_start) for _ in range(2)]
     for t in threads:
         t.start()
-    for t in threads:
-        t.join(timeout=10)
+    try:
+        for t in threads:
+            t.join(timeout=10)
 
-    assert len(results) == 1, f"expected exactly 1 successful dispatch, errors={errors}"
-    assert len(errors) == 1, f"expected exactly 1 'already running', errors={errors}"
-    assert "already running" in errors[0]
+        assert len(results) == 1, f"expected exactly 1 successful dispatch, errors={errors}"
+        assert len(errors) == 1, f"expected exactly 1 'already running', errors={errors}"
+        assert "already running" in errors[0]
+    finally:
+        for started in results:
+            if (pid := started["pid"]) is not None:
+                os.kill(pid, signal.SIGKILL)
 
 
 def test_orphan_worktree_removed_before_retry(
