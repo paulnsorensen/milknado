@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from contextlib import closing
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -169,3 +171,41 @@ def test_diagnostics_use_utc_and_expiry_index(tmp_path: Path) -> None:
             ).fetchone(),
         )
         assert index is not None and "WHERE expires_at IS NOT NULL" in index[0]
+
+
+def test_authorization_header_value_is_fully_redacted_after_reopen(tmp_path: Path) -> None:
+    path = str(tmp_path / "graph.db")
+    conn, session_id = _session(path)
+    with closing(conn):
+        for scheme in ("Bearer", "Basic"):
+            _ = append_control_event(
+                conn,
+                session_id,
+                ControlEvent(
+                    kind="assistant",
+                    text=f"Authorization: {scheme} credential-{scheme}\nnext: ok",
+                ),
+            )
+    with closing(sqlite3.connect(path)) as reopened:
+        assert [entry.text for entry in control_history(reopened, session_id)] == [
+            "Authorization: [REDACTED]\nnext: ok",
+            "Authorization: [REDACTED]\nnext: ok",
+        ]
+
+
+def test_unterminated_quoted_secret_has_bounded_redaction_time() -> None:
+    payload = 'token="' + "\\" * 257
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from milknado.domains.coordinator.journal import _redact; "
+            + "import sys; print(_redact(sys.argv[1]))",
+            payload,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=True,
+    )
+    assert result.stdout.strip() == 'token="[REDACTED]'

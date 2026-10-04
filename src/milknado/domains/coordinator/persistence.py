@@ -86,13 +86,22 @@ def get_coordinator(conn: sqlite3.Connection, session_id: str) -> CoordinatorSes
     return _session(row) if row is not None else None
 
 
-def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> CoordinatorSession:
-    if not provider.strip():
-        raise ValueError("provider must not be empty")
+def _require_top_level_goal(conn: sqlite3.Connection, goal_id: int) -> None:
+    row_factory = conn.row_factory
+    if row_factory is None:
+        conn.row_factory = sqlite3.Row
     try:
         _ = top_level_goal(conn, goal_id)
     except GoalReviewSubjectError as exc:
         raise ValueError("coordinator requires a top-level goal") from exc
+    finally:
+        conn.row_factory = row_factory
+
+
+def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> CoordinatorSession:
+    if not provider.strip():
+        raise ValueError("provider must not be empty")
+    _require_top_level_goal(conn, goal_id)
     create_coordinator_tables(conn)
     with conn:
         _ = conn.execute(

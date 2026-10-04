@@ -104,3 +104,14 @@ def test_deleting_goal_cascades_coordinator_records(tmp_path: Path) -> None:
         assert get_coordinator(conn, session.id) is None
         assert links_for_session(conn, session.id) == ()
         assert control_history(conn, session.id) == ()
+
+
+def test_session_starts_with_default_tuple_rows(tmp_path: Path) -> None:
+    path = str(tmp_path / "graph.db")
+    _database(path).close()
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.row_factory is None
+        session = start_coordinator(conn, 1, "claude")
+        assert conn.row_factory is None
+        assert session.goal_id == 1
+        assert get_coordinator(conn, session.id) == session
