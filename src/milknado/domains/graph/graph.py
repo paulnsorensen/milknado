@@ -519,6 +519,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
         return _goal_review.get_goal_review(self._conn, review_id)
 
     @synchronized
+    def latest_goal_review(self, goal_id: int) -> GoalReviewRecord | None:
+        return _goal_review.latest_goal_review(self._conn, goal_id)
+
+    @synchronized
     def register_controller_master(self) -> None:
         self._controller_master = _controller_capability.register_controller_master(self._conn)
 
