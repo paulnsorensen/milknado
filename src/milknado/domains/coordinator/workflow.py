@@ -28,7 +28,7 @@ from milknado.domains.graph import (
 from milknado.domains.planning import Planner, PlanResult
 
 
-class CoordinatorWorkflow:
+class CoordinatorWorkflow:  # noqa: V102
     def __init__(self, graph: MikadoGraph, conn: sqlite3.Connection) -> None:
         self._graph: MikadoGraph = graph
         self._conn: sqlite3.Connection = conn
@@ -161,9 +161,9 @@ class CoordinatorWorkflow:
     def dispatch_state(self, attempt_id: str) -> str | None:  # noqa: V105
         return get_dispatch_state(self._conn, attempt_id)
 
-    def acknowledge_launch(
+    def acknowledge_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff
-    ) -> DispatchHandoff:  # noqa: V105
+    ) -> DispatchHandoff:
         state = self._owned_attempt(session, handoff.attempt)
         if state not in {"awaiting_launch", "launched"}:
             raise ValueError("dispatch is not awaiting launch")
@@ -184,9 +184,9 @@ class CoordinatorWorkflow:
         )
         return DispatchHandoff(handoff.attempt, "launched")
 
-    def fail_launch(
+    def fail_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str
-    ) -> None:  # noqa: V105
+    ) -> None:
         state = self._owned_attempt(session, handoff.attempt)
         if state not in {"awaiting_launch", "launch_failed"} or not reason:
             raise ValueError("dispatch cannot record launch failure")

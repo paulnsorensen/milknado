@@ -7,16 +7,16 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import SessionContext, SessionInput
-from milknado.domains.coordinator import (
-    ControlEvent,
+from milknado.domains.coordinator import ControlEvent, EntityLink
+from milknado.domains.coordinator.commands import (
     CoordinatorAction,
-    CoordinatorWorkflow,
-    EntityLink,
+    record_control_once,
     submit_coordinator_action,
 )
-from milknado.domains.coordinator.commands import record_control_once
 from milknado.domains.coordinator.journal import append_control_event, control_history
 from milknado.domains.coordinator.persistence import link_entity, links_for_session
+from milknado.domains.coordinator.workflow import CoordinatorWorkflow
+from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
 from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
 
@@ -155,6 +155,39 @@ def test_dispatch_retry_repairs_link_and_launch_history(
             if event.kind == "run_transition"
         ]
         assert transitions == ["claimed", "running"]
+    graph.close()
+
+
+def test_failed_launch_retry_cannot_change_reserved_task_outcome(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/launch", "launch", "provider")
+        )
+        handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+        with pytest.raises(ValueError, match="another active attempt"):
+            _ = workflow.dispatch_task(session, group.id, task.id, "competing-run")
+        with pytest.raises(ValueError, match="launched coordinator attempt"):
+            workflow.finish_task(session, handoff.attempt, NodeLoopOutcome(task.id, True))
+        with pytest.raises(ValueError, match="cannot record launch failure"):
+            workflow.fail_launch(session, handoff, "")
+        assert graph.groups.task_result(task.id) is None
+
+        workflow.fail_launch(session, handoff, "spawn failed")
+        with pytest.raises(ValueError, match="not awaiting launch"):
+            _ = workflow.acknowledge_launch(session, handoff)
+        with pytest.raises(ValueError, match="conflicts with task result"):
+            workflow.fail_launch(session, handoff, "different failure")
+        assert workflow.dispatch_state(handoff.attempt.attempt_id) == "launch_failed"
+        assert graph.groups.task_result(task.id) == ("failed", "spawn failed")
+        assert [
+            event.status
+            for event in control_history(conn, session.id)
+            if event.kind == "run_transition"
+        ] == ["claimed", "launch_failed"]
     graph.close()
 
 
