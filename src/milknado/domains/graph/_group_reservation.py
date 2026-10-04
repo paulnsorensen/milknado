@@ -41,11 +41,21 @@ def admit_writer(
     )
     if predecessor is not None:
         raise ValueError("execution group predecessor has not completed")
+    node = fetchone(
+        conn,
+        "SELECT n.status, n.run_id FROM nodes AS n WHERE n.id = ? "
+        + "AND n.status IN ('pending', 'failed', 'blocked') "
+        + "AND NOT EXISTS (SELECT 1 FROM run_workers AS w "
+        + "WHERE w.node_id = n.id AND w.ended_at IS NULL)",
+        (node_id,),
+    )
+    if node is None:
+        raise ValueError("execution group task is not claimable")
     attempt = TaskAttempt(group_id, node_id, run_id, uuid4().hex)
     _ = conn.execute(
         "UPDATE execution_groups SET active_node_id = ?, active_run_id = ?, "
-        + "active_attempt_id = ? WHERE id = ?",
-        (node_id, run_id, attempt.attempt_id, group_id),
+        + "active_attempt_id = ?, active_node_status = ?, active_node_run_id = ? WHERE id = ?",
+        (node_id, run_id, attempt.attempt_id, node[0], node[1], group_id),
     )
     workspace = GroupWorkspace(cast(str, group[1]), cast(str, group[2]), cast(str, group[3]))
     return attempt, workspace
@@ -74,3 +84,28 @@ def claim_reservation_allows(
     if row is None:
         return not group_reservation
     return group_reservation and row[0] == run_id
+
+
+def fail_reservation(conn: sqlite3.Connection, attempt: TaskAttempt, reason: str) -> None:
+    reservation = fetchone(
+        conn,
+        "SELECT active_node_status, active_node_run_id FROM execution_groups "
+        + "WHERE id = ? AND active_node_id = ? AND active_run_id = ? AND active_attempt_id = ?",
+        (attempt.group_id, attempt.node_id, attempt.run_id, attempt.attempt_id),
+    )
+    if reservation is None or reservation[0] is None:
+        raise ValueError("execution group writer fence lost")
+    node = fetchone(conn, "SELECT status, run_id FROM nodes WHERE id = ?", (attempt.node_id,))
+    if node is None or (node[0], node[1]) != (reservation[0], reservation[1]):
+        raise ValueError("reserved task changed owner before launch failure")
+    _ = conn.execute(
+        "UPDATE execution_group_tasks SET status = 'failed', result = ? "
+        + "WHERE group_id = ? AND node_id = ?",
+        (reason, attempt.group_id, attempt.node_id),
+    )
+    _ = conn.execute(
+        "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
+        + "active_attempt_id = NULL, active_node_status = NULL, active_node_run_id = NULL "
+        + "WHERE id = ? AND active_attempt_id = ?",
+        (attempt.group_id, attempt.attempt_id),
+    )

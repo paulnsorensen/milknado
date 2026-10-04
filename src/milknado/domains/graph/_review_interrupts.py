@@ -17,13 +17,11 @@ from milknado.domains.graph.goal_review import GoalReviewRecord, GoalReviewReque
 
 
 def request_with_interrupts(
-    conn: sqlite3.Connection, request: GoalReviewRequest, *, reconcile: bool = False
+    conn: sqlite3.Connection, request: GoalReviewRequest
 ) -> GoalReviewRecord:
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        record = _goal_review.request_goal_review(
-            conn, request, _in_transaction=True, reconcile=reconcile
-        )
+        record = _goal_review.request_goal_review(conn, request, _in_transaction=True)
         receipts = enqueue_goal_review_interrupts(
             conn, record.review_id, now=record.assessed_at, _in_transaction=True
         )

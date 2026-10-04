@@ -236,13 +236,15 @@ MIGRATIONS: list[tuple[int, str]] = [
     (31, _coordinator_recovery_schema.CREATE_PROVIDER_BINDINGS),
     (32, _coordinator_recovery_schema.CREATE_TURN_EVENTS),
     (33, _coordinator_recovery_schema.CREATE_UNKNOWN_TURN_INDEX),
+    (34, _group_schema.ADD_RESERVED_NODE_STATUS),
+    (35, _group_schema.ADD_RESERVED_NODE_RUN_ID),
+    (36, _goal_review_schema.ADD_REVIEW_OPERATION_ID),
+    (37, _goal_review_schema.CREATE_REVIEW_OPERATION_INDEX),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
 
-# Fresh databases migrate from user_version=0; step v2 creates node_reviews.
-# create_tables() can already add a migrated column, so skip that duplicate
-# ALTER statement while still stamping user_version.
+# Fresh databases run the ladder; existing ADD COLUMN targets are skipped.
 _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE)
 
 

@@ -1,9 +1,4 @@
-"""Node status state-machine transitions for MikadoGraph.
-
-Free functions taking a connection, mirroring `_persistence.py` / `_mutations.py`.
-Every status change is validated against VALID_TRANSITIONS before any write, so
-an illegal move raises InvalidTransition rather than corrupting the row.
-"""
+"""Node status state-machine transitions for MikadoGraph."""
 
 from __future__ import annotations
 
@@ -69,7 +64,12 @@ def _apply_transition(
     cur = conn.execute(sql, params)
     if owns_transaction:
         conn.commit()
-    if cur.rowcount == 0:
+    changed = (
+        cur.rowcount
+        if cur.rowcount >= 0
+        else cast(int, conn.execute("SELECT changes()").fetchone()[0])
+    )
+    if changed == 0:
         if lost_fence_is_noop:
             return False
         if admission_guard:
@@ -134,7 +134,8 @@ def mark_running(
         + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ? AND "
         + READY_NODE_ADMISSION_FILTER
         + " AND "
-        + _NO_OPEN_WORKERS_ALIASED,
+        + _NO_OPEN_WORKERS_ALIASED
+        + " AND NOT EXISTS (SELECT 1 FROM execution_groups WHERE active_node_id = n.id)",
         (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
         admission_guard=True,
     )

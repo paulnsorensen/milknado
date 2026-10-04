@@ -511,10 +511,8 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
         return _status.complete_root(self._pipeline, self._conn)
 
     @synchronized
-    def request_goal_review(
-        self, request: GoalReviewRequest, *, reconcile: bool = False
-    ) -> GoalReviewRecord:
-        return _review_interrupts.request_with_interrupts(self._conn, request, reconcile=reconcile)
+    def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
+        return _review_interrupts.request_with_interrupts(self._conn, request)
 
     @synchronized
     def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:

@@ -68,7 +68,13 @@ def test_review_retry_repairs_link_after_persistence_failure(
         session = workflow.start_goal("Goal", "codex")
         task = graph.add_node("Task", session.goal_id)
         request = GoalReviewRequest(
-            session.goal_id, "rev", "new evidence", "change goal", (task.id,), "agent"
+            session.goal_id,
+            "rev",
+            "new evidence",
+            "change goal",
+            (task.id,),
+            "agent",
+            operation_id="review-retry",
         )
         original = link_entity
         failed = False
