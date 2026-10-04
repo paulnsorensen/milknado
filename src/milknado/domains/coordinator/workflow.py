@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import cast
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.commands import (
+    DispatchHandoff,
+    create_dispatch_table,
+    get_dispatch_state,
+    owned_dispatch_state,
+    record_control_once,
+)
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import link_entity, start_coordinator
 from milknado.domains.execution import NodeLoopOutcome
@@ -25,6 +32,35 @@ class CoordinatorWorkflow:
         self._graph: MikadoGraph = graph
         self._conn: sqlite3.Connection = conn
 
+    def _event_once(self, session: CoordinatorSession, event: ControlEvent) -> None:
+        record_control_once(self._conn, session.id, event)
+
+    def _owned_group(
+        self, session: CoordinatorSession, group_id: str, node_id: int
+    ) -> ExecutionGroup:
+        group = self._graph.groups.get(group_id)
+        admission = self._graph.goal_admission(node_id)
+        linked = cast(
+            tuple[int] | None,
+            self._conn.execute(
+                "SELECT 1 FROM coordinator_links WHERE session_id = ? "
+                + "AND kind = 'execution_group' AND entity_id = ?",
+                (session.id, group_id),
+            ).fetchone(),
+        )
+        if (
+            group is None
+            or node_id not in self._graph.groups.tasks(group_id)
+            or admission.goal_id != session.goal_id
+            or linked is None
+        ):
+            raise ValueError("task or group belongs to another coordinator")
+        return group
+
+    def _owned_attempt(self, session: CoordinatorSession, attempt: TaskAttempt) -> str:
+        _ = self._owned_group(session, attempt.group_id, attempt.node_id)
+        return owned_dispatch_state(self._conn, session.id, attempt)
+
     def start_goal(self, description: str, provider: str) -> CoordinatorSession:  # noqa: V105
         if not description.strip():
             raise ValueError("goal description must not be empty")
@@ -37,7 +73,7 @@ class CoordinatorWorkflow:
         goal = self._graph.get_node(session.goal_id)
         if goal is None:
             raise ValueError("coordinator goal does not exist")
-        result = planner.launch(goal.description, project_root)
+        result = planner.launch(goal.description, project_root, target_goal_id=session.goal_id)
         self.record_plan(
             session, str(result.context_path), "accepted" if result.success else "failed"
         )
@@ -47,9 +83,8 @@ class CoordinatorWorkflow:
         if not plan_id:
             raise ValueError("plan identity must not be empty")
         link_entity(self._conn, session.id, "planning_decision", plan_id)
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        self._event_once(
+            session,
             ControlEvent(
                 kind="planning_decision", entity_kind="plan", entity_id=plan_id, status=status
             ),
@@ -65,12 +100,22 @@ class CoordinatorWorkflow:
         for node_id in tasks:
             if self._graph.goal_admission(node_id).goal_id != session.goal_id:
                 raise ValueError("execution group task belongs to another goal")
-        group = self._graph.groups.create(graph_id, tasks, workspace)
+        existing = self._graph.groups.for_task(tasks[0]) if tasks else None
+        if existing is None:
+            group = self._graph.groups.create(graph_id, tasks, workspace)
+        else:
+            if (
+                self._graph.groups.tasks(existing.id) != tasks
+                or existing.graph_id != graph_id
+                or (existing.worktree_path, existing.branch_name, existing.provider_session_id)
+                != (workspace.worktree_path, workspace.branch_name, workspace.provider_session_id)
+            ):
+                raise ValueError("task belongs to a different execution group")
+            group = existing
         link_entity(self._conn, session.id, "execution_group", group.id)
         link_entity(self._conn, session.id, "provider_session", group.provider_session_id)
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        self._event_once(
+            session,
             ControlEvent(
                 kind="execution_group",
                 entity_kind="execution_group",
@@ -82,32 +127,105 @@ class CoordinatorWorkflow:
 
     def dispatch_task(  # noqa: V105
         self, session: CoordinatorSession, group_id: str, node_id: int, run_id: str
-    ) -> TaskAttempt:
-        if self._graph.goal_admission(node_id).goal_id != session.goal_id:
-            raise ValueError("task belongs to another coordinator goal")
-        attempt = self._graph.groups.start_task(group_id, node_id, run_id)
+    ) -> DispatchHandoff:
+        _ = self._owned_group(session, group_id, node_id)
+        create_dispatch_table(self._conn)
+        attempt = self._graph.groups.active_attempt(group_id)
+        if attempt is None:
+            attempt = self._graph.groups.reserve_task(group_id, node_id, run_id)
+        elif (attempt.node_id, attempt.run_id) != (node_id, run_id):
+            raise ValueError("execution group has another active attempt")
+        with self._conn:
+            _ = self._conn.execute(
+                "INSERT OR IGNORE INTO coordinator_dispatches "
+                + "(attempt_id, session_id, group_id, node_id, run_id, state) "
+                + "VALUES (?, ?, ?, ?, ?, 'awaiting_launch')",
+                (attempt.attempt_id, session.id, group_id, node_id, run_id),
+            )
+        state = self._owned_attempt(session, attempt)
         link_entity(self._conn, session.id, "run", run_id)
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        self._event_once(
+            session,
             ControlEvent(
-                kind="run_transition", entity_kind="run", entity_id=run_id, status="running"
+                kind="run_transition", entity_kind="run", entity_id=run_id, status="claimed"
             ),
         )
-        return attempt
+        return DispatchHandoff(attempt, state)
+
+    def dispatch_state(self, attempt_id: str) -> str | None:  # noqa: V105
+        return get_dispatch_state(self._conn, attempt_id)
+
+    def acknowledge_launch(
+        self, session: CoordinatorSession, handoff: DispatchHandoff
+    ) -> DispatchHandoff:  # noqa: V105
+        state = self._owned_attempt(session, handoff.attempt)
+        if state not in {"awaiting_launch", "launched"}:
+            raise ValueError("dispatch is not awaiting launch")
+        self._graph.groups.launch_reserved_task(handoff.attempt)
+        with self._conn:
+            _ = self._conn.execute(
+                "UPDATE coordinator_dispatches SET state = 'launched' WHERE attempt_id = ?",
+                (handoff.attempt.attempt_id,),
+            )
+        self._event_once(
+            session,
+            ControlEvent(
+                kind="run_transition",
+                entity_kind="run",
+                entity_id=handoff.attempt.run_id,
+                status="running",
+            ),
+        )
+        return DispatchHandoff(handoff.attempt, "launched")
+
+    def fail_launch(
+        self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str
+    ) -> None:  # noqa: V105
+        state = self._owned_attempt(session, handoff.attempt)
+        if state not in {"awaiting_launch", "launch_failed"} or not reason:
+            raise ValueError("dispatch cannot record launch failure")
+        result = self._graph.groups.task_result(handoff.attempt.node_id)
+        if result is None:
+            self._graph.groups.fail_reserved_task(handoff.attempt, reason)
+        elif result != ("failed", reason):
+            raise ValueError("launch failure conflicts with task result")
+        with self._conn:
+            _ = self._conn.execute(
+                "UPDATE coordinator_dispatches SET state = 'launch_failed' WHERE attempt_id = ?",
+                (handoff.attempt.attempt_id,),
+            )
+        self._event_once(
+            session,
+            ControlEvent(
+                kind="run_transition",
+                entity_kind="run",
+                entity_id=handoff.attempt.run_id,
+                status="launch_failed",
+            ),
+        )
 
     def finish_task(
         self, session: CoordinatorSession, attempt: TaskAttempt, outcome: NodeLoopOutcome
     ) -> None:
-        if outcome.node_id != attempt.node_id:
-            raise ValueError("worker result addresses another task")
+        state = self._owned_attempt(session, attempt)
+        if state not in {"launched", "finished"} or outcome.node_id != attempt.node_id:
+            raise ValueError("worker result does not match a launched coordinator attempt")
         status = (
             "done" if outcome.success else "blocked" if outcome.ownership_preserved else "failed"
         )
-        self._graph.groups.finish_task(attempt, TaskOutcome(status, outcome.detail or ""))
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        expected = (status, outcome.detail or "")
+        result = self._graph.groups.task_result(attempt.node_id)
+        if result is None:
+            self._graph.groups.finish_task(attempt, TaskOutcome(*expected))
+        elif result != expected:
+            raise ValueError("worker result conflicts with recorded task result")
+        with self._conn:
+            _ = self._conn.execute(
+                "UPDATE coordinator_dispatches SET state = 'finished' WHERE attempt_id = ?",
+                (attempt.attempt_id,),
+            )
+        self._event_once(
+            session,
             ControlEvent(
                 kind="run_transition", entity_kind="run", entity_id=attempt.run_id, status=status
             ),
@@ -123,9 +241,8 @@ class CoordinatorWorkflow:
             if not admission.allowed or admission.goal_id != session.goal_id:
                 raise ValueError("revision task is not admitted under this goal")
         link_entity(self._conn, session.id, "graph_revision", revision_id)
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        self._event_once(
+            session,
             ControlEvent(
                 kind="graph_revision",
                 entity_kind="graph_revision",
@@ -139,16 +256,31 @@ class CoordinatorWorkflow:
     ) -> GoalReviewRecord:
         if request.goal_id != session.goal_id:
             raise ValueError("review addresses another coordinator goal")
-        review = self._graph.request_goal_review(request)
+        latest = self._graph.latest_goal_review(session.goal_id)
+        if latest is not None and (
+            latest.goal_revision,
+            latest.evidence,
+            latest.proposed_change,
+            latest.affected_node_ids,
+            latest.reviewer,
+        ) == (
+            request.goal_revision,
+            request.evidence,
+            request.proposed_change,
+            request.affected_node_ids,
+            request.reviewer,
+        ):
+            review = latest
+        else:
+            review = self._graph.request_goal_review(request)
         link_entity(self._conn, session.id, "approval", str(review.review_id))
-        _ = append_control_event(
-            self._conn,
-            session.id,
+        self._event_once(
+            session,
             ControlEvent(
                 kind="approval",
                 entity_kind="goal_review",
                 entity_id=str(review.review_id),
-                status="pending",
+                status=review.decision.value,
             ),
         )
         return review
