@@ -91,3 +91,38 @@ def test_cancel_kills_term_resistant_supervisor_before_finalizing(tmp_path: Path
         graph.close()
         if proc.stdout is not None:
             proc.stdout.close()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX child-process checks required")
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_started_callback_error_stops_and_reaps_process(
+    tmp_path: Path, error_type: type[BaseException]
+) -> None:
+    started_pids: list[int] = []
+
+    def reject_started(pid: int) -> None:
+        started_pids.append(pid)
+        raise error_type("cannot record pid")
+
+    try:
+        with pytest.raises(error_type, match="cannot record pid"):
+            _ = ProcessAdapter().run(
+                (sys.executable, "-c", "import time; time.sleep(60)"),
+                tmp_path,
+                tmp_path / "worker.log",
+                b"",
+                os.environ.copy(),
+                2,
+                on_started=reject_started,
+            )
+        assert started_pids
+        with pytest.raises(ProcessLookupError):
+            os.kill(started_pids[0], 0)
+        with pytest.raises(ChildProcessError):
+            _ = os.waitpid(started_pids[0], os.WNOHANG)
+    finally:
+        if started_pids:
+            with suppress(ProcessLookupError):
+                os.kill(started_pids[0], signal.SIGKILL)
+            with suppress(ChildProcessError):
+                _ = os.waitpid(started_pids[0], 0)

@@ -1216,6 +1216,12 @@ async def test_mounted_footer_shows_all_contextual_execution_controls(
 
     async with app.run_test(size=size) as pilot:
         app.pause_auto_follow()
+        expected = {"g Guidance", "c Cancel", "f Force", "r Resume"}
+        async with asyncio.timeout(2):
+            while not expected <= {
+                cast(Text, hint.render()).plain for hint in app.query(FooterHint)
+            }:
+                await pilot.pause()
         await pilot.pause()
         svg = ElementTree.fromstring(app.export_screenshot())
         rendered = " ".join(

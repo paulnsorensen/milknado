@@ -1,0 +1,72 @@
+{
+  "phase": "before",
+  "source_revision": "a7c2bfa02121faf88c4d9fce8b8df6219eae135e",
+  "navigation_sha256": "288ac372ed3015d0e5655ad3129b20f7182c5b03a9fd738c686c353f4a24f92b",
+  "theme": "textual-dark",
+  "clock": "12:00:00",
+  "fixture": "tests/graph_navigation_fixtures.py:source",
+  "transition": "graph to graph=None with active run-2 on node 2, then stale node-1 highlight",
+  "limits": [
+    "Synthetic snapshots; no live worker, controller, CLI, provider, or database.",
+    "Direct event delivery models a queued stale Tree.NodeHighlighted event.",
+    "Chromium renders Textual SVG; terminal palette fidelity is not tested."
+  ],
+  "records": [
+    {
+      "image": "run-80x24.png",
+      "surface": "run",
+      "size": [
+        80,
+        24
+      ],
+      "selection": [
+        1,
+        null
+      ],
+      "focus": "runs",
+      "visible_status": "run-2 running"
+    },
+    {
+      "image": "run-120x40.png",
+      "surface": "run",
+      "size": [
+        120,
+        40
+      ],
+      "selection": [
+        1,
+        null
+      ],
+      "focus": "runs",
+      "visible_status": "run-2 running"
+    },
+    {
+      "image": "watch-80x24.png",
+      "surface": "watch",
+      "size": [
+        80,
+        24
+      ],
+      "selection": [
+        1,
+        null
+      ],
+      "focus": "runs",
+      "visible_status": "run-2 running"
+    },
+    {
+      "image": "watch-120x40.png",
+      "surface": "watch",
+      "size": [
+        120,
+        40
+      ],
+      "selection": [
+        1,
+        null
+      ],
+      "focus": "runs",
+      "visible_status": "run-2 running"
+    }
+  ]
+}
