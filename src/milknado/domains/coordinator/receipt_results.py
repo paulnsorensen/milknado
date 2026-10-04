@@ -26,7 +26,7 @@ class PlanCommandResult:
 class RecoveryItem:
     entity_kind: str
     entity_id: str
-    provider_family: str
+    provider_family: str  # noqa: V107
     provider_session_id: str
     worktree_path: str
     outcome: str
@@ -34,7 +34,7 @@ class RecoveryItem:
 
 @dataclass(frozen=True, slots=True)
 class UnknownTurnItem:
-    provider_family: str
+    provider_family: str  # noqa: V107
     provider_session_id: str
     turn_id: str
 
