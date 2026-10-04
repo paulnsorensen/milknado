@@ -30,7 +30,7 @@ from milknado.web import (
 if TYPE_CHECKING:
     from milknado.adapters import ChangedFile, GitAdapter
     from milknado.domains.common import GitPort, MilknadoConfig, PluginHook, SessionContext
-    from milknado.domains.coordinator.control_services import ReviewDecisionPort
+    from milknado.domains.coordinator import ReviewDecisionPort
     from milknado.domains.execution import RunLoopResult
     from milknado.domains.graph import MikadoGraph, OwnerCapabilities
 
@@ -75,8 +75,7 @@ def _host_dependencies(
     ],
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
-    from milknado.domains.coordinator import CoordinatorControl
-    from milknado.domains.coordinator.control_services import CoordinatorServices
+    from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 
     git = _ProjectGitInspection(project_root)
     owner, review_decision = ports

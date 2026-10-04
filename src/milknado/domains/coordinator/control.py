@@ -93,10 +93,8 @@ class CoordinatorControl:
         with self._conn:
             _ = self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS coordinator_web_receipts (
-                    command_id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    command_hash TEXT NOT NULL,
-                    status TEXT NOT NULL,
+                    command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+                    command_hash TEXT NOT NULL, status TEXT NOT NULL,
                     result_json TEXT NOT NULL
                 )
             """)
@@ -159,8 +157,10 @@ class CoordinatorControl:
                 return self._workflow_command(workflow, session, command)
             case AttemptCommand() | FailLaunch() | FinishTask():
                 return "accepted", self._attempt_command(workflow, session, command)
-            case RequestGoalReview() | DecideGoalReview():
-                return self._review_command(workflow, session, command)
+            case RequestGoalReview():
+                return "accepted", self._request_review(workflow, session, command)
+            case DecideGoalReview():
+                return self._decide_review(session, command)
             case RuntimeAction() | Recover():
                 return self._runtime_command(session, command)
 
@@ -222,26 +222,29 @@ class CoordinatorControl:
         )
         return None
 
-    def _review_command(
+    def _request_review(
         self,
         workflow: CoordinatorWorkflow,
         session: CoordinatorSession,
-        command: RequestGoalReview | DecideGoalReview,
+        command: RequestGoalReview,
+    ) -> object:
+        reviewer = command.reviewer.strip()
+        if not reviewer:
+            raise ValueError("reviewer identity is required")
+        request = GoalReviewRequest(
+            session.goal_id,
+            command.goal_revision,
+            command.evidence,
+            command.proposed_change,
+            command.affected_node_ids,
+            reviewer=reviewer,
+            operation_id=command.command_id,
+        )
+        return workflow.review_goal_change(session, request)
+
+    def _decide_review(
+        self, session: CoordinatorSession, command: DecideGoalReview
     ) -> tuple[Literal["accepted", "unavailable"], object]:
-        if isinstance(command, RequestGoalReview):
-            reviewer = command.reviewer.strip()
-            if not reviewer:
-                raise ValueError("reviewer identity is required")
-            request = GoalReviewRequest(
-                session.goal_id,
-                command.goal_revision,
-                command.evidence,
-                command.proposed_change,
-                command.affected_node_ids,
-                reviewer=reviewer,
-                operation_id=command.command_id,
-            )
-            return "accepted", workflow.review_goal_change(session, request)
         linked = cast(
             tuple[int] | None,
             self._conn.execute(

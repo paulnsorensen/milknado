@@ -4,6 +4,7 @@ from milknado.domains.coordinator.control_models import (
     CoordinatorCommandReceipt,
     StartGoal,
 )
+from milknado.domains.coordinator.control_services import CoordinatorServices, ReviewDecisionPort
 from milknado.domains.coordinator.model import (
     ControlEvent,
     ControlRecord,
@@ -18,10 +19,12 @@ __all__ = [
     "CoordinatorCommandReceipt",
     "CoordinatorControl",
     "CoordinatorSnapshot",
+    "CoordinatorServices",
     "ControlEvent",
     "ControlRecord",
     "CoordinatorSession",
     "EntityLink",
     "ProviderBinding",
+    "ReviewDecisionPort",
     "StartGoal",
 ]
