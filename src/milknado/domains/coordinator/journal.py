@@ -10,15 +10,31 @@ from milknado.domains.coordinator.model import ControlEvent, ControlRecord
 _MAX_EVENT_BYTES = 64 * 1024
 _MAX_DIAGNOSTIC_RETENTION = timedelta(days=30)
 _DEFAULT_DIAGNOSTIC_RETENTION = timedelta(days=7)
+_QUOTED_SECRET = re.compile(
+    r"(?i)((?:[\"']?(?:api[_-]?key|password|token|client[_-]?secret|secret|"
+    + r"authorization)[\"']?\s*[:=]\s*|bearer\s+))"
+    + r"([\"'])(?:\\.|(?!\2).)*\2"
+)
 _SECRET = re.compile(
     r"(?i)(\b(?:bearer\s+|api[_-]?key\s*[=:]\s*|password\s*[=:]\s*|"
-    + r"token\s*[=:]\s*))(?:[^\s,;]+)"
+    + r"token\s*[=:]\s*|client[_-]?secret\s*[=:]\s*|secret\s*[=:]\s*|"
+    + r"authorization\s*[=:]\s*))(?![\"'])[^\s,;]+"
     + r"|\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{8,})\b"
 )
 
 
 def _redact(value: str) -> str:
-    return _SECRET.sub(lambda match: (match.group(1) or "") + "[REDACTED]", value)
+    quoted = _QUOTED_SECRET.sub(
+        lambda match: match.group(1) + match.group(2) + "[REDACTED]" + match.group(2), value
+    )
+    return _SECRET.sub(lambda match: (match.group(1) or "") + "[REDACTED]", quoted)
+
+
+def _utc(now: datetime | None) -> datetime:
+    timestamp = now or datetime.now(UTC)
+    if timestamp.utcoffset() is None:
+        raise ValueError("timestamp must be timezone-aware")
+    return timestamp.astimezone(UTC)
 
 
 def _record(row: tuple[int, str, str, str, str, str, str, int | None, str]) -> ControlRecord:
@@ -55,7 +71,7 @@ def append_control_event(
         raise ValueError("diagnostic retention must be between 0 and 30 days")
     if event.duration_ms is not None and event.duration_ms < 0:
         raise ValueError("duration_ms must not be negative")
-    timestamp = now or datetime.now(UTC)
+    timestamp = _utc(now)
     text = "[tool payload elided]" if event.kind == "tool" else _redact(event.text)
     if len(text.encode("utf-8")) > _MAX_EVENT_BYTES:
         raise ValueError("control event exceeds the 64 KiB limit")
@@ -89,7 +105,7 @@ def append_control_event(
 def control_history(
     conn: sqlite3.Connection, session_id: str, *, now: datetime | None = None
 ) -> tuple[ControlRecord, ...]:
-    timestamp = (now or datetime.now(UTC)).isoformat()
+    timestamp = _utc(now).isoformat()
     with conn:
         _ = conn.execute(
             "DELETE FROM coordinator_events WHERE expires_at IS NOT NULL AND expires_at <= ?",

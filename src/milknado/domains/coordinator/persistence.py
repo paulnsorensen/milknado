@@ -6,6 +6,7 @@ from typing import cast
 from uuid import uuid4
 
 from milknado.domains.coordinator.model import CoordinatorSession, EntityLink
+from milknado.domains.graph import GoalReviewSubjectError, top_level_goal
 
 _LINK_KINDS = frozenset(
     {
@@ -26,7 +27,7 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
         _ = conn.execute("""
             CREATE TABLE IF NOT EXISTS coordinator_sessions (
                 id TEXT PRIMARY KEY,
-                goal_id INTEGER NOT NULL UNIQUE REFERENCES nodes(id),
+                goal_id INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
                 provider TEXT NOT NULL,
                 created_at TEXT NOT NULL
             )
@@ -34,7 +35,7 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
         _ = conn.execute("""
             CREATE TABLE IF NOT EXISTS coordinator_links (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id),
+                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
                 kind TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
                 UNIQUE (session_id, kind, entity_id)
@@ -43,7 +44,7 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
         _ = conn.execute("""
             CREATE TABLE IF NOT EXISTS coordinator_events (
                 seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id),
+                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
                 kind TEXT NOT NULL,
                 text TEXT NOT NULL,
                 entity_kind TEXT NOT NULL,
@@ -58,6 +59,10 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
         _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_coordinator_events_session "
             + "ON coordinator_events(session_id, seq)"
+        )
+        _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_coordinator_events_expiry "
+            + "ON coordinator_events(expires_at) WHERE expires_at IS NOT NULL"
         )
 
 
@@ -84,15 +89,10 @@ def get_coordinator(conn: sqlite3.Connection, session_id: str) -> CoordinatorSes
 def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> CoordinatorSession:
     if not provider.strip():
         raise ValueError("provider must not be empty")
-    goal = cast(
-        tuple[int] | None,
-        conn.execute(
-            "SELECT 1 FROM nodes WHERE id = ? AND kind = 'goal' AND parent_id IS NULL",
-            (goal_id,),
-        ).fetchone(),
-    )
-    if goal is None:
-        raise ValueError("coordinator requires a top-level goal")
+    try:
+        _ = top_level_goal(conn, goal_id)
+    except GoalReviewSubjectError as exc:
+        raise ValueError("coordinator requires a top-level goal") from exc
     create_coordinator_tables(conn)
     with conn:
         _ = conn.execute(

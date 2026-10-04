@@ -7,24 +7,39 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.coordinator import (
+    ControlEvent,
+    append_control_event,
+    control_history,
     get_coordinator,
     link_entity,
     links_for_session,
     start_coordinator,
 )
-from milknado.domains.graph._persistence import create_tables
+from milknado.domains.graph._mutations import delete_subtree
+from milknado.domains.graph._persistence import create_tables, migrate
 
 
 def _database(path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
     _ = conn.execute("PRAGMA foreign_keys = ON")
     create_tables(conn)
+    migrate(conn)
     _ = conn.execute(
         "INSERT INTO nodes (id, description, kind, created_at) VALUES (1, 'goal', 'goal', 'now')"
     )
     _ = conn.execute(
         "INSERT INTO nodes (id, description, kind, parent_id, created_at) "
-        + "VALUES (2, 'child', 'goal', 1, 'now')"
+        + "VALUES (2, 'child', 'goal', 1, 'now'), "
+        + "(3, 'nested', 'goal', 2, 'now')"
+    )
+    _ = conn.execute(
+        "INSERT INTO nodes (id, description, kind, created_at) "
+        + "VALUES (4, 'roadmap', 'roadmap', 'now')"
+    )
+    _ = conn.execute(
+        "INSERT INTO nodes (id, description, kind, parent_id, created_at) "
+        + "VALUES (5, 'roadmap goal', 'goal', 4, 'now')"
     )
     conn.commit()
     return conn
@@ -57,8 +72,10 @@ def test_session_identity_and_relationships_survive_reopen(tmp_path: Path) -> No
 
 def test_only_top_level_goals_start_sessions(tmp_path: Path) -> None:
     with closing(_database(str(tmp_path / "graph.db"))) as conn:
+        assert start_coordinator(conn, 2, "claude").goal_id == 2
+        assert start_coordinator(conn, 5, "claude").goal_id == 5
         with pytest.raises(ValueError, match="top-level goal"):
-            _ = start_coordinator(conn, 2, "claude")
+            _ = start_coordinator(conn, 3, "claude")
         with pytest.raises(ValueError, match="top-level goal"):
             _ = start_coordinator(conn, 999, "claude")
         with pytest.raises(ValueError, match="provider"):
@@ -74,3 +91,16 @@ def test_session_rejects_provider_changes_and_invalid_links(tmp_path: Path) -> N
             link_entity(conn, session.id, "unknown", "item-1")
         with pytest.raises(ValueError, match="entity_id"):
             link_entity(conn, session.id, "run", "")
+
+
+def test_deleting_goal_cascades_coordinator_records(tmp_path: Path) -> None:
+    with closing(_database(str(tmp_path / "graph.db"))) as conn:
+        _ = conn.execute("INSERT INTO edges (parent_id, child_id) VALUES (1, 2), (2, 3)")
+        conn.commit()
+        session = start_coordinator(conn, 1, "claude")
+        link_entity(conn, session.id, "approval", "approval-1")
+        _ = append_control_event(conn, session.id, ControlEvent(kind="command", text="run"))
+        assert delete_subtree(conn, 1, True) == 3
+        assert get_coordinator(conn, session.id) is None
+        assert links_for_session(conn, session.id) == ()
+        assert control_history(conn, session.id) == ()

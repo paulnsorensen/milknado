@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import cast
 
@@ -19,6 +19,7 @@ from milknado.domains.graph._persistence import create_tables
 
 def _session(path: str) -> tuple[sqlite3.Connection, str]:
     conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
     _ = conn.execute("PRAGMA foreign_keys = ON")
     create_tables(conn)
     _ = conn.execute(
@@ -65,6 +66,17 @@ def test_tool_payloads_are_elided_and_secrets_are_filtered(tmp_path: Path) -> No
         _ = append_control_event(
             conn, session_id, ControlEvent(kind="assistant", text="Bearer bearer-secret")
         )
+        _ = append_control_event(
+            conn, session_id, ControlEvent(kind="assistant", text='Bearer "quoted bearer secret"')
+        )
+        _ = append_control_event(
+            conn,
+            session_id,
+            ControlEvent(
+                kind="assistant",
+                text='{"api_key": "first secret", "password": "last secret"}',
+            ),
+        )
         entry = control_history(conn, session_id)[0]
         assert entry.tool_name == "Bash"
         assert entry.status == "done"
@@ -78,6 +90,10 @@ def test_tool_payloads_are_elided_and_secrets_are_filtered(tmp_path: Path) -> No
         assert "tool-argument-secret" not in raw
         assert "test-result-secret" not in raw
         assert "bearer-secret" not in raw
+        assert "quoted" not in raw
+        assert "bearer secret" not in raw
+        assert "first secret" not in raw
+        assert "last secret" not in raw
         assert "[REDACTED]" in raw
 
 
@@ -125,3 +141,31 @@ def test_control_event_rejects_invalid_size_and_timing(tmp_path: Path) -> None:
                 conn, session_id, ControlEvent(kind="assistant", text="x" * 65537)
             )
         assert control_history(conn, session_id) == ()
+
+
+def test_diagnostics_use_utc_and_expiry_index(tmp_path: Path) -> None:
+    conn, session_id = _session(str(tmp_path / "graph.db"))
+    with closing(conn):
+        local_time = datetime(2026, 1, 1, 12, tzinfo=timezone(timedelta(hours=2)))
+        _ = append_control_event(
+            conn,
+            session_id,
+            ControlEvent(kind="diagnostic", text="detail", diagnostic_retention_seconds=60),
+            now=local_time,
+        )
+        entry = control_history(conn, session_id, now=datetime(2026, 1, 1, 10, tzinfo=UTC))[0]
+        assert entry.created_at == "2026-01-01T10:00:00+00:00"
+        assert control_history(conn, session_id, now=datetime(2026, 1, 1, 10, 2, tzinfo=UTC)) == ()
+        with pytest.raises(ValueError, match="timezone-aware"):
+            _ = append_control_event(
+                conn, session_id, ControlEvent(kind="command"), now=datetime(2026, 1, 1)
+            )
+        with pytest.raises(ValueError, match="timezone-aware"):
+            _ = control_history(conn, session_id, now=datetime(2026, 1, 1))
+        index = cast(
+            tuple[str] | None,
+            conn.execute(
+                "SELECT sql FROM sqlite_master WHERE name = 'idx_coordinator_events_expiry'"
+            ).fetchone(),
+        )
+        assert index is not None and "WHERE expires_at IS NOT NULL" in index[0]
