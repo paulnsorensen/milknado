@@ -8,16 +8,22 @@ import pytest
 from starlette.requests import Request
 from starlette.testclient import TestClient
 
-from milknado.domains.common import CONTROLLER_MASTER_ENV
+from milknado.cli.web import _host_dependencies
+from milknado.domains.common import CONTROLLER_MASTER_ENV, MilknadoConfig, SessionInput
 from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     DecideGoalReview,
+    PlanGoal,
+    Recover,
     RequestGoalReview,
+    RuntimeAction,
     StartGoal,
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.graph import GoalReviewDecision, MikadoGraph
+from milknado.domains.planning import PlanResult
 from milknado.web import LaunchToken, WebCommands, create_app
+from milknado.web.commands import GraphEditCommands
 from milknado.web.routes.coordinator import _events
 from tests.web.support import FixtureSnapshotSource, headers
 
@@ -175,4 +181,98 @@ def test_live_stream_projects_review_transition(
     assert cast(int, snapshot["cursor"]) > cursor
     assert cast(list[dict[str, object]], snapshot["events"])[0]["status"] == "accepted"
     assert cast(list[dict[str, object]], snapshot["reviews"])[0]["decision"] == "accepted"
+    graph.close()
+
+
+def test_production_host_connects_planner_without_provider_transport(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class PlannerStub:
+        def launch(
+            self, goal: str, project_root: Path, *, target_goal_id: int | None = None
+        ) -> PlanResult:
+            assert (goal, project_root) == ("Deliver", tmp_path)
+            assert target_goal_id is not None
+            return PlanResult(True, 0, tmp_path / "context.md", nodes_created=0)
+
+    planner = PlannerStub()
+    monkeypatch.setattr("milknado.app.plan.build_planner", lambda *_: planner)
+    graph = MikadoGraph(tmp_path / "graph.db")
+    config = MilknadoConfig(project_root=tmp_path, db_path=graph.db_path)
+    dependencies = _host_dependencies(graph, config, tmp_path, (None, None))
+    control = cast(CoordinatorControl, dependencies.coordinator)
+    start = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, cast(dict[str, object], start.result)["id"])
+    assert control.send_coordinator_command(session_id, PlanGoal("plan")).status == "accepted"
+    assert control.send_coordinator_command(session_id, Recover("recover")).status == "unavailable"
+    assert (
+        control.send_coordinator_command(
+            session_id, RuntimeAction("action", "provider-1", SessionInput(action="interrupt"))
+        ).status
+        == "unavailable"
+    )
+    graph.close()
+
+
+def test_legacy_http_decision_advances_coordinator_cursor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "review-secret")
+    graph = MikadoGraph(tmp_path / "graph.db")
+    graph.register_controller_master()
+    control = CoordinatorControl(
+        graph, tmp_path, CoordinatorServices(review_decision=graph.decide_goal_review)
+    )
+    start = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, cast(dict[str, object], start.result)["id"])
+    pending = control.send_coordinator_command(
+        session_id, RequestGoalReview("request", "rev", "evidence", "change", "human")
+    )
+    review_id = cast(int, cast(dict[str, object], pending.result)["review_id"])
+    cursor = control.read_coordinator_snapshot(session_id, 0).cursor
+    commands = WebCommands(
+        coordinator=control,
+        review_decision=control.decide_goal_review,
+        graph_edits=GraphEditCommands(graph, frozenset(), tmp_path),
+    )
+    client = TestClient(
+        create_app(FixtureSnapshotSource(), commands, LaunchToken("test-token")),
+        base_url="http://127.0.0.1",
+    )
+    client.cookies.set("milknado_login", "test-token")
+    response = client.post(
+        f"/api/reviews/{review_id}/decision",
+        json={"decision": "accepted", "decided_by": "human"},
+        headers=headers(),
+    )
+    assert response.status_code == 200
+    assert response.json()["decision"] == "accepted"
+    after = control.read_coordinator_snapshot(session_id, cursor)
+    assert after.cursor > cursor
+    assert [(event.kind, event.status) for event in after.events] == [("approval", "accepted")]
+    graph.close()
+
+
+def test_fresh_database_coordinator_routes_return_404(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    client = TestClient(
+        create_app(
+            FixtureSnapshotSource(), WebCommands(coordinator=control), LaunchToken("test-token")
+        ),
+        base_url="http://127.0.0.1",
+    )
+    client.cookies.set("milknado_login", "test-token")
+    root = "/api/coordinators/missing"
+    responses = (
+        client.get(f"{root}/snapshot"),
+        client.post(
+            f"{root}/commands",
+            json={"kind": "recover", "command_id": "recover"},
+            headers=headers(),
+        ),
+        client.get(f"{root}/stream"),
+    )
+    assert [response.status_code for response in responses] == [404, 404, 404]
     graph.close()

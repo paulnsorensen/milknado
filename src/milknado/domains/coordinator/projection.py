@@ -13,6 +13,7 @@ from milknado.domains.coordinator.model import (
     ProviderBinding,
 )
 from milknado.domains.coordinator.persistence import (
+    create_coordinator_tables,
     get_coordinator,
     links_for_session,
     provider_bindings_for_session,
@@ -82,6 +83,7 @@ def read_coordinator_snapshot(
     if cursor < 0:
         raise ValueError("cursor must not be negative")
     with graph.synchronization_lock:
+        create_coordinator_tables(conn)
         _ = conn.execute("BEGIN")
         try:
             return _project_snapshot(graph, conn, session_id, cursor)
