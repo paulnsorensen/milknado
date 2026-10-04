@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
-from milknado.domains.coordinator.model import CoordinatorSession, EntityLink
+from milknado.domains.coordinator.model import CoordinatorSession, EntityLink, ProviderBinding
 from milknado.domains.graph import GoalReviewSubjectError, top_level_goal
 
 _LINK_KINDS = frozenset(
@@ -146,3 +146,44 @@ def links_for_session(conn: sqlite3.Connection, session_id: str) -> tuple[Entity
         ).fetchall(),
     )
     return tuple(EntityLink(str(row[0]), str(row[1])) for row in rows)
+
+
+def bind_provider_session(
+    conn: sqlite3.Connection, coordinator_id: str, binding: ProviderBinding
+) -> None:
+    if binding.scope_kind not in {"coordinator", "execution_group"}:
+        raise ValueError("invalid provider binding scope")
+    if binding.scope_kind == "coordinator" and binding.scope_id != coordinator_id:
+        raise ValueError("coordinator provider binding has wrong scope identity")
+    if not binding.scope_id or not binding.provider_session_id:
+        raise ValueError("provider binding identities must not be empty")
+    if binding.family not in {"claude", "codex"}:
+        raise ValueError("unsupported provider family")
+    with conn:
+        _ = conn.execute(
+            "INSERT INTO coordinator_provider_bindings "
+            + "(coordinator_id, scope_kind, scope_id, provider_family, provider_session_id) "
+            + "VALUES (?, ?, ?, ?, ?)",
+            (
+                coordinator_id,
+                binding.scope_kind,
+                binding.scope_id,
+                binding.family,
+                binding.provider_session_id,
+            ),
+        )
+
+
+def provider_bindings_for_session(
+    conn: sqlite3.Connection, coordinator_id: str
+) -> tuple[ProviderBinding, ...]:
+    rows = cast(
+        list[tuple[str, str, str, str]],
+        conn.execute(
+            "SELECT scope_kind, scope_id, provider_family, provider_session_id "
+            + "FROM coordinator_provider_bindings WHERE coordinator_id = ? "
+            + "ORDER BY CASE scope_kind WHEN 'coordinator' THEN 0 ELSE 1 END, scope_id",
+            (coordinator_id,),
+        ).fetchall(),
+    )
+    return tuple(ProviderBinding(*row) for row in rows)
