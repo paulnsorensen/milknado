@@ -23,23 +23,32 @@ carry across ephemeral containers). Tables: `nodes`, `edges` (composite PK,
 FKs to nodes, **no** `ON DELETE CASCADE`), `file_ownership` (node → owned file
 paths), `plan_state` (single-row spec hash), `batch_plans` (solver history),
 `runs` (run lifecycle rows — replaced the `.milknado/runs/*.state.json`
-sidecars in PR #127, closes #100), and `run_messages` (append-only worker
-deposit channel, UNIQUE `(run_id, seq)` — closes #122).
+sidecars in PR #127, closes #100), `run_messages` (append-only worker
+deposit channel, UNIQUE `(run_id, seq)` — closes #122), `node_reviews`
+(review-verdict audit trail, [[run-lifecycle-robustness-004]]), and
+`run_sessions` (`run_id` PK FK to `runs` ON DELETE CASCADE, `family`, `cwd`,
+`base_oid` — landed via migration v4; not yet read by any caller outside
+`_persistence.py` and its tests, so its consumer is `<speculative>`).
 
 `MikadoGraph.__init__` (`graph.py`) opens the connection in **WAL mode** with
 `foreign_keys=ON` and `busy_timeout=5000` — the detached runner and the MCP
 server both write the same db concurrently, so the busy window is explicit.
 `create_tables` runs on every open but short-circuits: a `sqlite_master` probe
 for the `nodes` table skips the `executescript` (one batch of `CREATE TABLE IF
-NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) once the db is initialized. The full
-schema — all `nodes` columns, `edges`, `file_ownership`, `plan_state`,
-`batch_plans`, `runs`, `run_messages`, and `idx_nodes_wiki_ref` — is declared
-inline in that one script with **no `ALTER TABLE` migration ladder**: a
-deliberate clean cut (pre-release "No Migration Code" rule), so the old
-`ensure_schema` additive-migration step was removed entirely. `close()` runs
-`PRAGMA wal_checkpoint(TRUNCATE)` so a non-last-connection close folds the WAL
-tail into the main `.db` — without it a tool call's committed writes could be
-lost on container reclaim before the WAL checkpoints.
+NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) once the db is initialized. That
+inline script covers most of the schema but deliberately **not** `node_reviews`
+— schema management is no longer additive-only `create_tables` alone. A
+forward-only ladder (`MIGRATIONS`, `migrate()` in `_persistence.py`) runs after
+`create_tables` on every open, gated on `PRAGMA user_version`
+([[run-lifecycle-robustness-003]]): v2 creates `node_reviews`
+([[run-lifecycle-robustness-004]]), v3 adds `nodes.archived_at`
+([[archive-rebalance-001]]), v4 creates `run_sessions`. This ladder is
+the one "No Migration Code" exception the project's own instructions carve
+out — forward-only setup, not a backfill for data an older release wrote; a
+stale local db is quarantined and recreated on corruption, not upgraded
+in place. `close()` runs `PRAGMA wal_checkpoint(TRUNCATE)` so a non-last-connection
+close folds the WAL tail into the main `.db` — without it a tool call's
+committed writes could be lost on container reclaim before the WAL checkpoints.
 
 ### Runs repo (`runs` / `run_messages`)
 
