@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from pathlib import Path
 from typing import cast
@@ -126,7 +127,9 @@ def test_projection_cursor_matches_node_state_across_external_commit(
     monkeypatch.setattr(coordinator_projection, "_goal_nodes", interleave)
     before = control.read_coordinator_snapshot(session_id, 0)
     assert before.goal.description == "Deliver"
-    assert [(event.entity_id, event.status) for event in before.events] == [("start", "accepted")]
+    assert [(event.entity_id, event.status) for event in before.events] == [
+        (hashlib.sha256(b"start").hexdigest(), "accepted")
+    ]
     monkeypatch.setattr(coordinator_projection, "_goal_nodes", original)
     after = control.read_coordinator_snapshot(session_id, before.cursor)
     assert after.goal.description == "Changed"
@@ -204,9 +207,9 @@ def test_command_receipts_append_one_redacted_event_per_outcome(tmp_path: Path) 
         if event.kind == "command"
     ]
     assert [(event.entity_id, event.status) for event in events] == [
-        ("start", "accepted"),
-        ("recover-secret", "unavailable"),
-        ("reject-secret", "rejected"),
+        (hashlib.sha256(b"start").hexdigest(), "accepted"),
+        (hashlib.sha256(b"recover-secret").hexdigest(), "unavailable"),
+        (hashlib.sha256(b"reject-secret").hexdigest(), "rejected"),
     ]
     assert all("private" not in event.text for event in events)
     graph.close()

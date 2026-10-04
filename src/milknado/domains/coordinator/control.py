@@ -149,7 +149,9 @@ class CoordinatorControl:
         built = receipt_payload(result)
         command_id = command.command_id
         event_session_id = (
-            cast(CoordinatorSession, result).id if isinstance(command, StartGoal) else session_id
+            cast(CoordinatorSession, result).id
+            if isinstance(command, StartGoal) and status == "accepted"
+            else session_id
         )
         with self._conn:
             _ = self._conn.execute(
@@ -157,17 +159,18 @@ class CoordinatorControl:
                 + "WHERE command_id = ?",
                 (status, msgspec.json.encode(built).decode(), command_id),
             )
-            record_control_once(
-                self._conn,
-                event_session_id,
-                ControlEvent(
-                    kind="command",
-                    text=type(command).__name__,
-                    entity_kind="coordinator_command",
-                    entity_id=command_id,
-                    status=status,
-                ),
-            )
+            if event_session_id:
+                record_control_once(
+                    self._conn,
+                    event_session_id,
+                    ControlEvent(
+                        kind="command",
+                        text=type(command).__name__,
+                        entity_kind="coordinator_command",
+                        entity_id=hashlib.sha256(command_id.encode()).hexdigest(),
+                        status=status,
+                    ),
+                )
         return CoordinatorCommandReceipt(command_id, session_id, status, built)
 
     def _execute(
