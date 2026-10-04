@@ -55,13 +55,9 @@ def project_graph(snapshot: GraphSnapshot) -> GraphTreeProjection:
     primary: dict[int, list[GraphTreeEntry]] = {}
     references: dict[int, list[GraphTreeEntry]] = {}
     roots = [GraphTreeEntry(node.id) for node in snapshot.nodes if node.parent_id not in nodes]
-    root_ids = {entry.node_id for entry in roots}
     for node in snapshot.nodes:
         if node.parent_id in nodes:
             primary.setdefault(node.parent_id, []).append(GraphTreeEntry(node.id))
-        elif node.id not in root_ids:
-            roots.append(GraphTreeEntry(node.id))
-            root_ids.add(node.id)
     for edge in snapshot.edges:
         child = nodes.get(edge.child_id)
         if child is not None and edge.parent_id in nodes and child.parent_id != edge.parent_id:

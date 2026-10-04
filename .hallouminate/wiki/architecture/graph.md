@@ -185,5 +185,8 @@ which is correct across processes where an in-process mutex would not be.
   `parent_id` for fast upward walks and the canonical `edges` row. `reparent`
   keeps them in sync. Multi-parent wiring via raw `add_edge` is possible but
   `reparent` collapses a node to a single parent.
+- **Display roots** — `project_graph` selects nodes whose `parent_id` is absent from the snapshot node map, including `None` and missing parents. It preserves snapshot node order. Display roots therefore differ from domain roots based on incoming edges; `snapshot.root_ids` does not drive this projection.[^display-roots]
 
-_Source: PR #488 atomic admission; `graph/_transitions.py:149-202`, `graph/graph.py`, `project.py`, and `tests/test_execution_admission.py` · Updated: 2026-09-29 · Supersedes: claim-only concurrency without shared capacity enforcement._
+[^display-roots]: `src/milknado/app/graph_view.py:52-72`; `src/milknado/app/graph_panels.py:78-86`.
+
+_Source: PR #488 atomic admission; graph projection root cleanup; `graph/_transitions.py:149-202`, `graph/graph.py`, `project.py`, and `tests/test_execution_admission.py` · Updated: 2026-09-30 · Supersedes: claim-only concurrency without shared capacity enforcement._
