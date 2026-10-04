@@ -16,11 +16,19 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     FlavorProfile,
+    GitOperationError,
     NodeStatus,
+    RunFenceLostError,
+    RunResult,
     resolve_flavor_profile,
     resolve_worker_tools,
 )
-from milknado.domains.dispatch import create_isolated_worktree, now_iso
+from milknado.domains.dispatch import (
+    create_isolated_worktree,
+    current_branch_or_none,
+    discard_isolated_worktree,
+    now_iso,
+)
 from milknado.domains.graph import CLAIM_ROLE
 
 if TYPE_CHECKING:
@@ -30,6 +38,7 @@ if TYPE_CHECKING:
 __all__ = [
     "GOAL_OWNER_ENV_VAR",
     "_provision_claim_run",
+    "_release_failed_claim",
     "_resolve_model",
     "_resolve_node_tools",
     "_resolve_owner",
@@ -108,8 +117,10 @@ def _provision_claim_run(
     run_id: str,
     worktree: bool | None,
     cfg: MilknadoConfig,
-) -> Path | None:
+) -> tuple[Path | None, str | None]:
     """Provision the claimed node's worktree (or in-place run) and stamp CLAIM_ROLE.
+
+    Return the worktree path (None for in-place runs) and the worker's branch.
 
     On any failure the claim is released with a fenced terminal write so the
     node is not stranded RUNNING; the exception is re-raised for the caller.
@@ -119,15 +130,18 @@ def _provision_claim_run(
     profile = resolve_flavor_profile(cfg, node.flavor)
     use_worktree = profile.worktree if worktree is None else worktree
     wt_path: Path | None = None
+    branch: str | None = None
     try:
         if use_worktree:
             isolated = create_isolated_worktree(
                 GitAdapter(root), root, node.id, node.description, cfg.worktree_pattern
             )
             wt_path = isolated.worktree_path
+            branch = isolated.worker_branch
             graph.set_worktree(node.id, run_id, str(wt_path), isolated.worker_branch)
             graph.runs.start(run_id, node.id, str(wt_path), now_iso(), None)
         else:
+            branch = current_branch_or_none(GitAdapter(root))
             graph.runs.start(run_id, node.id, str(root), now_iso(), None)
         # Stamp the native-backend marker so the done-transition gate fires
         # for this run even before its first verify (fail-closed), while
@@ -139,4 +153,43 @@ def _provision_claim_run(
         if not graph.mark_terminal(node.id, run_id, NodeStatus.FAILED):
             raise RuntimeError(f"startup terminal node write lost its fence for node {node.id}")
         raise
-    return wt_path
+    return wt_path, branch
+
+
+def _release_failed_claim(
+    graph: MikadoGraph,
+    root: Path,
+    claim: tuple[int, str],
+    worktree: tuple[Path, str] | None,
+) -> None:
+    """Release a provisioned claim whose later setup failed; call from an except block.
+
+    Remove the worktree and its branch, then fail the node with a fenced terminal write so it is
+    not stranded RUNNING. The caller re-raises the original exception.
+    """
+    from milknado.adapters import GitAdapter
+
+    node_id, run_id = claim
+    cleanup_error: GitOperationError | None = None
+    if worktree is not None:
+        try:
+            discard_isolated_worktree(GitAdapter(root), *worktree)
+        except GitOperationError as error:
+            cleanup_error = error
+    try:
+        graph.runs.finish(
+            run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=now_iso(),
+                error="brief render failed",
+            ),
+        )
+    except RunFenceLostError:
+        _logger.info("claim failure run already finalized: run_id=%s", run_id)
+    if not graph.mark_terminal(node_id, run_id, NodeStatus.FAILED):
+        raise RuntimeError(f"startup terminal node write lost its fence for node {node_id}")
+    if cleanup_error is not None:
+        raise cleanup_error

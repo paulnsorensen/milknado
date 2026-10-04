@@ -45,6 +45,7 @@ from milknado.domains.common.types import (
     RunResult,
 )
 from milknado.domains.dispatch import (
+    WorkerOrientation,
     is_cancel_requested,
     make_run_id,
     render_brief,
@@ -611,11 +612,16 @@ class Executor:
         findings_round: int | None = None,
         aborted_run_metadata: list[tuple[str, bool]] | None = None,
     ) -> str:
+        loop_run_id = make_run_id(node.id)
+        current = self._graph.get_node(node.id)
         brief = render_brief(
             self._graph,
             node.id,
             prepend=config.brief_prepend,
             project_root=config.project_root,
+            orientation=WorkerOrientation(
+                loop_run_id, wt_path, current.branch_name if current else None
+            ),
         )
         loop_path = self._loop.generate_loop_md(
             brief,
@@ -624,7 +630,6 @@ class Executor:
             prior_findings=prior_findings,
             findings_round=findings_round,
         )
-        loop_run_id = make_run_id(node.id)
         create_kwargs: _LoopRunKwargs = {
             "agent": config.execution_agent,
             "loop_dir": wt_path,

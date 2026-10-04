@@ -639,6 +639,25 @@ class TestExecutorDispatch:
         assert env["MILKNADO_PROJECT_ROOT"] == str(config.project_root.resolve())
         assert env["MILKNADO_PROJECT_ROOT"] != str(result.worktree)
 
+    def test_loop_brief_states_orientation(
+        self,
+        graph: MikadoGraph,
+        config: ExecutionConfig,
+    ) -> None:
+        fake_loop = FakeLoop()
+        ex = Executor(graph=graph, git=FakeGit(), loop=fake_loop, crg=FakeCrg())
+        _ = graph.add_node("task")
+
+        result = ex.dispatch(1, config)
+
+        node = graph.get_node(1)
+        assert node is not None and node.branch_name
+        brief = fake_loop.generated_briefs[0]
+        assert f"- run_id: {result.run_id}" in brief
+        assert "- node_id: 1" in brief
+        assert f"- worktree: {result.worktree}" in brief
+        assert f"- branch: {node.branch_name}" in brief
+
     def test_generates_loop_md(
         self,
         graph: MikadoGraph,

@@ -19,10 +19,15 @@ from milknado.domains.common import (
 from milknado.domains.common.protocols import HostCapacityPort
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
-from milknado.domains.dispatch.brief import render_brief
+from milknado.domains.dispatch.brief import (
+    WorkerOrientation,
+    current_branch_or_none,
+    render_brief,
+)
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
+    discard_isolated_worktree,
     merge_back_if_done,
     setup_isolated_worktree,
 )
@@ -147,14 +152,18 @@ def _run_claimed_node(
     node, run_id = claimed
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
+    isolate: IsolateContext | None = None
     try:
+        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         brief = render_brief(
             graph,
             request.node_id,
             prepend=request.brief_prepend,
             project_root=request.project_root,
+            orientation=WorkerOrientation(
+                run_id, cwd, isolate.worker_branch if isolate else current_branch_or_none(git)
+            ),
         )
-        cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         graph.runs.start(
             run_id,
             request.node_id,
@@ -203,6 +212,8 @@ def _run_claimed_node(
                 terminal_error = RuntimeError(
                     f"terminal persistence lost its fence for run {run_id}"
                 )
+            if isolate is not None and not started:
+                discard_isolated_worktree(git, isolate.worktree_path, isolate.worker_branch)
         except Exception as persist_exc:
             terminal_error = persist_exc
         if terminal_error is not None:

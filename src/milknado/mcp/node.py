@@ -33,12 +33,19 @@ from pathlib import Path
 from milknado.app.node import (
     GOAL_OWNER_ENV_VAR,
     _provision_claim_run,
+    _release_failed_claim,
     _resolve_model,
     _resolve_node_tools,
     _resolve_owner,
 )
 from milknado.domains.common import NodeKind, resolve_flavor_profile
-from milknado.domains.dispatch import RUN_ID_RE, make_run_id, now_iso, render_brief
+from milknado.domains.dispatch import (
+    RUN_ID_RE,
+    WorkerOrientation,
+    make_run_id,
+    now_iso,
+    render_brief,
+)
 from milknado.domains.execution import build_completion_verifier
 from milknado.domains.graph import VERIFY_ROLE
 from milknado.mcp._core import Response, mcp, open_graph, resolve_project_root
@@ -136,16 +143,22 @@ def milknado_todo_claim(
         run_id = make_run_id(node_id)
 
         profile = resolve_flavor_profile(cfg, node.flavor)
-        brief = render_brief(
-            graph,
-            node_id,
-            prepend=profile.brief_prepend,
-            project_root=root,
-        )
 
         graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
 
-        wt_path = _provision_claim_run(graph, root, node, run_id, worktree, cfg)
+        wt_path, branch = _provision_claim_run(graph, root, node, run_id, worktree, cfg)
+        try:
+            brief = render_brief(
+                graph,
+                node_id,
+                prepend=profile.brief_prepend,
+                project_root=root,
+                orientation=WorkerOrientation(run_id, wt_path or root, branch),
+            )
+        except Exception:
+            claimed = (wt_path, branch) if wt_path is not None and branch is not None else None
+            _release_failed_claim(graph, root, (node_id, run_id), claimed)
+            raise
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None
         tools = _resolve_node_tools(cfg, profile, override)

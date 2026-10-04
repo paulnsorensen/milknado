@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -68,6 +69,17 @@ try:
 finally:
     graph.close()
 """
+
+
+class _BranchOnlyGit:
+    """Git stand-in for dispatch tests that only need the orientation branch lookup."""
+
+    def current_branch(self) -> str:
+        return "main"
+
+
+def _branch_git() -> GitPort:
+    return cast(GitPort, cast(object, _BranchOnlyGit()))
 
 
 class _FinalizationRuns(Protocol):
@@ -755,7 +767,7 @@ class TestDispatchLifecycleGuards:
         )
         with pytest.raises(ValueError, match=message):
             _ = dispatch_node_sync(
-                cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+                cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
             )
 
     def test_sync_dispatch_detects_node_deleted_after_worker(
@@ -813,7 +825,7 @@ class TestDispatchLifecycleGuards:
         )
         with pytest.raises(RuntimeError, match="not found after run completed"):
             _ = dispatch_node_sync(
-                cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+                cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
             )
 
 
@@ -1547,7 +1559,7 @@ class TestCancelFinalizeAndRace:
         with pytest.raises(RuntimeError, match="did not exit after termination"):
             _ = _cancel_pid_run(
                 object(),
-                cast(GitPort, object()),
+                _branch_git(),
                 Process(),
                 {"pid": 91, "node_id": 3},
                 "node-3-20260101T000000Z-stuk",
@@ -1581,7 +1593,7 @@ class TestCancelFinalizeAndRace:
         with pytest.raises(RuntimeError, match="cancellation finalization was not confirmed"):
             _ = _cancel_pid_run(
                 Graph(),
-                cast(GitPort, object()),
+                _branch_git(),
                 cast(ProcessTerminationPort, cast(object, Process())),
                 {"pid": 91, "node_id": 3},
                 run_id,
@@ -1608,7 +1620,7 @@ class TestCancelFinalizeAndRace:
         with pytest.raises(RuntimeError, match="has not confirmed worker exit"):
             _ = cancel_module._cancel_async_run(  # pyright: ignore[reportPrivateUsage]
                 Graph(),
-                cast(GitPort, object()),
+                _branch_git(),
                 tmp_path,
                 {"node_id": 3},
                 run_id,
@@ -1992,7 +2004,7 @@ def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
     )
     with pytest.raises(RuntimeError, match="worker failed"):
         _ = lifecycle.dispatch_node_sync(
-            cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+            cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
         )
 
 
@@ -2091,7 +2103,7 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
         log_path=log_path,
         argv=("claude",),
         graph_sessions=Sessions(),
-        git=cast(GitPort, object()),
+        git=_branch_git(),
         process=cast(ProcessPort, object()),
     )
     async_run._async_worker(context)  # pyright: ignore[reportPrivateUsage]
@@ -2194,7 +2206,7 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
     )
     with pytest.raises(RuntimeError, match="database unavailable"):
         _ = lifecycle.dispatch_node_sync(
-            cast(MikadoGraph, cast(object, Graph())), cast(GitPort, object()), request
+            cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
         )
 
 
@@ -2246,9 +2258,101 @@ def test_async_worker_reports_cancelled_run_fence_loss(
         log_path=log_path,
         argv=("claude",),
         graph_sessions=cast(GraphSessionPort, Sessions()),
-        git=cast(GitPort, object()),
+        git=_branch_git(),
         process=cast(ProcessPort, object()),
     )
     async_run._async_worker(context)  # pyright: ignore[reportPrivateUsage]
     sidecar = log_path.with_name(f"{request.run_id}.terminal-error")
     assert not sidecar.exists()
+
+
+class TestWorkerOrientation:
+    """The worker receives its run id, node id, worktree and branch in the brief."""
+
+    def test_sync_run_states_orientation_in_worker_input(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="sync orient", kind="task", project_root=root)
+        result = _call(
+            milknado_run_inline,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            project_root=root,
+        )
+        log = Path(str(result["log_path"])).read_text(encoding="utf-8")
+        assert f"- run_id: {result['run_id']}" in log
+        assert f"- node_id: {task['id']}" in log
+        assert f"- worktree: {tmp_path}" in log
+        assert "- branch: main" in log
+
+    def test_async_isolated_run_states_orientation_in_worker_input(
+        self, tmp_path: Path, worker_stub: Callable[[str], str]
+    ) -> None:
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="async orient", kind="task", project_root=root)
+        started = _call(
+            milknado_run_inline_start,
+            node_id=task["id"],
+            worker_cmd=worker_stub("cat"),
+            worktree=WorktreeMode.ISOLATE,
+            project_root=root,
+        )
+        _ = _wait_for_terminal(started["run_id"], root, milknado_run_inline_poll)
+        log = Path(str(started["log_path"])).read_text(encoding="utf-8")
+        assert f"- run_id: {started['run_id']}" in log
+        assert f"- node_id: {task['id']}" in log
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(task["id"])
+        finally:
+            graph.close()
+        assert node is not None and node.branch_name and node.worktree_path
+        assert f"- branch: {node.branch_name}" in log
+        assert f"- worktree: {node.worktree_path}" in log
+
+    def test_sync_isolated_render_failure_removes_worktree_and_fails_node(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub: Callable[[str], str]
+    ) -> None:
+        from milknado.domains.dispatch import lifecycle
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="render boom", kind="task", project_root=root)
+
+        def _boom(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("render boom")
+
+        monkeypatch.setattr(lifecycle, "render_brief", _boom)
+        with pytest.raises(RuntimeError, match="render boom"):
+            _ = _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_stub("cat"),
+                worktree=WorktreeMode.ISOLATE,
+                project_root=root,
+            )
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(task["id"])
+            running = [r for r in graph.runs.for_node(task["id"]) if r["status"] == "running"]
+        finally:
+            graph.close()
+        assert not running
+        assert node is not None
+        assert node.status.value == "failed"
+        listing = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert listing.count("worktree ") == 1
+        branches = subprocess.run(
+            ["git", "branch", "--list", "milknado/*"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert branches.strip() == ""

@@ -17,12 +17,18 @@ from milknado.domains.dispatch.async_run import (
     poll_async_run,
     start_headless_async,
 )
-from milknado.domains.dispatch.brief import render_brief
+from milknado.domains.dispatch.brief import (
+    WorkerOrientation,
+    current_branch_or_none,
+    isolated_orientation,
+    render_brief,
+)
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
     create_isolated_worktree,
+    discard_isolated_worktree,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.lifecycle import (
@@ -93,10 +99,14 @@ __all__ = [
     "reconcile_node_status",
     "reconcile_orphaned_runs",
     "reconcile_run_window",
+    "WorkerOrientation",
+    "current_branch_or_none",
+    "isolated_orientation",
     "render_brief",
     "resolve_attach_target",
     "request_cancel",
     "setup_isolated_worktree",
+    "discard_isolated_worktree",
     "run_headless",
     "runs_dir",
     "tail",
