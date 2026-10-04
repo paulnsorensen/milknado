@@ -65,6 +65,13 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_coordinator_events_expiry "
             + "ON coordinator_events(expires_at) WHERE expires_at IS NOT NULL"
         )
+        _ = conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinator_events_operation "
+            + "ON coordinator_events(session_id, kind, entity_kind, entity_id, status) "
+            + "WHERE entity_kind != '' AND entity_id != '' AND kind IN "
+            + "('planning_decision', 'graph_revision', 'approval', 'run_transition', "
+            + "'execution_group', 'command')"
+        )
 
 
 def _session(row: tuple[str, int, str, str]) -> CoordinatorSession:

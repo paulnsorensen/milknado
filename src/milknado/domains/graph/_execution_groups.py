@@ -21,6 +21,7 @@ from milknado.domains.graph._group_models import (
 from milknado.domains.graph._group_policy import validate_membership
 from milknado.domains.graph._group_reservation import admit_writer, reserved_workspace
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+from milknado.domains.graph.goal_review import GoalAdmission
 
 __all__ = ["ExecutionGroup", "ExecutionGroupStore", "GroupWorkspace", "TaskAttempt", "TaskOutcome"]
 
@@ -37,11 +38,8 @@ class _GroupGraph(Protocol):
 
     def group_notifications(self) -> AbstractContextManager[None]: ...
 
-    def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
-    def release(self, node_id: int, run_id: str) -> bool: ...
-    def set_worktree(
-        self, node_id: int, run_id: str, worktree_path: str, branch_name: str
-    ) -> None: ...
+    def claim_group_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
+    def goal_admission(self, node_id: int) -> GoalAdmission: ...
     def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool: ...
     def mark_failed(self, node_id: int) -> None: ...
     def mark_blocked_fenced(self, node_id: int, run_id: str) -> bool: ...
@@ -193,12 +191,14 @@ class ExecutionGroupStore:
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
                 workspace = reserved_workspace(conn, attempt)
+                if not self._graph.goal_admission(attempt.node_id).allowed:
+                    raise ValueError("goal review pauses task launch")
                 row = fetchone(
                     conn, "SELECT status, run_id FROM nodes WHERE id = ?", (attempt.node_id,)
                 )
                 if row is not None and (row[0], row[1]) == ("running", attempt.attempt_id):
                     return
-                if not self._graph.claim_node(
+                if not self._graph.claim_group_node(
                     attempt.node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
                 ):
                     raise ValueError("execution group task is not ready")
@@ -223,6 +223,11 @@ class ExecutionGroupStore:
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
                 _ = reserved_workspace(conn, attempt)
+                node = fetchone(
+                    conn, "SELECT status, run_id FROM nodes WHERE id = ?", (attempt.node_id,)
+                )
+                if node is None or (node[0], node[1]) != ("pending", None):
+                    raise ValueError("reserved task changed owner before launch failure")
                 self._graph.mark_failed(attempt.node_id)
                 _ = conn.execute(
                     "UPDATE execution_group_tasks SET status = 'failed', result = ? "
@@ -243,7 +248,7 @@ class ExecutionGroupStore:
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
                 attempt, workspace = admit_writer(conn, group_id, node_id, run_id)
-                if not self._graph.claim_node(
+                if not self._graph.claim_group_node(
                     node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
                 ):
                     raise ValueError("execution group task is not ready")

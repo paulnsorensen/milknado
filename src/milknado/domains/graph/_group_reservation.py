@@ -61,3 +61,16 @@ def reserved_workspace(conn: sqlite3.Connection, attempt: TaskAttempt) -> GroupW
     if row is None or (row[0], row[1]) != (attempt.node_id, attempt.run_id):
         raise ValueError("execution group writer fence lost")
     return GroupWorkspace(cast(str, row[2]), cast(str, row[3]), cast(str, row[4]))
+
+
+def claim_reservation_allows(
+    conn: sqlite3.Connection, node_id: int, run_id: str, group_reservation: bool
+) -> bool:
+    row = fetchone(
+        conn,
+        "SELECT active_attempt_id FROM execution_groups WHERE active_node_id = ?",
+        (node_id,),
+    )
+    if row is None:
+        return not group_reservation
+    return group_reservation and row[0] == run_id

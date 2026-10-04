@@ -222,12 +222,21 @@ def claim_node(
     now: str,
     concurrency_limit: int,
     pid: int | None = None,
+    group_reservation: bool = False,
 ) -> bool:
     """Atomically claim a claimable node, including its dispatch PID fence."""
     old = _reads.node_status(conn, node_id)
 
     def mutate() -> bool:
-        return _transitions.claim_node(conn, node_id, run_id, now, concurrency_limit, pid=pid)
+        return _transitions.claim_node(
+            conn,
+            node_id,
+            run_id,
+            now,
+            concurrency_limit,
+            pid=pid,
+            group_reservation=group_reservation,
+        )
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid), node_id, old, NodeStatus.RUNNING, mutate

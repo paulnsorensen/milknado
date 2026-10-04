@@ -22,6 +22,7 @@ from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_CTE,
     READY_NODE_ADMISSION_FILTER,
 )
+from milknado.domains.graph._group_reservation import claim_reservation_allows
 from milknado.domains.graph._sqlite_rows import fetchone
 
 _NO_OPEN_WORKERS = (
@@ -153,10 +154,6 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
     )
 
 
-# --- Atomic optimistic claim / reclaim / fence ---------------------------------
-# Claims hold SQLite's writer lock across the capacity count and guarded UPDATE.
-# Other fenced transitions rely on their conditional UPDATE for cross-process safety.
-
 _CLAIMABLE = ("pending", "failed", "blocked")
 
 
@@ -186,12 +183,17 @@ def claim_node(
     concurrency_limit: int,
     *,
     pid: int | None = None,
+    group_reservation: bool = False,
 ) -> bool:
     """Claim a task under SQLite's writer lock, with its dispatch PID fence."""
     owns_transaction = not conn.in_transaction
     if owns_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        if not claim_reservation_allows(conn, node_id, run_id, group_reservation):
+            if owns_transaction:
+                conn.commit()
+            return False
         node = fetchone(
             conn,
             READY_NODE_ADMISSION_CTE

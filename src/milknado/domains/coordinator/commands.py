@@ -60,16 +60,19 @@ def get_dispatch_state(conn: sqlite3.Connection, attempt_id: str) -> str | None:
 
 
 def record_control_once(conn: sqlite3.Connection, session_id: str, event: ControlEvent) -> None:
-    known = cast(
-        tuple[int] | None,
-        conn.execute(
-            "SELECT 1 FROM coordinator_events WHERE session_id = ? AND kind = ? "
-            + "AND entity_kind = ? AND entity_id = ? AND status = ?",
-            (session_id, event.kind, event.entity_kind, event.entity_id, event.status),
-        ).fetchone(),
-    )
-    if known is None:
+    try:
         _ = append_control_event(conn, session_id, event)
+    except sqlite3.IntegrityError:
+        known = cast(
+            tuple[int] | None,
+            conn.execute(
+                "SELECT 1 FROM coordinator_events WHERE session_id = ? AND kind = ? "
+                + "AND entity_kind = ? AND entity_id = ? AND status = ?",
+                (session_id, event.kind, event.entity_kind, event.entity_id, event.status),
+            ).fetchone(),
+        )
+        if known is None:
+            raise
 
 
 @dataclass(frozen=True)

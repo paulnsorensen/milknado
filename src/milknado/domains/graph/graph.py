@@ -511,8 +511,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
         return _status.complete_root(self._pipeline, self._conn)
 
     @synchronized
-    def request_goal_review(self, request: GoalReviewRequest) -> GoalReviewRecord:
-        return _review_interrupts.request_with_interrupts(self._conn, request)
+    def request_goal_review(
+        self, request: GoalReviewRequest, *, reconcile: bool = False
+    ) -> GoalReviewRecord:
+        return _review_interrupts.request_with_interrupts(self._conn, request, reconcile=reconcile)
 
     @synchronized
     def get_goal_review(self, review_id: int) -> GoalReviewRecord | None:
@@ -555,6 +557,19 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
             now=now,
             concurrency_limit=self._concurrency_limit,
             pid=pid,
+        )
+
+    @synchronized
+    def claim_group_node(self, node_id: int, run_id: str, *, now: str) -> bool:
+        _goal_review.assert_admitted(self._conn, node_id)
+        return _status.claim_node(
+            self._pipeline,
+            self._conn,
+            node_id,
+            run_id,
+            now=now,
+            concurrency_limit=self._concurrency_limit,
+            group_reservation=True,
         )
 
     @synchronized
