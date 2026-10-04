@@ -152,6 +152,84 @@ def test_claim_brief_states_orientation(repo: Path) -> None:
     assert f"- branch: {node.branch_name}" in brief
 
 
+def test_claim_render_failure_removes_worktree_and_fails_claim(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.mcp.node as mcp_node
+
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("render boom")
+
+    monkeypatch.setattr(mcp_node, "render_brief", _boom)
+    with pytest.raises(RuntimeError, match="render boom"):
+        _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+
+    graph, _cfg = open_graph(repo)
+    try:
+        node = graph.get_node(node_id)
+        assert node is not None
+        assert node.status == NodeStatus.FAILED
+        assert not any(run["status"] == "running" for run in graph.runs.for_node(node_id))
+    finally:
+        graph.close()
+    listing = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert listing.count("worktree ") == 1
+
+
+def test_claim_render_failure_reports_worktree_cleanup_failure_after_failing_node(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.mcp.node as mcp_node
+    from milknado.adapters import GitAdapter
+    from milknado.domains.common import GitOperationError
+
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+
+    def _render_boom(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("render boom")
+
+    def _cleanup_boom(*_args: object, **_kwargs: object) -> None:
+        raise GitOperationError("cleanup boom")
+
+    monkeypatch.setattr(mcp_node, "render_brief", _render_boom)
+    monkeypatch.setattr(GitAdapter, "force_remove_worktree", _cleanup_boom)
+    with pytest.raises(GitOperationError, match="cleanup boom") as raised:
+        _ = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
+    assert isinstance(raised.value.__context__, RuntimeError)
+
+    graph, _cfg = open_graph(repo)
+    try:
+        node = graph.get_node(node_id)
+    finally:
+        graph.close()
+    assert node is not None and node.status == NodeStatus.FAILED
+
+
+def test_release_failed_claim_raises_when_terminal_write_loses_its_fence(repo: Path) -> None:
+    from milknado.app.node import _release_failed_claim
+
+    _write_config(repo, gates=["true"])
+    node_id = _add_task(repo)
+    graph, _cfg = open_graph(repo)
+    try:
+        graph.claim_node_for_dispatch(node_id, "run-owner", now="2026-01-01T00:00:00+00:00")
+        graph.runs.start("run-owner", node_id, str(repo), "2026-01-01T00:00:00+00:00", None)
+        with pytest.raises(RuntimeError, match="lost its fence"):
+            _release_failed_claim(graph, repo, (node_id, "run-stale"), None)
+    finally:
+        graph.close()
+
+
 def test_claim_in_place_brief_states_project_root_and_current_branch(repo: Path) -> None:
     _write_config(repo, gates=["true"])
     node_id = _add_task(repo)

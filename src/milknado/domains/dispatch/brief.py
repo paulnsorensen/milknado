@@ -120,13 +120,13 @@ def _resolve_spec_path(
 
 
 def _brief_header(
-    title_prefix: str,
+    labels: tuple[str, str],
     node: MikadoNode,
-    chain: list[MikadoNode],
-    done: list[MikadoNode],
-    done_label: str,
+    context: tuple[list[MikadoNode], list[MikadoNode]],
     orientation: WorkerOrientation | None,
 ) -> list[str]:
+    """Render the heading; `labels` is (title_prefix, done_label), `context` is (chain, done)."""
+    (title_prefix, done_label), (chain, done) = labels, context
     lines = [f"# {title_prefix}: {node.description}", ""]
     if orientation is not None:
         lines.extend(_orientation_lines(node.id, orientation))
@@ -142,9 +142,19 @@ def _brief_header(
     return lines
 
 
-def _finish_brief(lines: list[str], instructions: str, prepend: str | None) -> str:
+_RUN_ID_SOURCE = "@RUN_ID_SOURCE@"
+
+
+def _finish_brief(
+    lines: list[str], instructions: str, prepend: str | None, orientation: WorkerOrientation | None
+) -> str:
+    run_id_source = (
+        "the MILKNADO_RUN_ID environment variable"
+        if orientation is None
+        else "the run_id stated under Orientation"
+    )
     lines.append("## Instructions")
-    lines.append(instructions)
+    lines.append(instructions.replace(_RUN_ID_SOURCE, run_id_source))
     body = "\n".join(lines) + "\n"
     if prepend:
         return prepend.rstrip() + "\n\n" + body
@@ -158,8 +168,8 @@ _CODER_INSTRUCTIONS = (
     "If you discover follow-up work, register it by calling "
     "milknado_track_follow_up with a one-line description rather than only "
     "printing it. "
-    "As your final step, call milknado_deposit_result with run_id set to the "
-    "run_id stated under Orientation and payload set to your COMPLETE "
+    "As your final step, call milknado_deposit_result with run_id set to "
+    f"{_RUN_ID_SOURCE} and payload set to your COMPLETE "
     "deliverable — the full text of what you produced, not a reference to "
     "content that lives only in this context. The deposited payload is what "
     "the coordinator reads back; anything left only in your reply is lost."
@@ -171,8 +181,8 @@ _REVIEW_INSTRUCTIONS = (
     "alignment, and complexity — do not merely confirm it compiles. Produce a "
     "severity-grouped findings report (blocker/high/medium/low), one bullet "
     "per finding with evidence and a fix recommendation. "
-    "As your final step, call milknado_deposit_result with run_id set to the "
-    "run_id stated under Orientation and payload set to your COMPLETE "
+    "As your final step, call milknado_deposit_result with run_id set to "
+    f"{_RUN_ID_SOURCE} and payload set to your COMPLETE "
     "findings report — the full markdown, not a reference to content that "
     "lives only in this context. Then call milknado_deposit_review with the same "
     "run_id, verdict exactly 'approve' or 'reject', and the same findings markdown."
@@ -183,8 +193,8 @@ _PLATE_INSTRUCTIONS = (
     "a Conventional Commits message, then open or update a pull request using "
     "the `gh` CLI. `gh` is authenticated in this environment without "
     "sandboxing — do not run `gh` through a sandboxed or offline path. "
-    "As your final step, call milknado_deposit_result with run_id set to the "
-    "run_id stated under Orientation and payload set to the PR URL (or "
+    "As your final step, call milknado_deposit_result with run_id set to "
+    f"{_RUN_ID_SOURCE} and payload set to the PR URL (or "
     "commit SHA if no PR was opened) plus a summary of what shipped."
 )
 
@@ -207,14 +217,15 @@ def render_brief(
     done = _done_prereqs(graph, node)
 
     if node.flavor == "review":
-        lines = _brief_header("Review", node, chain, done, "Work under review", orientation)
-        return _finish_brief(lines, _REVIEW_INSTRUCTIONS, prepend)
+        lines = _brief_header(("Review", "Work under review"), node, (chain, done), orientation)
+        return _finish_brief(lines, _REVIEW_INSTRUCTIONS, prepend, orientation)
     if node.flavor == "plate":
-        lines = _brief_header("Plate", node, chain, done, "Work to publish", orientation)
-        return _finish_brief(lines, _PLATE_INSTRUCTIONS, prepend)
+        lines = _brief_header(("Plate", "Work to publish"), node, (chain, done), orientation)
+        return _finish_brief(lines, _PLATE_INSTRUCTIONS, prepend, orientation)
 
     files = graph.files.for_node(node_id)
-    lines = _brief_header("Task", node, chain, done, "Prerequisites already done", orientation)
+    labels = ("Task", "Prerequisites already done")
+    lines = _brief_header(labels, node, (chain, done), orientation)
 
     lines.append("## Relevant files")
     if files:
@@ -229,4 +240,4 @@ def render_brief(
         lines.append(f"- {spec_path}")
         lines.append("")
 
-    return _finish_brief(lines, _CODER_INSTRUCTIONS, prepend)
+    return _finish_brief(lines, _CODER_INSTRUCTIONS, prepend, orientation)

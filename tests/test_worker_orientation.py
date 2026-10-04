@@ -62,3 +62,16 @@ def test_brief_without_orientation_has_no_orientation_block(tmp_path: Path) -> N
     finally:
         graph.close()
     assert "## Orientation" not in brief
+
+
+@pytest.mark.parametrize("flavor", [None, "review", "plate"])
+def test_brief_without_orientation_names_the_run_id_environment_variable(
+    tmp_path: Path, flavor: str | None
+) -> None:
+    graph, node_id = _graph_with_node(tmp_path, flavor)
+    try:
+        brief = render_brief(graph, node_id)
+    finally:
+        graph.close()
+    assert "run_id set to the MILKNADO_RUN_ID environment variable" in brief
+    assert "stated under Orientation" not in brief

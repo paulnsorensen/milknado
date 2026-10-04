@@ -151,6 +151,7 @@ def _run_claimed_node(
     node, run_id = claimed
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
+    isolate: IsolateContext | None = None
     try:
         cwd, isolate = _setup_sync_worktree(graph, git, node, run_id, request)
         brief = render_brief(
@@ -210,6 +211,8 @@ def _run_claimed_node(
                 terminal_error = RuntimeError(
                     f"terminal persistence lost its fence for run {run_id}"
                 )
+            if isolate is not None and not started:
+                git.force_remove_worktree(isolate.worktree_path)
         except Exception as persist_exc:
             terminal_error = persist_exc
         if terminal_error is not None:

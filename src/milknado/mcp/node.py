@@ -33,6 +33,7 @@ from pathlib import Path
 from milknado.app.node import (
     GOAL_OWNER_ENV_VAR,
     _provision_claim_run,
+    _release_failed_claim,
     _resolve_model,
     _resolve_node_tools,
     _resolve_owner,
@@ -146,13 +147,17 @@ def milknado_todo_claim(
         graph.claim_node_for_dispatch(node_id, run_id, now=now_iso())
 
         wt_path, branch = _provision_claim_run(graph, root, node, run_id, worktree, cfg)
-        brief = render_brief(
-            graph,
-            node_id,
-            prepend=profile.brief_prepend,
-            project_root=root,
-            orientation=WorkerOrientation(run_id, wt_path or root, branch),
-        )
+        try:
+            brief = render_brief(
+                graph,
+                node_id,
+                prepend=profile.brief_prepend,
+                project_root=root,
+                orientation=WorkerOrientation(run_id, wt_path or root, branch),
+            )
+        except Exception:
+            _release_failed_claim(graph, root, (node_id, run_id), wt_path)
+            raise
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None
         tools = _resolve_node_tools(cfg, profile, override)

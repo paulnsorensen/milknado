@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -2306,6 +2307,44 @@ class TestWorkerOrientation:
             node = graph.get_node(task["id"])
         finally:
             graph.close()
-        assert node is not None and node.branch_name
+        assert node is not None and node.branch_name and node.worktree_path
         assert f"- branch: {node.branch_name}" in log
-        assert "- worktree: " in log and str(tmp_path) in log
+        assert f"- worktree: {node.worktree_path}" in log
+
+    def test_sync_isolated_render_failure_removes_worktree_and_fails_node(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, worker_stub: Callable[[str], str]
+    ) -> None:
+        from milknado.domains.dispatch import lifecycle
+
+        root = str(tmp_path)
+        task = _call(milknado_todo_add, description="render boom", kind="task", project_root=root)
+
+        def _boom(*_args: object, **_kwargs: object) -> str:
+            raise RuntimeError("render boom")
+
+        monkeypatch.setattr(lifecycle, "render_brief", _boom)
+        with pytest.raises(RuntimeError, match="render boom"):
+            _ = _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_stub("cat"),
+                worktree=WorktreeMode.ISOLATE,
+                project_root=root,
+            )
+        graph, _cfg = open_graph(tmp_path)
+        try:
+            node = graph.get_node(task["id"])
+            running = [r for r in graph.runs.for_node(task["id"]) if r["status"] == "running"]
+        finally:
+            graph.close()
+        assert not running
+        assert node is not None
+        assert node.status.value == "failed"
+        listing = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert listing.count("worktree ") == 1
