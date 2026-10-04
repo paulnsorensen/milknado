@@ -137,7 +137,10 @@ async def test_accepted_response_does_not_clear_newer_identical_draft_revision(
     )
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("i", *"same draft", "enter")
+        await pilot.press("i")
+        await pilot.pause()
+        assert app.query_one("#session-input", Input).has_focus
+        await pilot.press(*"same draft", "enter")
         assert await asyncio.to_thread(controller.first_started.wait, 3)
         try:
             await pilot.press("end", "ctrl+u", *"other draft")
@@ -157,6 +160,58 @@ async def test_accepted_response_does_not_clear_newer_identical_draft_revision(
         assert submission.request_id == ""
         assert submission.command_id
         assert app.query_one("#session-input", Input).value == "same draft"
+
+
+@pytest.mark.asyncio
+async def test_widget_value_is_submitted_when_draft_store_is_stale(
+    tmp_path: Path,
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    controller = SnapshotController(
+        initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i")
+        message_input = app.query_one("#session-input", Input)
+        message_input.value = "widget draft"
+        assert "run-1" not in app._session_drafts  # pyright: ignore[reportPrivateUsage]
+        await pilot.press("enter")
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert [(run_id, command.text) for run_id, command in controller.submissions] == [
+            ("run-1", "widget draft")
+        ]
+        assert app._session_drafts["run-1"] == ""  # pyright: ignore[reportPrivateUsage]
+        assert message_input.value == ""
+
+
+@pytest.mark.asyncio
+async def test_accepted_result_clears_draft_after_selection_changes(
+    tmp_path: Path,
+) -> None:
+    context = changed_context(tmp_path / "repo", "work.txt", "after\n")
+    controller = _RevisionController(
+        initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
+    )
+    app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("i", *"first", "enter")
+        assert await asyncio.to_thread(controller.first_started.wait, 3)
+        await pilot.press("escape")
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.selected_run_id == "run-2"
+
+        controller.release_first.set()
+        await _wait_for_workers(app).wait_for_complete()
+        await pilot.pause()
+
+        assert app._session_drafts["run-1"] == ""  # pyright: ignore[reportPrivateUsage]
+        assert app.query_one("#session-input", Input).value == ""
 
 
 @pytest.mark.asyncio
@@ -219,8 +274,7 @@ async def test_context_change_clears_old_diff_and_bounds_streaming_refreshes(
     monkeypatch.setattr(GitAdapter, "session_changes", delayed)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
-        await _wait_for_workers(app).wait_for_complete()
-        await pilot.pause()
+        await _wait_for_change_pipeline(app, pilot)
         assert "+first-only" in plain(app, "#diff-text")
         controller.initial_snapshot = two_run_snapshot(second, first)
         controller.publish(controller.initial_snapshot)
@@ -272,7 +326,7 @@ async def test_file_change_clears_previous_diff_until_selected_file_loads(
 
 
 @pytest.mark.asyncio
-async def test_periodic_refresh_preserves_keyboard_file_choice(
+async def test_switching_shared_context_preserves_keyboard_file_choice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     context = changed_context(tmp_path / "repo", "first.txt", "first-only\n")
@@ -280,33 +334,44 @@ async def test_periodic_refresh_preserves_keyboard_file_choice(
     controller = SnapshotController(
         initial_snapshot=two_run_snapshot(context, context), replay_subscription=False
     )
-    ready, refreshed = Event(), Event()
-    original = GitAdapter.session_changes
+    diff_paths: list[str] = []
+    original_diff = GitAdapter.session_diff
 
-    def inspected(adapter: GitAdapter, selected: SessionContext) -> tuple[ChangedFile, ...]:
-        result = original(adapter, selected)
-        if ready.is_set():
-            refreshed.set()
-        return result
+    def tracked_diff(adapter: GitAdapter, selected: SessionContext, path: str) -> str:
+        diff_paths.append(path)
+        return original_diff(adapter, selected, path)
 
-    monkeypatch.setattr(GitAdapter, "session_changes", inspected)
-    # A fake clock drives the refresh throttle, so the test does not wait on the 1 s timer.
-    clock = [0.0]
-    monkeypatch.setattr("milknado.app.session_changes.monotonic", lambda: clock[0])
+    monkeypatch.setattr(GitAdapter, "session_diff", tracked_diff)
     app = ExecutionApp(cast(ExecutionController, cast(object, controller)))
     async with app.run_test(size=(120, 40)) as pilot:
         await _wait_for_workers(app).wait_for_complete()
         await pilot.pause()
-        await pilot.press("x", "down")
-        ready.set()
-        clock[0] += 2.0
-        app.refresh_session_changes()
-        await _wait_for_workers(app).wait_for_complete()
-        assert refreshed.is_set()
+        await pilot.press("x")
+        await _wait_for_change_pipeline(app, pilot)
+        table = cast(DataTable[object], app.query_one("#changes-files", DataTable))
+        assert table.get_row_at(1)[1] == "second.txt"
+        _ = table.focus()
         await pilot.pause()
-        await pilot.press("enter")
-        await _wait_for_workers(app).wait_for_complete()
+        await pilot.press("down", "enter")
+        await _wait_for_change_pipeline(app, pilot)
+        assert app.selected_file_path == "second.txt"
+        assert diff_paths[-1] == "second.txt"
+        assert "+second-only" in plain(app, "#diff-text")
+        requests_before_switch = len(diff_paths)
+
+        await pilot.press("escape")
         await pilot.pause()
+        run_table = cast(DataTable[object], app.query_one("#runs", DataTable))
+        _ = run_table.focus()
+        await pilot.pause()
+        assert app.selected_run_id == "run-1"
+        await pilot.press("j")
+        await pilot.pause()
+        assert app.selected_run_id == "run-2"
+        await _wait_for_change_pipeline(app, pilot)
+        assert len(diff_paths) > requests_before_switch
+        assert diff_paths[-1] == "second.txt"
+        assert app.selected_file_path == "second.txt"
         assert "+second-only" in plain(app, "#diff-text")
 
 

@@ -20,6 +20,7 @@ from milknado.app.run_overlays import HelpScreen, RunFooter
 from milknado.app.run_panels import RunDetailPanel, RunListPanel
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.app.run_view import (
+    HelpOptions,
     events_text,
     help_text,
     session_help_text,
@@ -44,6 +45,7 @@ class ExecutionSnapshotApp(
     AUTO_FOCUS: ClassVar[str | None] = "#runs"  # noqa: V107 - Textual reads initial focus
 
     CSS: ClassVar[str] = RUN_VIEW_CSS
+    SHOW_STOP_HINT: ClassVar[bool] = False
 
     BINDINGS: ClassVar[list[BindingType]] = [  # noqa: V107 - Textual reads binding configuration
         ("?", "help", "Help"),
@@ -60,7 +62,7 @@ class ExecutionSnapshotApp(
         Binding("(", "previous_history_page", show=False),
         Binding(")", "next_history_page", show=False),
         ("escape", "back", "Back"),
-        Binding("r", "resume_output", show=False),
+        ("r", "resume_output", "Resume"),
         ("f1", "help", "Help"),
         Binding("h", "help", show=False),
     ]
@@ -152,12 +154,14 @@ class ExecutionSnapshotApp(
         if self.minimum:
             body = f"Help\n{MINIMUM_FALLBACK_TEXT}"
         else:
+            show_stop = self.SHOW_STOP_HINT and self.stop_scheduling_available
             body = help_text(
-                selected,
-                compact=self.compact,
-                route=self.route,
-                auto_follow=self.auto_follow,
+                selected, HelpOptions(self.compact, self.route, self.auto_follow, show_stop)
             )
+            if self.selected_node_id is not None and self._detail_focused():
+                body += "\n[ ] related values pages\n( ) session history pages"
+            if self.compact and self.selected_node_id is not None and selected is None:
+                body += "\nenter open" if self.route == "list" else "\nescape back"
             session = session_view(selected)
             if session.context is not None:
                 body += "\nx changed files"
@@ -176,19 +180,21 @@ class ExecutionSnapshotApp(
             self.set_focus(focus if focus and focus.region.area and not focus.disabled else None)
 
     def show_snapshot(self, snapshot: ExecutionSnapshot) -> None:
-        """Apply a replacement snapshot from the presentation source."""
         self._apply_snapshot(snapshot)
 
     def _receive_snapshot(self, snapshot: ExecutionSnapshot) -> None:
-        """Marshal a source-thread replacement snapshot onto Textual's loop."""
         if get_ident() == self._ui_thread_id:
-            self._apply_snapshot(snapshot)
+            self.show_snapshot(snapshot)
         else:
-            self.call_from_thread(self._apply_snapshot, snapshot)
+            self.call_from_thread(self.show_snapshot, snapshot)
 
     def _apply_snapshot(self, snapshot: ExecutionSnapshot) -> None:
         old_node_id, old_graph = self.selected_node_id, self.snapshot.graph
-        focused_id = self.screen.focused.id if self.screen.focused is not None else None
+        focused = self.screen.focused
+        focused_id = focused.id if focused is not None else None
+        while focused_id is None and focused is not None:
+            focused = focused.parent
+            focused_id = focused.id if focused is not None else None
         selected_run_id = self.selected_run_id
         self.snapshot = snapshot
         runs = self._runs()
@@ -271,7 +277,7 @@ class ExecutionSnapshotApp(
             self.focus_initial_selector()
 
     def refresh_view(self) -> None:
-        if not self.query("#run-panel"):
+        if not self.query("#run-panel #totals"):
             return  # a poll tick can outlive the panels during app shutdown
         self.title = self.snapshot.goal
         self.sub_title = subtitle_text(self.snapshot)
@@ -288,4 +294,7 @@ class ExecutionSnapshotApp(
         self.query_one("#events-text", Static).update(
             events_text(self.snapshot.event_lines, self.snapshot.listener_errors)
         )
+        footer = self.query(RunFooter)
+        if footer:
+            footer.first().update_hints()
         self.refresh_session_changes()

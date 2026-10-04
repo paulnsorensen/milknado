@@ -6,8 +6,56 @@ another's internals for it.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerIdentity:
+    invocation_id: str
+    pid: int
+    pgid: int
+    start_token: float
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerOwner:
+    runtime_run_id: str
+    supervisor_pid: int
+    supervisor_start_token: float
+    graph_run_id: str | None = None
+    node_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HelperIdentity:
+    invocation_id: str
+    generation: int
+    pid: int
+    start_token: float
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationKey:
+    invocation_id: str
+    owner: Literal["supervisor", "helper"]
+    sequence: int
+    generation: int
+    pid: int
+    start_token: float
+
 
 CONTROLLER_MASTER_ENV = "MILKNADO_CONTROLLER_MASTER"
+WORKER_CONTEXT_ENV = "MILKNADO_WORKER_CONTEXT"
+
+
+def mark_worker_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Remove controller authority and mark a copy of the worker environment."""
+    worker_env = dict(env)
+    _ = worker_env.pop(CONTROLLER_MASTER_ENV, None)
+    worker_env[WORKER_CONTEXT_ENV] = "1"
+    return worker_env
 
 
 def pid_alive(pid: object) -> bool:

@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Event, Thread
-from typing import Protocol, cast
+from typing import ClassVar, Protocol, cast
+from xml.etree import ElementTree
 
 import pytest
 from rich.console import RenderableType
 from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown, MouseScrollUp
-from textual.widgets import DataTable, Input, Static
+from textual.screen import ModalScreen
+from textual.widgets import DataTable, Input, Static, Tree
 from typing_extensions import override
 
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal
 from milknado.app.run import (
     ActiveRunSnapshot,
     ExecutionController,
@@ -23,11 +29,12 @@ from milknado.app.run import (
     RunActionAvailability,
     TerminalRunSnapshot,
 )
-from milknado.app.run_panels import RunDetailPanel
+from milknado.app.run_overlays import FooterHint, RunFooter
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.graph import NodeDetailResponse
+from tests.graph_navigation_fixtures import source as graph_source
 
 
 class _WorkerManager(Protocol):
@@ -89,6 +96,9 @@ class FakeController:
     guidance: list[tuple[str, str]] = field(default_factory=list)
     cancellations: list[str] = field(default_factory=list)
     force_stops: list[str] = field(default_factory=list)
+    force_stop_all_requests: int = 0
+    force_stop_all_result: bool = True
+    shutdown_intent: ShutdownIntent = field(default_factory=ShutdownIntent)
     listener: Callable[[ExecutionSnapshot], None] | None = None
     stop_requests: int = 0
     run_result: object = "run-result"
@@ -113,6 +123,11 @@ class FakeController:
         self.stop_requests += 1
         if self.control_error is not None:
             raise self.control_error
+
+    def force_stop_all(self, timeout: float = 8.0) -> bool:
+        del timeout
+        self.force_stop_all_requests += 1
+        return self.force_stop_all_result
 
     unsubscribed: bool = False
 
@@ -257,6 +272,24 @@ async def test_wide_view_queues_guidance_and_confirms_force_stop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_scheduling_requires_confirmation() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("s")
+        await pilot.pause()
+
+        assert "Stop scheduling and gracefully stop 1 active run?" in _confirmation_text(app)
+        assert controller.stop_requests == 0
+
+        await pilot.press("y")
+        await _wait_for_workers(app).wait_for_complete()
+
+        assert controller.stop_requests == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
 @pytest.mark.parametrize("detail", [False, True])
 async def test_force_confirmation_is_visible_from_each_route(
@@ -314,6 +347,21 @@ async def test_force_confirmation_cancel_restores_view_and_focus(
 
 
 @pytest.mark.asyncio
+async def test_external_signal_forces_quit_without_confirmation() -> None:
+    controller = FakeController()
+    intent = ShutdownIntent()
+    app = ExecutionApp(_as_execution_controller(controller), shutdown_intent=intent)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        intent.record(signal.SIGTERM, None)
+        await asyncio.sleep(0.1)
+        await pilot.pause()
+
+    assert controller.force_stop_all_requests == 0
+    assert controller.stop_requests == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(40, 15), (80, 24), (120, 40)])
 async def test_quit_confirmation_is_visible_at_supported_sizes(
     size: tuple[int, int],
@@ -329,7 +377,7 @@ async def test_quit_confirmation_is_visible_at_supported_sizes(
 
         assert confirmation.has_class("visible")
         assert confirmation.display is True
-        assert "1 active run" in _confirmation_text(app)
+        assert "Quit and force stop 1 active run?" in _confirmation_text(app)
         assert "[n/Esc] cancel" in _confirmation_text(app)
         assert controller.stop_requests == 0
 
@@ -444,6 +492,23 @@ async def test_guidance_shortcut_opens_compact_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_guidance_escape_returns_focus_to_run_list() -> None:
+    controller = FakeController()
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("g")
+        guidance = _input(app, "#guidance")
+        assert guidance.has_focus
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert app.route == "list"
+        assert app.query_one("#runs", DataTable).has_focus
+
+
+@pytest.mark.asyncio
 async def test_compact_drilldown_preserves_composer_and_exposes_action_reason() -> None:
 
     controller = FakeController(initial_snapshot=snapshot(second=True))
@@ -481,11 +546,27 @@ async def test_help_and_quit_confirmation_only_show_current_actions() -> None:
         help_body = cast(Text, app.screen.query_one("#help-overlay", Static).render()).plain
         assert "g queue guidance" in help_body
         assert "f force stop" in help_body
+        assert "s stop scheduling" in help_body
         await pilot.press("escape", "q")
-        assert "Stop scheduling and gracefully stop 1 active run?" in (_confirmation_text(app))
+        assert "Quit and force stop 1 active run?" in (_confirmation_text(app))
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
-        assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_scheduling_binding_uses_any_active_run() -> None:
+    terminal = replace(stopped_snapshot().terminal_runs[0], run_id="run-2", node_id=2)
+    controller = FakeController(initial_snapshot=replace(snapshot(), terminal_runs=(terminal,)))
+    app = _execution_app(controller)
+
+    async with app.run_test(size=(120, 36)) as pilot:
+        app.selected_run_id = terminal.run_id
+        assert app.check_action("stop_scheduling", ()) is True
+        app.action_stop_scheduling()
+        await pilot.pause()
+        assert "Stop scheduling and gracefully stop 1 active run?" in _confirmation_text(app)
 
 
 @pytest.mark.asyncio
@@ -617,22 +698,28 @@ async def test_compact_layout_returns_to_the_focused_run_table() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pointer_scroll_pauses_auto_follow() -> None:
+async def test_output_wheel_pauses_follow_and_preserves_offset_on_snapshot_refresh() -> None:
+    lines = tuple(f"output {index}" for index in range(150))
+    app = _execution_app(FakeController(initial_snapshot=snapshot(output=lines)))
 
-    app = _execution_app(FakeController())
-
-    async with app.run_test(size=(120, 36)):
-        app.query_one("#detail", RunDetailPanel).on_mouse_scroll_down(
-            cast(MouseScrollDown, cast(object, None))
-        )
+    async with app.run_test(size=(120, 24)) as pilot:
+        output = _output(app)
+        output.scroll_to(y=8, animate=False)
+        await pilot.pause()
+        _ = output.post_message(MouseScrollUp(output, 0, 0, 0, -1, 0, False, False, False))
+        await pilot.pause()
 
         assert app.auto_follow is False
-        app.query_one("#detail", RunDetailPanel).on_mouse_scroll_up(
-            cast(MouseScrollUp, cast(object, None))
-        )
-        assert _output(app).border_title == "Output (paused; press r to resume)"
-        rendered = app.export_screenshot().replace("&#160;", " ")
-        assert "Output (paused; press r to resume)" in rendered
+        app.action_resume_output()
+        _ = output.post_message(MouseScrollDown(output, 0, 0, 0, 1, 0, False, False, False))
+        await pilot.pause()
+        assert app.auto_follow is False
+        offset = output.scroll_offset.y
+        app.show_snapshot(replace(app.snapshot, event_lines=("poll",)))
+        await pilot.pause()
+
+        assert output.scroll_offset.y == offset
+        assert output.border_title == "Output (paused; press r to resume)"
 
 
 @pytest.mark.asyncio
@@ -648,7 +735,7 @@ async def test_events_height_budget_yields_to_workspace_at_small_terminal() -> N
 
 
 @pytest.mark.asyncio
-async def test_quit_stops_future_scheduling_before_waiting_for_run_result() -> None:
+async def test_quit_force_stops_before_waiting_for_run_result() -> None:
 
     controller = FakeController()
     app = _execution_app(controller)
@@ -657,7 +744,8 @@ async def test_quit_stops_future_scheduling_before_waiting_for_run_result() -> N
         await pilot.press("q", "y")
         await _wait_for_workers(app).wait_for_complete()
 
-        assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -744,11 +832,12 @@ async def test_quit_waits_for_an_in_flight_execution_without_active_runs() -> No
         setattr(app, worker_attr, InFlightWorker())
         await pilot.press("q")
 
-        assert "Stop scheduling and gracefully stop 0 active runs?" in (_confirmation_text(app))
+        assert "Quit and force stop 0 active runs?" in (_confirmation_text(app))
         await pilot.press("y")
         await _wait_for_workers(app).wait_for_complete()
 
-        assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -849,14 +938,15 @@ async def test_guidance_composer_stays_on_screen_on_a_short_terminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_quit_graceful_stop_keeps_force_stop_escalation_available() -> None:
+async def test_s_graceful_stop_keeps_force_stop_escalation_available() -> None:
     controller = FakeController()
     app = _execution_app(controller)
 
     async with app.run_test(size=(120, 36)) as pilot:
-        await pilot.press("q", "y")
+        await pilot.press("s", "y")
         await _wait_for_workers(app).wait_for_complete()
         assert controller.stop_requests == 1
+        assert controller.force_stop_all_requests == 0
 
         app.action_force()
         await pilot.press("y")
@@ -893,19 +983,21 @@ async def test_navigation_actions_and_resume_auto_follow() -> None:
 async def test_quit_keys_wait_for_confirmed_execution_shutdown(quit_key: str) -> None:
     class RunningController(FakeController):
         started: Event = Event()
-        stopped: Event = Event()
-        release: Event = Event()
+        stop_started: Event = Event()
+        release_stop: Event = Event()
+        release_run: Event = Event()
 
         @override
         def run(self, **kwargs: object) -> object:
             self.started.set()
-            assert self.release.wait(timeout=10)
+            assert self.release_run.wait(timeout=10)
             return super().run(**kwargs)
 
         @override
-        def stop_scheduling(self) -> None:
-            super().stop_scheduling()
-            self.stopped.set()
+        def force_stop_all(self, timeout: float = 8.0) -> bool:
+            self.stop_started.set()
+            assert self.release_stop.wait(timeout=10)
+            return super().force_stop_all(timeout)
 
     controller = RunningController()
     app = ExecutionApp(_as_execution_controller(controller), feature_branch="feature")
@@ -921,15 +1013,18 @@ async def test_quit_keys_wait_for_confirmed_execution_shutdown(quit_key: str) ->
             assert not app.screen.is_modal
             assert controller.stop_requests == 0
             await pilot.press(quit_key, "y")
-            assert await asyncio.to_thread(controller.stopped.wait, 2)
-            assert app.return_value is None
+            assert await asyncio.to_thread(controller.stop_started.wait, 2)
+            assert app._cleanup_confirmed is None  # pyright: ignore[reportPrivateUsage]
+            controller.release_stop.set()
+            async with asyncio.timeout(2):
+                while app._cleanup_confirmed is None:  # pyright: ignore[reportPrivateUsage]
+                    await asyncio.sleep(0.01)
+            assert app._cleanup_confirmed is True  # pyright: ignore[reportPrivateUsage]
         finally:
-            controller.release.set()
-        async with asyncio.timeout(2):
-            while app.return_value is None:
-                await asyncio.sleep(0.01)
-        assert app.return_value == controller.run_result
-        assert controller.stop_requests == 1
+            controller.release_stop.set()
+            controller.release_run.set()
+        assert controller.force_stop_all_requests == 1
+        assert controller.stop_requests == 0
 
 
 @pytest.mark.asyncio
@@ -995,6 +1090,8 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
     expected = object()
 
     class FakeApp:
+        cleanup_confirmed: bool | None = None
+
         def __init__(self, controller: FakeController, **kwargs: object) -> None:
             assert controller is expected_controller
             assert kwargs["feature_branch"] == "feature"
@@ -1011,6 +1108,54 @@ def test_tui_entry_returns_the_execution_result(monkeypatch: pytest.MonkeyPatch)
         )
         is expected
     )
+
+
+def test_tui_entry_prints_unresolved_cleanup_after_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import milknado.app.run_tui as run_tui
+
+    def run(self: ExecutionApp) -> None:
+        self._cleanup_confirmed = False  # pyright: ignore[reportPrivateUsage]
+
+    monkeypatch.setattr(run_tui.ExecutionApp, "run", run)
+
+    assert (
+        run_tui.run_execution_tui(
+            _as_execution_controller(FakeController()), feature_branch="feature"
+        )
+        is None
+    )
+    assert "force-stop cleanup did not finish" in capsys.readouterr().err
+
+
+def test_tui_signal_finishes_cleanup_after_display_exit(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import milknado.app.run_tui as run_tui
+
+    controller = FakeController(force_stop_all_result=False)
+    calls: list[str] = []
+
+    def run(self: ExecutionApp) -> None:
+        del self
+        calls.append("display-exit")
+        controller.shutdown_intent.record(signal.SIGHUP, None)
+
+    def force_stop_all(timeout: float = 8.0) -> bool:
+        del timeout
+        calls.append("stop")
+        return False
+
+    monkeypatch.setattr(run_tui.ExecutionApp, "run", run)
+    monkeypatch.setattr(controller, "force_stop_all", force_stop_all)
+    with pytest.raises(ShutdownSignal) as caught:
+        _ = run_tui.run_execution_tui(
+            _as_execution_controller(controller), feature_branch="feature"
+        )
+    assert calls == ["display-exit", "stop"]
+    assert caught.value.signum == signal.SIGHUP
+    assert "worker ownership remains" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio
@@ -1060,3 +1205,193 @@ async def test_compact_events_keep_errors_visible_and_allow_keyboard_scroll(
         assert app.auto_follow
         await pilot.press("escape")
         assert _runs(cast(ExecutionApp, app)).has_focus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_mounted_footer_shows_all_contextual_execution_controls(
+    size: tuple[int, int],
+) -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot()))
+
+    async with app.run_test(size=size) as pilot:
+        app.pause_auto_follow()
+        await pilot.pause()
+        svg = ElementTree.fromstring(app.export_screenshot())
+        rendered = " ".join(
+            node.text or "" for node in svg.iter("{http://www.w3.org/2000/svg}text")
+        ).replace("\xa0", " ")
+
+        footer_lines = [
+            (node.text or "").replace("\xa0", " ")
+            for node in svg.iter("{http://www.w3.org/2000/svg}text")
+            if node.text and "Force" in node.text
+        ]
+        assert any("f Force" in line for line in footer_lines)
+
+        for hint in ("g Guidance", "c Cancel", "f Force", "r Resume"):
+            assert hint in rendered
+
+        if size == (80, 24):
+            app.action_open_detail()
+            await pilot.pause()
+            assert app.route == "detail"
+            updated = ElementTree.fromstring(app.export_screenshot())
+            updated_text = " ".join(
+                node.text or "" for node in updated.iter("{http://www.w3.org/2000/svg}text")
+            ).replace("\xa0", " ")
+            assert "Enter Open" not in updated_text
+            assert "Esc Back" in updated_text
+
+
+@pytest.mark.asyncio
+async def test_mounted_footer_tracks_tree_selection_at_fixed_width() -> None:
+    source_value = graph_source()
+    app = ExecutionApp(cast(ExecutionController, cast(object, source_value)))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        tree = cast(Tree[object], app.query_one("#graph-tree", Tree))
+        _ = tree.focus()
+        await pilot.pause()
+
+        def labels() -> set[str]:
+            return {cast(Text, hint.render()).plain for hint in app.query(FooterHint)}
+
+        hints = tuple(app.query(FooterHint))
+        focus = {cast(Text, hint.render()).plain: hint.can_focus for hint in hints}
+
+        assert focus["i Session input"] is False
+        assert focus["? Help"] is False
+
+        active = labels()
+        assert "i Session input" in active
+        assert "g Guidance" in active
+        assert "c Cancel" in active
+        assert "f Force" in active
+
+        await pilot.press("down")
+        await pilot.pause()
+        pending = labels()
+        assert "i Session input" not in pending
+        assert "g Guidance" not in pending
+        assert "c Cancel" not in pending
+        assert "f Force" not in pending
+        assert {"? Help", "q Quit", "e Events", "Esc Back"} <= pending
+
+        await pilot.press("up")
+        await pilot.pause()
+        assert labels() == active
+
+
+@pytest.mark.asyncio
+async def test_mounted_footer_help_hint_opens_help() -> None:
+    app = _execution_app(FakeController(initial_snapshot=snapshot()))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        hint = next(item for item in app.query(FooterHint) if "Help" in str(item.render()))
+        _ = await pilot.click(hint, offset=(2, 0))
+        await pilot.pause()
+
+        assert app.screen.is_modal
+        assert app.screen.query_one("#help-scroll")
+
+
+class _FooterOwnerState(Protocol):
+    app_cancel_calls: int
+    modal_cancel_calls: int
+    app_same_calls: int
+    widget_same_calls: int
+
+
+class _FooterOwnerWidget(Static):
+    can_focus: bool = True
+    BINDINGS: ClassVar[list[BindingType]] = [("x", "same", "Same")]
+
+    def action_same(self) -> None:
+        state = cast(_FooterOwnerState, cast(object, self.app))
+        state.widget_same_calls += 1
+
+
+class _FooterOwnerApp(App[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        ("n", "cancel", "Cancel"),
+        ("x", "same", "Same"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.app_cancel_calls: int = 0
+        self.modal_cancel_calls: int = 0
+        self.app_same_calls: int = 0
+        self.widget_same_calls: int = 0
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield _FooterOwnerWidget()
+        yield RunFooter()
+
+    def action_cancel(self) -> None:
+        self.app_cancel_calls += 1
+
+    def action_same(self) -> None:
+        self.app_same_calls += 1
+
+
+class _FooterOwnerModal(ModalScreen[None]):
+    BINDINGS: ClassVar[list[BindingType]] = [("n", "cancel", "Cancel")]
+
+    @override
+    def compose(self) -> ComposeResult:
+        yield RunFooter()
+
+    def action_cancel(self) -> None:
+        state = cast(_FooterOwnerState, cast(object, self.app))
+        state.modal_cancel_calls += 1
+        _ = self.dismiss(None)
+
+
+@pytest.mark.asyncio
+async def test_footer_click_dispatches_to_modal_binding_owner() -> None:
+    app = _FooterOwnerApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        _ = app.push_screen(_FooterOwnerModal())
+        await pilot.pause()
+        hint = next(
+            item
+            for item in app.screen.query(FooterHint)
+            if cast(Text, item.render()).plain == "n Cancel"
+        )
+
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+
+        assert not app.screen.is_modal
+        assert app.modal_cancel_calls == 1
+        assert app.app_cancel_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_footer_click_tracks_same_action_when_binding_owner_changes() -> None:
+    app = _FooterOwnerApp()
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.set_focus(None)
+        await pilot.pause()
+        hint = next(
+            item for item in app.query(FooterHint) if cast(Text, item.render()).plain == "x Same"
+        )
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+        assert app.app_same_calls == 1
+
+        _ = app.query_one(_FooterOwnerWidget).focus()
+        await pilot.pause()
+        hint = next(
+            item for item in app.query(FooterHint) if cast(Text, item.render()).plain == "x Same"
+        )
+        _ = await pilot.click(hint, offset=(1, 0))
+        await pilot.pause()
+
+        assert app.app_same_calls == 1
+        assert app.widget_same_calls == 1

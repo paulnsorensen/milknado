@@ -8,29 +8,54 @@ export interface DetailsTabProps {
   hasMore: boolean;
 }
 
-/** The Details tab body: the node's fields, plus detail paging. */
+function joinIds(items: Array<number | string> | null): string {
+  return items && items.length > 0 ? items.join(', ') : 'none';
+}
+
+/** The Details tab body: the brief, the node's relations, plus detail paging. */
 export function DetailsTab({ detail, hasMore }: DetailsTabProps): ReactElement {
   const { Button } = Milknado;
+  const rows: Array<[string, string]> = [
+    ['Parent', detail.parent ? `${detail.parent.id} · ${detail.parent.description}` : 'none'],
+    ['Ancestors', String(detail.ancestors.items?.length ?? 0)],
+    ['Prerequisites', joinIds(detail.prerequisite_ids.items)],
+    ['Dependents', joinIds(detail.dependent_ids.items)],
+    ['Owned files', joinIds(detail.owned_files.items)],
+  ];
 
   return (
-    <div>
-      <p>{detail.description}</p>
-      <dl>
-        <dt>Parent</dt>
-        <dd>{detail.parent?.id ?? 'none'}</dd>
-        <dt>Ancestors</dt>
-        <dd>{detail.ancestors.items?.length ?? 0}</dd>
-        <dt>Prerequisites</dt>
-        <dd>{detail.prerequisite_ids.items?.join(', ') ?? ''}</dd>
-        <dt>Dependents</dt>
-        <dd>{detail.dependent_ids.items?.join(', ') ?? ''}</dd>
-        <dt>Owned files</dt>
-        <dd>{detail.owned_files.items?.join(', ') ?? ''}</dd>
-      </dl>
-      <Button onClick={() => dispatchAction('detail.page-previous')}>Previous</Button>
-      <Button disabled={!hasMore} onClick={() => dispatchAction('detail.page-next')}>
-        Next
-      </Button>
+    <div className="mk-console mk-well mk-stack">
+      <section className="mk-section">
+        <span className="mk-kicker">Brief</span>
+        <p className="mk-text-body">{detail.description}</p>
+      </section>
+      <section className="mk-section">
+        <div className="mk-rail-head" style={{ padding: 0 }}>
+          <span className="mk-kicker">Detail data</span>
+          <div className="mk-button-row">
+            <Button icon className="mk-btn-ctl" ariaLabel="Previous" onClick={() => dispatchAction('detail.page-previous')}>
+              {'‹'}
+            </Button>
+            <Button
+              icon
+              className="mk-btn-ctl"
+              ariaLabel="Next"
+              disabled={!hasMore}
+              onClick={() => dispatchAction('detail.page-next')}
+            >
+              {'›'}
+            </Button>
+          </div>
+        </div>
+        <dl>
+          {rows.map(([key, value]) => (
+            <div key={key} className="mk-kv">
+              <dt>{key}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
     </div>
   );
 }

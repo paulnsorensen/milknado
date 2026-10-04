@@ -13,6 +13,7 @@ from typing import TypedDict, cast
 import pytest
 from fastmcp import Context
 
+from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
@@ -20,6 +21,7 @@ from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import GraphNodeSummary, mcp
 from milknado.mcp.follow_up import milknado_track_follow_up
 from milknado.mcp.run import (
+    milknado_run_cancel,
     milknado_run_inline,
     milknado_run_inline_poll,
     milknado_run_inline_start,
@@ -106,6 +108,20 @@ def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> 
             return last
         time.sleep(0.05)
     raise AssertionError(f"run {run_id} did not finish; last state={last}")
+
+
+def _cancel_after_spawn(run_id: str, project_root: str, timeout: float = 10.0) -> None:
+    """Wait until the async worker has a pid, then cancel it (cancel needs the pid)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = _call(milknado_run_inline_poll, run_id=run_id, project_root=project_root)
+        if (
+            cast(dict[str, object], cast(object, state)).get("pid") is not None
+            or state["status"] != "running"
+        ):
+            break
+        time.sleep(0.05)
+    _ = _call(milknado_run_cancel, run_id=run_id, project_root=project_root)
 
 
 def _call(tool: object, **kwargs: object) -> _McpResponse:
@@ -926,7 +942,7 @@ class TestTodoAsyncRun:
         _seed_run(root, run_id=run_id, node_id=7, started_at=stale_started, timeout_seconds=10)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 7)
+            flipped = fail_stale_running_runs(graph, 7, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -942,7 +958,7 @@ class TestTodoAsyncRun:
         try:
             from milknado.domains.dispatch import fail_stale_running_runs
 
-            assert fail_stale_running_runs(graph, 8) == []
+            assert fail_stale_running_runs(graph, 8, ProcessAdapter()) == []
             assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
@@ -951,7 +967,7 @@ class TestTodoAsyncRun:
         self, root: Path, run_id: str, node_id: int, *, pid: int | None
     ) -> None:
         """Seed a 'running' run aged well past its timeout. `pid=None` models the
-        async-worker path (no pid recorded); an int models the detached-ralph
+        async-worker path (no pid recorded); an int models the detached-loop
         path, which records its process pid."""
         from datetime import UTC, datetime, timedelta
 
@@ -966,7 +982,7 @@ class TestTodoAsyncRun:
         )
 
     def test_fail_stale_does_not_flip_live_detached_run(self, tmp_path: Path) -> None:
-        """#54: a detached-ralph run still 'running' past timeout+grace but whose
+        """#54: a detached-loop run still 'running' past timeout+grace but whose
         recorded pid is ALIVE (slow, e.g. wedged in `git rebase`) must NOT be
         force-failed — that thrashes a run about to write 'done'."""
         import os
@@ -979,7 +995,9 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 9, pid=os.getpid())
         graph, _cfg = open_graph(root)
         try:
-            assert fail_stale_running_runs(graph, 9) == [], "a live runner was wrongly flipped"
+            assert fail_stale_running_runs(graph, 9, ProcessAdapter()) == [], (
+                "a live runner was wrongly flipped"
+            )
             assert _run_status(graph, run_id) == "running"
         finally:
             graph.close()
@@ -995,7 +1013,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 10, pid=2**31 - 1)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 10)
+            flipped = fail_stale_running_runs(graph, 10, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -1013,7 +1031,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, run_id, 11, pid=None)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 11)
+            flipped = fail_stale_running_runs(graph, 11, ProcessAdapter())
             assert len(flipped) == 1
             assert flipped[0]["status"] == "failed"
             assert _run_status(graph, run_id) == "failed"
@@ -1021,9 +1039,9 @@ class TestTodoAsyncRun:
             graph.close()
 
     def test_fail_stale_mixed_kinds_flips_only_the_dead_one(self, tmp_path: Path) -> None:
-        """#54 cross-namespace guard: BOTH a detached-ralph run (records a pid) and
+        """#54 cross-namespace guard: BOTH a detached-loop run (records a pid) and
         a pid-less async run exist for the same node. The sweep must flip only the
-        genuinely-dead one — a live ralph run for the node must survive, not be
+        genuinely-dead one — a live loop run for the node must survive, not be
         cross-failed."""
         import os
 
@@ -1036,7 +1054,7 @@ class TestTodoAsyncRun:
         self._seed_stale_running(root, dead, 12, pid=None)
         graph, _cfg = open_graph(root)
         try:
-            flipped = fail_stale_running_runs(graph, 12)
+            flipped = fail_stale_running_runs(graph, 12, ProcessAdapter())
             assert [f["run_id"] for f in flipped] == [dead]
             assert _run_status(graph, live) == "running"
             assert _run_status(graph, dead) == "failed"
@@ -1143,6 +1161,10 @@ class TestTodoAsyncRun:
         for t in threads:
             t.join(timeout=10)
 
+        # The winner's worker spawns from a background thread. Cancel it once
+        # spawned so it cannot outlive this test and resolve PATH after teardown.
+        for started in results:
+            _cancel_after_spawn(started["run_id"], root)
         assert len(results) == 1, (
             f"expected exactly 1 successful dispatch, got {len(results)} "
             f"(race: duplicate workers spawned). errors={errors}"
@@ -1321,13 +1343,13 @@ class TestTodoAsyncRun:
         )
         graph, _cfg = open_graph(root)
         try:
-            reclaim_stale_node(graph, 9, fence_run_id=None)
+            reclaim_stale_node(graph, 9, fence_run_id=None, process=ProcessAdapter())
             unowned = graph.get_node(9)
             assert unowned is not None and unowned.status.value == "done"
 
             graph.mark_pending(10)
             assert graph.claim_node(10, "owner", now=now_iso())
-            reclaim_stale_node(graph, 10, fence_run_id=None)
+            reclaim_stale_node(graph, 10, fence_run_id=None, process=ProcessAdapter())
             owned = graph.get_node(10)
             assert owned is not None and owned.status.value == "running"
         finally:
@@ -2609,7 +2631,7 @@ def test_main_imports_all_tool_modules() -> None:
     from milknado.mcp import server as mcp_server
 
     src = inspect.getsource(mcp_server.main)
-    for module in ("ralph", "run", "todo", "todo_mutate", "wiki"):
+    for module in ("loop", "run", "todo", "todo_mutate", "wiki"):
         assert re.search(rf"\b{module}\b", src), (
             f"main() no longer imports {module}; its tools won't register on server startup"
         )
@@ -2636,8 +2658,8 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     from milknado.mcp import (
         github,
         goal_review,
+        loop,
         node,
-        ralph,
         rebalance,
         run,
         todo,
@@ -2646,7 +2668,7 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
     )
     from milknado.mcp._core import mcp
 
-    _ = (github, goal_review, node, ralph, rebalance, run, todo, todo_mutate, wiki)
+    _ = (github, goal_review, node, loop, rebalance, run, todo, todo_mutate, wiki)
 
     tools = asyncio.run(mcp.list_tools())
     names = sorted(t.name for t in tools)
@@ -2697,15 +2719,15 @@ def test_mcp_tool_modules_register_expected_tool_names() -> None:
 
 def test_mcp_metadata_stays_succinct_and_accurate() -> None:
     """MCP listings should advertise tool families without implementation mechanics."""
-    from milknado.mcp import node, ralph, run, todo, todo_mutate, wiki
+    from milknado.mcp import loop, node, run, todo, todo_mutate, wiki
 
-    _ = (node, ralph, run, todo, todo_mutate, wiki)
+    _ = (node, loop, run, todo, todo_mutate, wiki)
 
     families = (
         "graph CRUD",
         "batch planning",
         "worker dispatch",
-        "detached ralph runs",
+        "detached loop runs",
         "run polling/cancel",
         "roadmap import/export",
     )

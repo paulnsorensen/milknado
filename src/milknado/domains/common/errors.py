@@ -49,11 +49,11 @@ class UnlandedWorkError(MilknadoError):
         super().__init__(f"refusing to remove worktree {worktree}: {at_risk}")
 
 
-class RalphMarkdownWriteError(MilknadoError):
+class LoopMarkdownWriteError(MilknadoError):
     def __init__(self, path: Path, cause: OSError | None = None) -> None:
         self.path: Path = path
         self.cause: OSError | None = cause
-        super().__init__(f"Failed to write RALPH.md to {path}")
+        super().__init__(f"Failed to write LOOP.md to {path}")
 
 
 class CompletionTimeout(MilknadoError):

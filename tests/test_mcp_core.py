@@ -54,6 +54,8 @@ def test_run_dict_builder_is_the_canonical_superset() -> None:
         "worktree_preserved": None,
         "error": None,
         "detail": None,
+        "running": None,
+        "limit": None,
     }
 
 

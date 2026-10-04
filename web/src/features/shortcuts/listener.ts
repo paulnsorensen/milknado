@@ -24,7 +24,7 @@ function isDialogOpen(): boolean {
 }
 
 export function handleShortcutKey(event: KeyboardEvent): void {
-  if (isDialogOpen() || isTextEntry(event.target)) {
+  if (event.defaultPrevented || isDialogOpen() || isTextEntry(event.target)) {
     return;
   }
   const shortcut = KEY_BINDINGS.find((binding) => binding.key === event.key);

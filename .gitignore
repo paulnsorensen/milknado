@@ -50,6 +50,7 @@ coverage.xml
 *.py.cover
 .hypothesis/
 .pytest_cache/
+.testmondata*
 cover/
 
 # Translations
@@ -208,7 +209,7 @@ marimo/_lsp/
 __marimo__/
 
 # Milknado runtime artifacts
-ralphs/
+loops/
 *.db
 *.db-journal
 

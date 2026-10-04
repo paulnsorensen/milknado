@@ -149,7 +149,7 @@
     var widest = 0; Object.keys(levels).forEach(function (d) { widest = Math.max(widest, levels[d].length); });
     var pillW = Math.max(96, Math.min(120, Math.floor((W - pad * 2 - gap * (widest - 1)) / Math.max(1, widest))));
     function widthAt(l, n) { return l === 'dot' ? 12 : l === 'pill' ? pillW : n.kind === 'goal' ? 200 : 148; }
-    function heightAt(l, n) { return l === 'dot' ? 12 : l === 'pill' ? 24 : collapsed[n.id] ? 62 : n.kind === 'goal' ? 56 : 44; }
+    function heightAt(l, n) { if (l === 'dot') return 12; if (l === 'pill') return 24; if (p.compact) return n.kind === 'goal' ? 80 : 70; return collapsed[n.id] ? 62 : n.kind === 'goal' ? 56 : 44; }
     function rowsNeeded(l, row) { var total = row.reduce(function (s, n) { return s + widthAt(l, n); }, 0) + gap * (row.length - 1); return Math.max(1, Math.ceil(total / (W - pad * 2))); }
     /* Semantic zoom: a level that needs more than two staggered rows at this detail steps the whole graph down (cards → pills → dots). */
     if (p.autoLod !== false) { var order = ['card', 'pill', 'dot']; var i = order.indexOf(lod); while (i < 2 && Object.keys(levels).some(function (d) { return rowsNeeded(order[i], levels[d]) > 2; })) i++; lod = order[i]; }

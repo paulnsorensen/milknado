@@ -26,7 +26,7 @@ import pytest
 from milknado.adapters.git import GitAdapter
 from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common.types import NodeStatus
-from milknado.domains.execution import ExecutionConfig, Executor, run_node_to_completion
+from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
 from milknado.domains.graph import MikadoGraph
 
 # ---------------------------------------------------------------------------
@@ -37,6 +37,8 @@ _AGENT = "claude --model claude-sonnet-4-6"
 _TIMEOUT = 300.0  # 5-minute ceiling — generous but finite
 
 _CLAUDE_MISSING = shutil.which("claude") is None
+# Captured at collection, before the session guard shadows agent CLIs on PATH.
+_REAL_PATH = os.environ.get("PATH", "")
 _KEY_MISSING = not os.environ.get("ANTHROPIC_API_KEY")
 _SKIP_REASON = (
     "claude CLI not found"
@@ -50,6 +52,15 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(bool(_SKIP_REASON), reason=_SKIP_REASON or "n/a"),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _allow_real_claude(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """This live e2e module is the one deliberate user of the real claude CLI."""
+    monkeypatch.setenv("PATH", _REAL_PATH)
+
 
 # ---------------------------------------------------------------------------
 # Minimal CRG stub — satisfies CrgPort structurally; never actually called
@@ -149,17 +160,12 @@ def test_sonnet_worker_leaf_to_done(tmp_path: Path) -> None:
         executor = Executor(
             graph=graph,
             git=GitAdapter(repo),
-            ralph=loop,
+            loop=loop,
             crg=_StubCrg(),
         )
 
-        outcome = run_node_to_completion(
-            executor=executor,
-            ralph=loop,
-            node_id=leaf_id,
-            exec_config=exec_config,
-            feature_branch=feature_branch,
-            timeout=_TIMEOUT,
+        outcome = RunLoop(executor=executor, graph=graph, loop=loop).run_node(
+            leaf_id, exec_config, feature_branch, _TIMEOUT
         )
 
         assert outcome.success, f"worker run failed: {outcome.detail}"

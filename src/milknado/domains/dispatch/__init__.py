@@ -1,4 +1,5 @@
 from milknado.domains.common.agent_argv import validate_worker_argv
+from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     clear_cancel,
@@ -22,7 +23,6 @@ from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
     create_isolated_worktree,
-    merge_back_isolated,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.lifecycle import (
@@ -31,13 +31,16 @@ from milknado.domains.dispatch.lifecycle import (
     reclaim_stale_node,
 )
 from milknado.domains.dispatch.ports import (
+    Descendant,
     GraphSessionPort,
     ProcessOutcome,
     ProcessPort,
     ProcessTerminationPort,
     RunWindow,
     TmuxPort,
+    WorkerCleanupResult,
 )
+from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import (
     fail_stale_running_runs,
     reconcile_node_status,
@@ -59,22 +62,25 @@ __all__ = [
     "AsyncRunRequest",
     "AsyncStartRef",
     "RUN_ID_RE",
+    "ReapRequest",
     "RunResult",
     "IsolateContext",
     "MergeBackResult",
     "SyncDispatchRequest",
+    "Descendant",
     "GraphSessionPort",
     "ProcessOutcome",
     "ProcessPort",
     "ProcessTerminationPort",
     "RunWindow",
     "TmuxPort",
+    "WorkerCleanupResult",
     "cancel_run",
     "clear_cancel",
     "build_worker_env",
     "create_isolated_worktree",
+    "claim_with_host_slot",
     "dispatch_node_sync",
-    "merge_back_isolated",
     "exit_code_path",
     "ensure_tmux_ready",
     "fail_stale_running_runs",
@@ -83,6 +89,7 @@ __all__ = [
     "now_iso",
     "poll_async_run",
     "reclaim_stale_node",
+    "reap_orphaned_workers",
     "reconcile_node_status",
     "reconcile_orphaned_runs",
     "reconcile_run_window",

@@ -17,5 +17,7 @@ describe('NoticeToasts', () => {
     render(<NoticeToasts />);
 
     expect(screen.getByText('Cancel is unavailable.')).toBeTruthy();
+    expect(screen.getByRole('alert')).toHaveTextContent('Cancel is unavailable.');
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeVisible();
   });
 });

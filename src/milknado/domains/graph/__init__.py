@@ -2,6 +2,8 @@ from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._command_admission import admit_session_command
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._run_persistence import RunRecord
+from milknado.domains.graph._transitions import ConcurrencyLimitReached, HostCapacityFull
+from milknado.domains.graph._worker_persistence import WorkerRecord
 from milknado.domains.graph.commands import (
     CommandFenceError,
     CommandReceipt,
@@ -10,6 +12,7 @@ from milknado.domains.graph.commands import (
     OwnerCapabilities,
     new_command_id,
 )
+from milknado.domains.graph.controller_capability import ControllerAuthorizationError
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
     GoalAdmissionDenied,
@@ -56,9 +59,21 @@ from milknado.domains.graph.status_flow import (
     validate_todo_status,
 )
 from milknado.domains.graph.traversals import walk_ancestors
+from milknado.domains.graph.worker_evidence import (
+    NodeWorkers,
+    RunWorkers,
+    UnassociatedWorkers,
+    WorkerEvidenceStore,
+    default_worker_db_path,
+    existing_standalone_worker_db,
+    open_standalone_worker_evidence,
+)
 
 __all__ = [
     "admit_session_command",
+    "ControllerAuthorizationError",
+    "ConcurrencyLimitReached",
+    "HostCapacityFull",
     "connect_readonly",
     "CommandFenceError",
     "CommandReceipt",
@@ -90,6 +105,14 @@ __all__ = [
     "ObserverSnapshot",
     "RunFenceLostError",
     "RunRecord",
+    "WorkerEvidenceStore",
+    "WorkerRecord",
+    "NodeWorkers",
+    "RunWorkers",
+    "UnassociatedWorkers",
+    "default_worker_db_path",
+    "existing_standalone_worker_db",
+    "open_standalone_worker_evidence",
     "ReapFailure",
     "ReapOutcome",
     "ReapTarget",

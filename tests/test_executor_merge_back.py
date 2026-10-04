@@ -1,15 +1,15 @@
 """Integration tests for the worker-branch merge-back path (vendored-loop-hardening #4).
 
-The vendored ralph engine left a defect: a worker's rebased branch was never merged
+The vendored loop engine left a defect: a worker's rebased branch was never merged
 back into the feature branch, so a DONE node deposited zero commits onto the feature
 branch — work stranded on `milknado/<id>-*`. These tests drive `Executor.complete`
 through a *real* git repo + linked worktree (not a fake) and assert the three
 coordinated fixes land together:
 
 1. The worker's squashed commit ends up on the feature branch (fast-forward merge-back).
-2. The loop's own scaffolding (RALPH.md, .ralph-logs/) never reaches that commit
+2. The loop's own scaffolding (LOOP.md, .loop-logs/) never reaches that commit
    (worktree-local `.git/info/exclude`).
-3. The run's `.ralph-logs/` is preserved to `.milknado/logs/<node_id>/` before the
+3. The run's `.loop-logs/` is preserved to `.milknado/logs/<node_id>/` before the
    worktree is destroyed (post-mortem evidence).
 
 A fast-forward that cannot apply (dirty/diverged project root) must raise, never
@@ -34,6 +34,7 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import GitOperationError
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.common.types import RebaseResult
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution.executor import ExecutionConfig, Executor, WorktreeManager
 from milknado.domains.graph import MikadoGraph
 
@@ -57,10 +58,6 @@ def _crg_port(value: object) -> CrgPort:
     return cast(CrgPort, value)
 
 
-def _worker_run_ids(executor: Executor) -> dict[int, str]:
-    return cast(dict[int, str], attrgetter("_worker_run_id_by_node")(executor))
-
-
 def _git(cwd: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],
@@ -82,14 +79,14 @@ def _init_project(root: Path) -> None:
 
 
 def _worker_did_work(worktree: Path) -> None:
-    """Simulate a ralph run inside `worktree`: a real source change committed on the
+    """Simulate a loop run inside `worktree`: a real source change committed on the
     worker branch, plus the loop's own scaffolding left lying around uncommitted."""
     _ = (worktree / "feature.py").write_text("def added():\n    return 1\n")
     _ = _git(worktree, "add", "feature.py")
     _ = _git(worktree, "commit", "-qm", "wip: worker change")
     # Loop scaffolding the worker must NOT carry into the squashed commit.
-    _ = (worktree / "RALPH.md").write_text("# loop scaffolding\n")
-    logs = worktree / ".ralph-logs"
+    _ = (worktree / "LOOP.md").write_text("# loop scaffolding\n")
+    logs = worktree / ".loop-logs"
     logs.mkdir()
     _ = (logs / "run.log").write_text("iteration 1 log line\n")
 
@@ -123,7 +120,7 @@ class TestMergeBackIntegration:
         try:
             _ = _running_node(graph, wt, branch)
             ex = Executor(
-                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
             )
             result = ex.complete(1, "feature")
         finally:
@@ -137,8 +134,46 @@ class TestMergeBackIntegration:
         subject = _git(project, "log", "-1", "--format=%s").strip()
         assert subject.startswith("feat(milknado-1):")
 
+    def test_context_pins_worktree_when_graph_path_is_stale(
+        self, project: Path, tmp_path: Path
+    ) -> None:
+        git = GitAdapter(project)
+        branch = "milknado/1-added"
+        wt = project / "milknado-1-added"
+        _ = git.create_worktree(wt, branch)
+        _EXCLUDE_LOOP_SCAFFOLDING(git.git_common_dir(wt))
+        _worker_did_work(wt)
+        graph = MikadoGraph(tmp_path / "g.db")
+        try:
+            _ = _running_node(graph, tmp_path / "stale-worktree", branch)
+            ex = Executor(
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
+            )
+            ex._context_by_node[1] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+                worker_run_id="worker-1",
+                owner_fence=None,
+                worktree=wt,
+                session=None,
+                target_branch="feature",
+                target_oid=_git(project, "rev-parse", "HEAD").strip(),
+                base_oid=None,
+                review_round=0,
+                config=ExecutionConfig(
+                    execution_agent="unused",
+                    quality_gates=(Gate(command="true"),),
+                    worktree_pattern="unused",
+                    project_root=project,
+                ),
+            )
+            result = ex.complete(1, "feature")
+        finally:
+            graph.close()
+        assert result.rebased is True
+        assert "def added()" in _git(project, "show", "HEAD:feature.py")
+        assert not wt.exists()
+
     def test_scaffolding_absent_from_feature_commit(self, project: Path, tmp_path: Path) -> None:
-        """RALPH.md / .ralph-logs/ must never be staged into the merged-back commit."""
+        """LOOP.md / .loop-logs/ must never be staged into the merged-back commit."""
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
@@ -150,19 +185,19 @@ class TestMergeBackIntegration:
         try:
             _ = _running_node(graph, wt, branch)
             ex = Executor(
-                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
             )
             _ = ex.complete(1, "feature")
         finally:
             graph.close()
 
         tracked = _ = _git(project, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
-        assert "RALPH.md" not in tracked
-        assert not any(p.startswith(".ralph-logs") for p in tracked)
+        assert "LOOP.md" not in tracked
+        assert not any(p.startswith(".loop-logs") for p in tracked)
         assert "feature.py" in tracked
 
     def test_run_logs_preserved_under_milknado(self, project: Path, tmp_path: Path) -> None:
-        """The run's .ralph-logs/ survives worktree removal at .milknado/logs/<id>/."""
+        """The run's .loop-logs/ survives worktree removal at .milknado/logs/<id>/."""
         git = GitAdapter(project)
         branch = "milknado/1-added"
         wt = project / "milknado-1-added"
@@ -174,7 +209,7 @@ class TestMergeBackIntegration:
         try:
             _ = _running_node(graph, wt, branch)
             ex = Executor(
-                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
             )
             _ = ex.complete(1, "feature")
         finally:
@@ -205,9 +240,24 @@ class TestMergeBackIntegration:
             graph.mark_running(1, worktree_path=str(wt), branch_name=branch, run_id="run-1")
             graph.runs.start("run-1", 1, "run.log", "2026-01-01T00:00:00+00:00", 300)
             ex = Executor(
-                graph=graph, git=git, ralph=_loop_port(_NoRalph()), crg=_crg_port(_NoCrg())
+                graph=graph, git=git, loop=_loop_port(_NoLoop()), crg=_crg_port(_NoCrg())
             )
-            _worker_run_ids(ex)[1] = "run-1"
+            ex._context_by_node[1] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+                worker_run_id="run-1",
+                owner_fence=None,
+                worktree=wt,
+                session=None,
+                target_branch="feature",
+                target_oid=_git(project, "rev-parse", "HEAD").strip(),
+                base_oid=None,
+                review_round=0,
+                config=ExecutionConfig(
+                    execution_agent="unused",
+                    quality_gates=(Gate(command="true"),),
+                    worktree_pattern="unused",
+                    project_root=project,
+                ),
+            )
 
             result = ex.complete(1, "feature")
             row = graph.runs.get("run-1")
@@ -316,8 +366,8 @@ class TestExcludeLoopScaffolding:
             text=True,
         ).stdout.strip()
         exclude = (Path(common) / "info" / "exclude").read_text()
-        assert "RALPH.md" in exclude
-        assert ".ralph-logs/" in exclude
+        assert "LOOP.md" in exclude
+        assert ".loop-logs/" in exclude
 
     def test_idempotent_no_duplicate_lines(self, project: Path) -> None:
         git = GitAdapter(project)
@@ -334,8 +384,8 @@ class TestExcludeLoopScaffolding:
             text=True,
         ).stdout.strip()
         lines = (Path(common) / "info" / "exclude").read_text().splitlines()
-        assert lines.count("RALPH.md") == 1
-        assert lines.count(".ralph-logs/") == 1
+        assert lines.count("LOOP.md") == 1
+        assert lines.count(".loop-logs/") == 1
 
     def test_non_git_path_is_silent_noop(self, tmp_path: Path) -> None:
         """A test double's bare path is not a git checkout — must not raise."""
@@ -373,9 +423,9 @@ class TestPreserveRunLogs:
 
     def test_copies_logs_tree(self, tmp_path: Path) -> None:
         wt = tmp_path / "proj" / "wt"
-        (wt / ".ralph-logs" / "sub").mkdir(parents=True)
-        _ = (wt / ".ralph-logs" / "a.log").write_text("a\n")
-        _ = (wt / ".ralph-logs" / "sub" / "b.log").write_text("b\n")
+        (wt / ".loop-logs" / "sub").mkdir(parents=True)
+        _ = (wt / ".loop-logs" / "a.log").write_text("a\n")
+        _ = (wt / ".loop-logs" / "sub" / "b.log").write_text("b\n")
         _PRESERVE_RUN_LOGS(None, wt, 7)
         dest = tmp_path / "proj" / ".milknado" / "logs" / "7"
         assert (dest / "a.log").read_text() == "a\n"
@@ -383,7 +433,7 @@ class TestPreserveRunLogs:
 
     def test_retains_only_twenty_newest_log_files(self, tmp_path: Path) -> None:
         wt = tmp_path / "proj" / "wt"
-        logs = wt / ".ralph-logs"
+        logs = wt / ".loop-logs"
         logs.mkdir(parents=True)
         for index in range(22):
             path = logs / f"{index:02}.log"
@@ -407,8 +457,8 @@ class TestPreserveRunLogs:
         sub.mkdir()
         wt = sub / "wt-1"
         _ = git.create_worktree(wt, "milknado/1-x")
-        (wt / ".ralph-logs").mkdir()
-        _ = (wt / ".ralph-logs" / "run.log").write_text("nested log\n")
+        (wt / ".loop-logs").mkdir()
+        _ = (wt / ".loop-logs" / "run.log").write_text("nested log\n")
         _PRESERVE_RUN_LOGS(git.git_common_dir(wt), wt, 1)
         # Correct: under the main checkout root.
         preserved = project / ".milknado" / "logs" / "1" / "run.log"
@@ -491,7 +541,7 @@ class TestDispatchRelocationIntegration:
             ex = Executor(
                 graph=graph,
                 git=git,
-                ralph=_loop_port(_DispatchRalph()),
+                loop=_loop_port(_DispatchLoop()),
                 crg=_crg_port(_NoCrg()),
             )
             config = ExecutionConfig(
@@ -529,7 +579,7 @@ class TestDispatchRelocationIntegration:
             ex = Executor(
                 graph=graph,
                 git=git,
-                ralph=_loop_port(_DispatchRalph()),
+                loop=_loop_port(_DispatchLoop()),
                 crg=_crg_port(_NoCrg()),
             )
             config = ExecutionConfig(
@@ -561,10 +611,10 @@ class _Run:
     state: _RunState
 
 
-class _DispatchRalph:
+class _DispatchLoop:
     """Just enough LoopPort for Executor.dispatch to run against real git."""
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[object, ...] | None,
@@ -573,14 +623,14 @@ class _DispatchRalph:
         findings_round: int | None = None,
     ) -> Path:
         _ = (brief, quality_gates, prior_findings, findings_round)
-        _ = output_path.write_text("# ralph\n")
+        _ = output_path.write_text("# loop\n")
         return output_path
 
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[object, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -590,11 +640,12 @@ class _DispatchRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _Run:
         _ = (
             agent,
-            ralph_dir,
-            ralph_file,
+            loop_dir,
+            loop_file,
             quality_gates,
             project_root,
             commit_footer,
@@ -603,6 +654,7 @@ class _DispatchRalph:
             completion_probe,
             max_iterations,
             timeout,
+            env,
         )
         return _Run(_RunState(run_id or "run-1"))
 
@@ -666,8 +718,8 @@ class _RecordingGit:
         self.removed.append(path)
 
 
-class _NoRalph:
-    """Executor.complete never touches the ralph port; present only to satisfy ctor."""
+class _NoLoop:
+    """Executor.complete never touches the loop port; present only to satisfy ctor."""
 
 
 class _NoCrg:

@@ -45,7 +45,7 @@ Open questions to resolve during design (not silently):
   commits not landed in the target branch; the refusal names the worktree
   and what is unlanded/dirty.
 - Squash- and rebase-merged branches are recognized as landed (no false
-  refusal for the normal ralph rebase-merge flow), covered by tests for
+  refusal for the normal loop rebase-merge flow), covered by tests for
   each merge shape.
 - Forced destruction remains available only through an explicitly-named
   discard path; no caller reaches `--force` implicitly.

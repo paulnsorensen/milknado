@@ -1,28 +1,30 @@
-# Execution & Dispatch — Parallel Ralph Loops
+# Execution & Dispatch — Parallel loops
 
 How a solved batch of ready Mikado nodes is dispatched into isolated git
-worktrees, run as parallel ralph loops, and merged back. Two domains cooperate:
+worktrees, run as parallel loops, and merged back. Two domains cooperate:
 `execution/` owns the per-node worktree lifecycle and terminal state machine;
 `dispatch/` owns subprocess workers, run-state rows, and node-status
 reconciliation.
 
 ## What runs in parallel
 
-A "ralph loop" is one node executing in its own worktree against a freshly
-generated `RALPH.md`. The batcher (`domains/batching`) groups ready nodes into
+A "loop" is one node executing in its own worktree against a freshly
+generated `LOOP.md`. The batcher (`domains/batching`) groups ready nodes into
 batches that are safe to run together; within a batch each node is an
-independent ralph loop. `get_dispatchable_nodes` (executor.py) is the in-flight
-gate: it takes `graph.get_ready_nodes()`, runs `check_parallel_safety` to drop
-nodes that share owned files with another ready node (the later id is blocked,
-logged, deferred), and returns the safe set. File-ownership conflict is the only
-parallelism constraint — dependencies are already encoded in readiness.
+independent loop. `get_dispatchable_nodes` checks readiness and file-ownership conflicts.
+The graph claim transaction enforces the shared project concurrency limit.
+CLI, detached, inline, and native dispatch use this same admission authority.
+One owned running task consumes one slot, even when it has parent and worker run records.
+Capacity refusal leaves the task unchanged and starts no worker or worktree.
 
 ## Dispatch lifecycle (`Executor`, executor.py)
 
 `dispatch(node_id, config)` wraps `_dispatch_once` in a transient-retry loop
-(`dispatch_max_retries`, exponential backoff). `InvalidTransition`/`ValueError`
-re-raise immediately; transient failures (OSError, timeout, 429/rate-limit,
-exit 124/137/143 — see `_is_transient`) retry.
+(`dispatch_max_retries`, exponential backoff). `InvalidTransition`, `ValueError`,
+and `PreservedWorkerRun` re-raise immediately. The preserved-worker exception bypasses
+message classification, even when its generated run ID contains `429`.
+Other transient failures (OSError, timeout, 429/rate-limit,
+exit 124/137/143 — see `_is_transient`) retry.[^preserved-dispatch-retry]
 
 `_dispatch_once`:
 
@@ -38,14 +40,18 @@ exit 124/137/143 — see `_is_transient`) retry.
    `…-{n}` variant).
 5. Two claim paths diverge here (see "Two claim paths" below): set the node
    RUNNING (or attach worktree metadata to an already-claimed node), generate
-   `RALPH.md` via `_create_ralph_run`, start the ralph run, record `dispatched_at`.
+   `LOOP.md` via `_create_loop_run`, start the loop run, record `dispatched_at`.
 
-On any failure inside the try, `_cleanup_failed_dispatch` runs a **fenced**
-state reset (release under the node's `run_id` if it has one, else `mark_pending`)
-then discards the worktree. The fence stops a failed dispatch from walking a node
-back to PENDING after a different run already re-claimed it.
+On dispatch failure, cleanup releases the claim under its owner fence and discards
+the worktree only after worker exit is confirmed. An unconfirmed stop preserves
+the claim, running row, and worktree, then raises `PreservedWorkerRun`.
+The owner fence prevents cleanup from releasing another run's claim.[^preserved-dispatch-retry]
 
-`_create_ralph_run` renders the shared `dispatch.brief.render_brief` output, wraps it in ralph-only loop scaffolding, writes `RALPH.md`, creates and starts the ralph run, and returns its `run_id`.
+[^preserved-dispatch-retry]: src/milknado/domains/execution/executor.py, `_should_retry_dispatch`, `_dispatch_once`, and `_cleanup_failed_dispatch`; tests/test_execution.py, `TestShouldRetryDispatch` and `test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree`.
+
+_Source: PR #510 CI failure and typed retry guard · Updated: 2026-10-01 · Supersedes: unconditional dispatch-failure cleanup description._
+
+`_create_loop_run` renders the shared `dispatch.brief.render_brief` output, adds iteration-specific scaffolding, writes `LOOP.md`, starts the loop run, and returns its `run_id`.
 
 ## Run identity — runs are per-task-dispatch; there is NO coordinator-run entity
 
@@ -108,7 +114,7 @@ why:
 `_dispatch_once` branches on `already_claimed = node.status == RUNNING and
 node.run_id is not None`:
 
-- **Ralph/MCP detached path** — the dispatching parent claims the node RUNNING
+- **Loop/MCP detached path** — the dispatching parent claims the node RUNNING
   under a `run_id` *before* the detached runner reaches `_dispatch_once`. Re-marking
   RUNNING would be an illegal RUNNING→RUNNING transition that kills the detached
   run at startup. Instead it calls `set_worktree(node_id, node.run_id, ...)`
@@ -147,6 +153,16 @@ run_id, status)` (atomic `WHERE run_id=? AND status='running'`) and returns
 whether the write landed; with no `run_id` (legacy/test) it transitions
 unconditionally. Duration is recorded only when the write actually landed.
 
+`NodeExecutionContext` replaces eight parallel per-node maps.
+It keeps worker identity distinct from an adopted parent owner fence.
+The record also holds the worktree, session, pinned target, base OID, review round, and configuration.
+Pure review policy returns allow-merge, redispatch, or block decisions.
+Executor retains worker calls, graph transactions, notifications, and Git effects.
+Review audit precedes merge; audit failure or reviewer error blocks merge.
+Notification failure remains separate from audit failure.
+Review redispatch retains the worktree, session, owner fence, and capacity slot.
+Terminal replay returns before merge, and unconfirmed cleanup preserves ownership and the worktree.[^deep-module-implementation]
+
 ## Fail-closed worktree teardown
 
 Teardown refuses to destroy work by default; destruction is an explicitly
@@ -172,7 +188,7 @@ Refusal semantics per call site:
 | `WorktreeManager.remove` (from `rebase_and_merge` / `Executor.fail`) | **hard-fail** the caller — the old warn-and-swallow after a `--force` remove was silent destruction |
 | `cancel.py:_reconcile_cancel` (routes through `WorktreeManager.remove`, never the raw adapter) | **hard-fail** the cancel; worktree and node preserved |
 | `WorktreeManager.ensure_clean` (pre-dispatch cleanup) | **degrade** — log what is at risk, keep the orphan, dispatch relocates |
-| Orphan prune in `milknado_run_loop_start` (`mcp/ralph.py`) | **degrade** — same; the run loop is never blocked |
+| Orphan prune in `milknado_run_loop_start` (`mcp/loop.py`) | **degrade** — same; the run loop is never blocked |
 | `WorktreeManager.discard` | unchanged — this IS the explicit destructive path |
 
 `rebase_and_merge`'s landed check runs against `feature_branch` and the
@@ -182,15 +198,99 @@ silently-destroyed case) refuses. Non-refusal removal failures (nothing was
 destroyed; the worktree is still on disk) stay warn-and-swallow so the node
 lifecycle keeps moving.
 
-## Headless single-node loop (headless.py)
+## Shared loop lifecycle (`RunLoop`)
 
-`run_node_to_completion` is the TUI-free twin of one `RunLoop` iteration — the
-`rich.live.Live` display + keyboard thread in `RunLoop.run()` can't live in a
-server/subprocess. Flow: refuse to dispatch onto an empty/`"HEAD"` branch
-(detached HEAD isn't a valid rebase target — mark the node failed for parity) →
-`dispatch` → `ralph.wait_for_next_completion({run_id}, timeout)` → on
-timeout/non-completion `stop_run` + `executor.fail` → otherwise `complete`.
-Success requires both run completion AND a clean rebase.
+CLI scheduling and detached execution use `RunLoop` and `Executor`.
+`RunLoop.run_node` drives one selected task without a display, sibling dispatch, or root completion.
+Both drivers use shared completion, review redispatch, cancellation, timeout, and merge handling.
+The detached module only composes adapters and records its parent run result.
+An unconfirmed worker stop preserves node ownership and its worktree.
+Detached supervision stays alive and retries the stop before finalizing the parent run.
+The former `execution/headless.py` lifecycle twin is removed.
+
+`ConcurrencyLimitReached` bypasses scheduler failure cleanup.
+The CLI waits for external capacity; detached MCP starts return a structured `deferred` result.
+Review redispatch retains node ownership and therefore retains one capacity slot.
+
+`NodeClaimRejected` also bypasses failure cleanup: a losing scheduler must not fail another driver's task.
+`PreservedWorkerRun` carries the worker identity and current owner fence through post-start failures.
+The fence must update after `replace_run_id`; otherwise confirmed cleanup cannot release the reservation.
+Shared completion treats an unrebased result as failure, not detached success.
+The private `run_loop/_node.py` module supplies `NodeDriver` with an explicit `CompletionContext`.
+It no longer shares state through a whole-RunLoop protocol or mixin.
+Durable worker records now support identity-verified recovery after supervisor death.[^deep-module-implementation]
+
+`RunLoop.state()` collects bounded immutable facts and one timestamp.
+The pure projection computes presentation values without graph reads, process calls, or clock reads.
+`Scheduler` owns active runs, attempts, progress, terminal history, counters, and local admission decisions.
+Its private lock keeps snapshots coherent with concurrent completion and abandonment.
+That lock contains only local state operations, never graph, process, or caller effects.
+Graph claims remain authoritative; typed scheduler decisions only request effects.
+The separate scheduling lock protects stop and dispatch admission.
+Force-stop does not wait for that scheduling lock.[^deep-module-implementation]
+
+## Controller authorization boundary
+
+Normal local startup manages controller credentials without a manual export.
+The graph keeps its existing credential hash and transactional, one-use review capabilities.
+Controller registration loads or creates a credential under `$XDG_STATE_HOME/milknado/controllers`.
+The POSIX default state root is `~/.local/state`.
+Credential filenames use the registered hash, so moving a database does not change its credential lookup.[^controller-store]
+
+Registration serializes through a SQLite write transaction.
+It publishes the credential before committing a new hash.
+The controller keeps generated credentials on its graph instance, not in the process environment.
+Decision consumption does not automatically load the credential store.[^controller-store]
+
+An existing registration accepts only its original credential.
+A matching `MILKNADO_CONTROLLER_MASTER` imports that credential once for later starts.
+Missing or mismatched credentials fail closed.
+This path does not rewrite nodes, decisions, or authorization records.
+There is no credential-free takeover or graph reset.[^controller-store]
+
+A separate operator terminal uses `milknado graph review` with the same user state directory.
+The command loads authorization and asks for confirmation.
+A TTY selects the confirmation interface; it does not prove human presence.
+Neither watch mode acquires a controller credential.
+Attached watch retains its existing owner-fenced session controls, not goal-approval authority.[^controller-cli]
+
+These checks are API guardrails, not process isolation.
+Workers can submit proposals, but the MCP surface has no goal-approval tool.
+Worker markers and secret filtering prevent ordinary worker calls from acquiring operator authority.
+Same-user arbitrary code can remove markers, read user files, or modify SQLite.
+Git worktrees and owner-only credential files do not prevent those actions.
+Enforced isolation requires separate operating-system permissions or a sandbox outside this change.[^controller-workers]
+
+### Windows storage and startup ordering
+
+Windows uses `LOCALAPPDATA` as its default state root.
+An absolute `XDG_STATE_HOME` overrides that root.
+Storage creates missing ancestors and rejects reparse points through native handles.
+The `milknado/controllers` directories and credential records require protected DACLs.
+Their owner and sole full-access entry must match the process token's `TokenUser` SID.[^controller-windows]
+
+Credential reads permit shared reads, but not shared writes or deletion.
+Validation rejects empty records, records above 4096 bytes, and SHA-256 mismatches.
+Publication flushes a new temporary file, then uses a non-replacing rename.
+A publication race accepts only a destination with the expected hash and protection.[^controller-windows]
+
+Asynchronous inline startup checks the protected branch before controller registration.
+Registration precedes stale-run reclaim, node claims, worktree creation, and log creation.
+Unauthorized startup must preserve the existing running node and its exact run identity.[^controller-order]
+
+The Windows workflow runs native storage, startup, and merge-lock tests.
+A macOS test pass does not establish native Windows behavior.
+Keep the controller pull request in draft until that workflow passes.[^controller-windows-ci]
+
+[^controller-windows]: src/milknado/domains/graph/_windows_controller_storage.py:34-105,123-174,206-269.
+[^controller-order]: src/milknado/app/run.py:538-584; tests/test_run_inline_worktree.py.
+[^controller-windows-ci]: .github/workflows/windows-controller.yml:13-28; approved controller draft publication requirement.
+
+[^controller-store]: src/milknado/domains/graph/controller_capability.py; src/milknado/domains/graph/graph.py, register_controller_master and decide_goal_review.
+[^controller-cli]: src/milknado/cli/graph.py, review; src/milknado/cli/run.py, watch.
+[^controller-workers]: src/milknado/domains/dispatch/runner.py, build_worker_env; src/milknado/loop/_agent.py, _build_spawn_env; src/milknado/loop/sessions/_process.py, start_process; src/milknado/mcp/goal_review.py.
+
+_Source: controller startup and Windows storage source; selected Cure regressions · Updated: 2026-09-21 · Supersedes: platform-neutral default-root claim; retains the API-guardrail boundary._
 
 ## Subprocess workers & run-state (runner.py, _runstate.py)
 
@@ -202,9 +302,9 @@ brief piped to stdin, combined stdout/stderr to a log file, cwd = worktree.
   against `{claude, codex, cursor-agent, gemini}`, defeating both prefix tricks
   (`claude-evil`) and absolute paths. Guards the explicit MCP arg, the
   `$MILKNADO_WORKER_CMD` env, and the default `claude -p`.
-- **Env scrubbing** — `_build_worker_env` passes only an allowlist of system vars
-  plus `MILKNADO_*`. INVARIANT: no `MILKNADO_*` var may hold a secret — every one
-  is forwarded verbatim. API keys / tokens / DB URLs stay in the parent.
+- **Env scrubbing** — `build_worker_env` filters the inherited environment.
+  Dispatch and native agent launchers remove `MILKNADO_CONTROLLER_MASTER` after overrides.
+  They set `MILKNADO_WORKER_CONTEXT=1` to reject controller acquisition and goal approval through supported worker paths.[^controller-workers]
 
 Run-state lives in the **SQLite `runs` table** (PR #127, closes #100) — schema
 and repo functions in [[graph]]. Only **log files and cancel sentinels** remain
@@ -249,7 +349,7 @@ the node out forever.
 
 
 
-### Ralph-loop pipe ownership
+### Loop pipe ownership
 
 A reader thread owns each `Popen` stdout or stderr stream until EOF.[^pipe-ownership]
 Cleanup must not call `os.close(stream.fileno())` while the Python stream remains open.
@@ -281,8 +381,80 @@ The engine trusts the native completion flag and still runs its completion verif
 The verifier requires a committed or stageable change and the configured quality gates.
 A completion promise alone does not complete a task (`src/milknado/domains/execution/completion.py:22`).
 
-The runtime bounds protocol frames and retained output. It retains the process group after the leader exits.
-Normal completion, timeout, and force stop all clean up descendants (`src/milknado/loop/sessions/_process.py:70`).
+The runtime bounds protocol frames and retained output. On POSIX, it retains the process group after the leader exits.
+Normal completion, timeout, and force stop use the shared lifecycle boundary.
+Cleanup targets owned groups and identity-verified observed descendants, subject to the limits below.[^deep-module-implementation]
+
+Generic and native worker paths do not have identical Windows containment.
+Generic workers use a kill-on-close Windows Job Object; native sessions currently use direct process termination.
+A shared lifecycle refactor must preserve these platform differences rather than assume equivalent descendant cleanup.[^worker-process-boundaries]
+
+The P0 implementation now enforces design decision F-8, accepted on 2026-09-29.
+It provides bounded cleanup of owned groups and identity-verified observed descendants, not strict containment.
+Unobserved descendants that detach between snapshots can escape cleanup; the user explicitly accepts that limit.
+Known unconfirmed targets still prevent ownership release and a confirmed-cleanup result.
+F-7 now selects one cleanup lifeline per active worker invocation, not a shared guardian.
+This adds one helper per worker but isolates cleanup ownership and failures.
+Supervisor, lifeline, and actual worker identities remain distinct; lifeline exit cannot prove worker exit.
+F-9 refuses ambiguous kills when a recorded leader is dead and surviving group ownership cannot be verified.
+Cleanup stops verified targets only; unresolved identity preserves node ownership and produces a recovery diagnostic.
+Historical group numbers and recycled leader identities do not prove cleanup completed.
+F-5 closes admission when shutdown is recorded and includes launches already in progress in bounded cleanup.
+An in-flight launch may create a process after signal arrival; it remains tracked under the same cleanup deadline.
+Handlers must not acquire application locks; normal control flow performs cleanup.
+F-10 selects replacement when a lifeline dies unexpectedly while its supervisor survives.
+The implementation keeps worker parentage, protocol streams, and exit collection in the supervisor runtime.
+Replacement transfers monitoring and cleanup responsibility, not the worker's operating-system parentage.
+The replacement must retain worker identity and descendant evidence and reject stale helper acknowledgments.
+F-11 accepts the two-failure limit: automatic cleanup is not guaranteed if the supervisor dies before a failed lifeline's replacement becomes ready.
+Durable records remain for later recovery; confirmed replacement readiness restores protection for the current invocation.
+This design adds no independent backup cleanup owner.
+F-12 stops the worker when lifeline replacement keeps failing; replacement does not continue indefinitely.
+The supervisor performs verified cleanup without depending on the failed lifeline and escalates to SIGKILL when necessary.
+Confirmed cleanup fails only the affected run; unconfirmed exit preserves ownership and recovery records.
+The shared private lifecycle boundary owns launch protection, lifeline replacement, and cleanup.
+Durable ownership covers graph-backed, reviewer, verifier, standalone, and raw-manager loop workers without synthetic graph nodes.
+An exec gate releases user work only after durable worker identity and initial lifeline readiness.
+READY binds the durable snapshot sequence after EOF monitoring is armed.
+Observation-in-progress markers preserve unresolved coverage when discovery or persistence fails.
+A replacement can launch at most three times per invocation, within an eight-second episode.
+Successful replacement does not reset that attempt count or the first shutdown deadline.
+Real-process, SQLite, and Git tests validate these boundaries; Windows parity remains unverified.
+The scheduler, projection, review policy, and node-context refactors preserve this lifecycle boundary.[^bounded-orphan-cleanup][^deep-module-implementation]
+
+PR #503 review adds these implementation constraints:
+Node-scoped recovery stops workers only when their durable supervisor identity is gone.
+Live, unknown, or mismatched supervisors remain untouched and make node recovery incomplete.
+Unassociated recovery still skips live supervisors; explicit run cancellation retains its stop policy.[^pr503-recovery]
+Cancellation reserves time for SIGKILL confirmation within the original timeout.
+Preserved-stop retries remain inside signal supervision on normal and exception paths.[^pr503-signals]
+Protection failure remains distinct from ownership confirmation.
+Production completion fails after replacement exhaustion even when the worker handles SIGTERM with exit status zero.
+Confirmed cleanup still closes durable evidence and releases its admission ticket.
+Unconfirmed cleanup retains ownership and reports protection failure alongside the cleanup diagnostic.
+Helper-reap errors retain their cause; reader draining remains bounded before cleanup reports failure.
+Shutdown reaps the helper after monitor quiescence and EOF; helper exit never proves worker exit.
+Generic runners close capture and log sinks even when cleanup raises.[^pr503-lifecycle]
+A child that disappears during process-group sampling is absent, not uncertain.
+Other observation errors retain unresolved evidence.[^pr503-observation]
+The worker-store FileLock explicitly uses mode 0600.
+The supported minimum filelock 3.19.1 otherwise changes a precreated private lock to 0644 and breaks the next store open.[^pr503-filelock]
+Shutdown fixture markers use atomic replacement so visibility implies complete identity data.[^pr503-marker]
+
+[^pr503-recovery]: src/milknado/domains/dispatch/reap.py:117-139; tests/test_worker_recovery_errors.py.
+[^pr503-signals]: src/milknado/adapters/process.py:100-122; src/milknado/mcp/_loop_node_runner.py:135-152; tests/test_process_termination_budget.py; tests/test_loop_node_runner_signal_subprocess.py. The signal fixture exercises the real runner and OS signals with a stub RunLoop.
+[^pr503-lifecycle]: src/milknado/loop/_process_lifecycle.py:182-296; src/milknado/loop/_agent.py:833-914,1082-1143; tests/loop/test_lifecycle_acceptance_exhaustion.py; tests/loop/test_lifecycle_error_paths.py; tests/loop/test_all_worker_context.py.
+[^pr503-observation]: src/milknado/loop/_process_identity.py:43-49; tests/loop/test_process_identity_errors.py.
+[^pr503-filelock]: src/milknado/domains/graph/worker_evidence.py:93; tests/test_worker_evidence_errors.py. Repeated-open regression fails before the fix and passes with filelock 3.19.1.
+[^pr503-marker]: tests/test_shutdown_subprocess.py:50-54.
+
+_Source: PR #503 source review and focused regression tests · Updated: 2026-09-30 · Supersedes: the 2026-09-30 blanket implementation-verification claim; F-12 requires production failure propagation._
+
+
+[^bounded-orphan-cleanup]: Durable spec `reap-orphaned-loop-workers.md`, Decisions F-5/F-7–F-12, Acceptance AC-6/AC-9/AC-12–AC-18; user selections in the 2026-09-29 design dialogue.
+
+[^native-process-containment]: src/milknado/loop/sessions/_process.py:171-202,255-286
+[^worker-process-boundaries]: src/milknado/loop/_agent.py:190-235,786-800; src/milknado/loop/sessions/_process.py:171-192,255-286
 
 
 
@@ -342,7 +514,14 @@ because storage alone cannot recover a deliverable the worker never restated.
 `MILKNADO_RUN_ID` is injected into the worker env **only when a `running` run
 row exists**. A DONE-node re-run inserts no row (`start_run` is gated on the
 node actually transitioning), so the worker gets no run_id and the mandated
-deposit soft-no-ops instead of raising "run not found".
+deposit soft-no-ops instead of raising "run not found". The CLI run loop
+(`milknado run`) now injects the same three variables — `MILKNADO_NODE_ID`,
+`MILKNADO_RUN_ID`, `MILKNADO_PROJECT_ROOT` — through `RunConfig.env`, set by
+`Executor._create_loop_run` and merged into every agent spawn of the run.
+The same per-node flavor replace in `RunLoop._dispatch_batch` also carries
+`max_iterations`, `attempt_timeout_seconds`, and `completion_timeout_seconds`
+(attempt timeout × max iterations) from the flavor profile, matching the MCP
+node runner, so a CLI-dispatched attempt is bounded.
 
 Progress messaging and coordinator→worker inbound are deliberately NOT built;
 the `run_messages` shape permits them later (YAGNI — spec non-goal).
@@ -352,10 +531,10 @@ the `run_messages` shape permits them later (YAGNI — spec non-goal).
 Five coordinator-facing MCP tools drive runs: `milknado_run_inline` (blocking),
 `milknado_run_inline_start` / `milknado_run_inline_poll` (async in-process worker),
 and `milknado_run_loop_start` / `milknado_run_loop_poll` (detached
-worktree-isolated ralph loop). All five return the **unified superset schema**
+worktree-isolated loop). All five return the **unified superset schema**
 `RunDict` (`mcp/_core.py`): `run_id, node_id, status, exit_code, timed_out,
 rebased, log_path, summary`, every field nullable where it doesn't apply
-(`summary` is None until a poll tails the log; `rebased` is None for non-ralph
+(`summary` is None until a poll tails the log; `rebased` is None for non-loop
 runs; the start tools return `exit_code`/`timed_out` None). One client code
 path handles every run type — fixing signature finding S5, where three
 divergent dict shapes used to force per-tool branching. `state_path` was
@@ -374,7 +553,7 @@ bugs #38/#39/#50 pointed at):
   cost stays flat as run history grows (an indexed query, where the sidecar
   model had to glob and stat the runs dir).
 - `milknado_run_cancel(run_id)` — validates the `run_id` against `RUN_ID_RE`,
-  then forks on run type. A **detached-ralph** run has its own process group, so
+  then forks on run type. A **detached-loop** run has its own process group, so
   `os.killpg(SIGTERM)` is safe and cancel finalizes the terminal state directly
   (`_cancel_pid_run`). An **async-headless** run shares the server's process
   group, so cancel writes the cooperative sentinel and waits a bounded window
@@ -387,7 +566,7 @@ bugs #38/#39/#50 pointed at):
   `UnlandedWorkError` — then `git worktree prune`. No-ops cleanly when the run
   is already terminal.
 
-## Worker-dispatch families — single-shot (3) vs ralph (4), and why both exist
+## Worker-dispatch families — single-shot (3) vs loop (4), and why both exist
 
 > **Terminology caution.** "Family 3 / Family 4" is *our shorthand for the two
 > dispatch mechanisms*, not a code symbol. In the code, `family` means the
@@ -408,22 +587,20 @@ bugs #38/#39/#50 pointed at):
   The async variant swaps the blocking call for a daemon
   `threading.Thread(_async_worker)` (`dispatch/async_run.py:119`) that dies with
   the server. Mechanics detailed above in *Subprocess workers & run-state*.
-- **Family 4 = ralph iterate-until-gates loop** — `milknado_run_loop_start` /
-  `_poll` (`mcp/ralph.py:62` / `:89`). Detached
-  `Popen([... _ralph_node_runner ...], start_new_session=True)`, no stdin, runs
-  in its **own git worktree+branch**, loops until `quality_gates` pass
-  (`run_node_to_completion`, `execution/headless.py:49`), then rebase-merges
-  back. Refuses to start if `profile.quality_gates is None`. Survives a server
-  restart (detached, pid in SQLite); poll is read-only. Mechanics in
-  *Headless single-node loop* above.
+- **Family 4 = iterate-until-gates loop** — `milknado_run_loop_start` /
+  `_poll` (`mcp/loop.py:62` / `:89`). Detached
+  `Popen([... _loop_node_runner ...], start_new_session=True)`, no stdin, runs
+  in its **own git worktree+branch**, loops until `quality_gates` pass through
+  `RunLoop.run_node`, then rebase-merges back. It refuses to start without quality gates.
+  It survives an MCP server restart; polling is read-only.
+  CLI and detached execution share the loop lifecycle described above.
 
 **Why Family 3 exists (rationale the code doesn't state):** to dispatch a node
 to a **different harness than the one orchestrating** and **block on the
 single-shot result without polling**. The coordinator (say Claude Code)
 overrides `worker_cmd` to point at another agent — e.g. a local-model-backed CLI
 for cheap or offline nodes — and `milknado_run_inline` blocks until that foreign
-worker exits, returning the result inline. No worktree, no gate loop, no poll
-cycle: it is the "shell out to another model and wait" path. `worker_cmd` is the
+worker exits, returning the result inline. It has worktree isolation by default, but no gate loop or polling cycle. `worker_cmd` is the
 cross-harness lever — it defaults to `profile.execution_agent` but the caller
 overrides it per dispatch (`mcp/run.py:40`, docstring). **Constraint:** the
 override's executable *basename* must be one of `{claude, codex, cursor-agent,
@@ -435,7 +612,7 @@ arbitrary command.
 **Why Family 4 is the other shape:** when the coordinator wants to hand off the
 *whole* task — "iterate until your gates pass, merge it back, tell me when
 done" — and not babysit it. The caller drives no loop and owns no retries; the
-detached runner does. Worktree isolation lets many ralphs run in parallel
+detached runner does. Worktree isolation lets many loops run in parallel
 without trampling each other; detachment lets the loop outlive the MCP server.
 
 **Coordinator vs worker — who may call these (verified against the allowlist):**
@@ -444,12 +621,12 @@ spawned workers. `WORKER_ALLOWED_TOOLS["claude"]` (`agent_argv.py`) gives a
 worker only two milknado MCP tools — `milknado_track_follow_up` and
 `milknado_deposit_result` — never the run-dispatch tools. Family 4 additionally
 carries a **hard, permanent prohibition**: *"COORDINATOR-ONLY: never add these
-to WORKER_ALLOWED_TOOLS"* (`mcp/ralph.py:1-12`), because a worker that could
-start sub-ralph-loops would recursively fork worktrees. (A casual read of the
+to WORKER_ALLOWED_TOOLS"* (`mcp/loop.py:1-12`), because a worker that could
+start sub-loops would recursively fork worktrees. (A casual read of the
 code can mis-state Family 3 as worker-allowed — it is not; re-check
 `WORKER_ALLOWED_TOOLS` before asserting otherwise.)
 
-| | Family 3 — single-shot | Family 4 — ralph |
+| | Family 3 — single-shot | Family 4 — loop |
 |---|---|---|
 | Tools | `milknado_run_inline` / `_start` / `_poll` | `milknado_run_loop_start` / `_poll` |
 | Process | blocking caller, or in-process daemon thread | detached subprocess (`start_new_session=True`) |
@@ -458,7 +635,7 @@ code can mis-state Family 3 as worker-allowed — it is not; re-check
 | Working tree | own worktree+branch by default (`THIS_BRANCH` opts into shared) | own worktree+branch, rebase-merge on success |
 | Quality gates | none | required (refuses if unset) |
 | Survives server restart | no | yes (pid in SQLite) |
-| Loop / retries owned by | caller | detached runner |
+| Loop / retries owned by | caller | shared `RunLoop` lifecycle |
 | Granted to workers? | no (coordinator-facing) | no — explicit permanent prohibition |
 | Reach for it when | block on a (possibly foreign-harness) single shot, no poll | hand off the whole gated loop, walk away |
 
@@ -536,20 +713,26 @@ and non-tmux run each fail with a distinct message — then execs
 `tmux select-window -t =sess:=run \; attach-session` (or `switch-client` when
 already inside tmux).
 
-## Shared brief and RALPH.md
+## Shared brief and LOOP.md
 
 `brief.render_brief` is the shared node-context markdown for native/MCP and
-ralph workers: goal context, completed prerequisites, owned files, specs, and
-instructions. Ralph dispatch embeds that exact brief in `RALPH.md` and adds only
+loop workers: goal context, completed prerequisites, owned files, specs, and
+instructions. Loop dispatch embeds that exact brief in `LOOP.md` and adds only
 the iteration-specific findings, gates, follow-up protocol, and completion
 sentinel.
 
 ## Key files
 
 - `src/milknado/domains/execution/executor.py` — `Executor`, `WorktreeManager`, dispatch/complete state machine, fencing.
-- `src/milknado/domains/execution/headless.py` — `run_node_to_completion`.
+- `src/milknado/domains/execution/run_loop/__init__.py` — `RunLoop` orchestration, fact collection, and effects.
+- `src/milknado/domains/execution/run_loop/_scheduler.py` — synchronized local state and typed dispatch decisions.
+- `src/milknado/domains/execution/run_loop/_projection.py` and `state.py` — pure projection and immutable facts.
+- `src/milknado/domains/execution/_node_context.py` and `_review_policy.py` — per-node facts and pure review decisions.
+- `src/milknado/loop/_process_lifecycle.py` — protected worker lifetime, helper replacement, and bounded cleanup.
+- `src/milknado/domains/execution/run_loop/_node.py` — bounded `run_node` driver and shared terminal, timeout, and stop handling.
+- `src/milknado/domains/execution/_models.py` — execution results and typed dispatch failures.
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (shared worker context and result-deposit instructions).
-- `src/milknado/adapters/loop.py` — RALPH.md loop scaffolding.
+- `src/milknado/adapters/loop.py` — LOOP.md loop scaffolding.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.
@@ -558,7 +741,9 @@ sentinel.
 - `src/milknado/domains/graph/_persistence.py` — `runs` / `run_messages` repo (`start_run`, `finish_run`, `deposit_run_message`) and the `goal_claims` table schema.
 - `src/milknado/domains/graph/_goal_claims.py` — goal-claim repo + fencing helpers (`claim_goal_row`, `release_goal_row`, `ancestor_goal_claimed_by_other`, `claim_or_reclaim_goal`); `MikadoGraph.claim_ancestor_goal_for_dispatch` (`graph.py`) is the dispatch-time entry point.
 - `src/milknado/mcp/run.py` — `milknado_run_inline*` (Family 3), `milknado_run_list`, `milknado_run_cancel`, `milknado_deposit_result`.
-- `src/milknado/mcp/ralph.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
+- `src/milknado/mcp/loop.py` — `milknado_run_loop_start` / `_poll` (Family 4, COORDINATOR-ONLY).
 - `src/milknado/mcp/_core.py` — `RunDict` unified run-result schema, the shared `FastMCP` instance, and the `resolve_project_root` / `open_graph` / status-kind-flavor parsers. (The goal-claim fencing this module once held now lives on `MikadoGraph.claim_ancestor_goal_for_dispatch`; see `domains/graph/`.)
 
-_Source: native-session implementation and real-pipe regressions · Updated: 2026-09-09 · Supersedes: raw-stdout completion for native worker sessions._
+[^deep-module-implementation]: P0 `ad0110b`, P1 `cae3a54`, P2 `568c45e`, P3 `95862f8`; `loop/_process_lifecycle.py:85-198`, `execution/run_loop/_scheduler.py:73-165`, `execution/run_loop/_projection.py:64-78`, and `execution/_node_context.py:32-42`. Per-unit `just check-llm` gates pass. Runtime coverage includes `tests/loop/test_lifecycle_acceptance.py`, `tests/test_orphan_worker_recovery.py`, `tests/test_run_loop_scheduler.py`, and `tests/test_adversarial_review_runtime.py`.
+
+_Source: PR #488 and the verified deep-module commits cited above · Updated: 2026-09-30 · Supersedes: pending orphan-worker implementation, absent durable recovery, shared driver mixin, and combined scheduling/presentation ownership. The accepted F-5/F-7–F-12 limits remain._

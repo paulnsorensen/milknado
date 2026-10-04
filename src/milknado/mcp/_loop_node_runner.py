@@ -1,0 +1,274 @@
+"""Detached headless single-node loop runner.
+
+Spawned as its own process by `milknado_run_loop_start` so a worktree-isolated
+loop survives the MCP server restarting (hot-reload). Node status, worktree
+path, and run state all persist in SQLite so a retried run can reconcile state
+from an earlier process. The MCP tool inserted the `running` run row before
+spawning; this process runs the node to completion and writes the terminal run
+row the poll reads.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol, cast
+
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal, supervise
+from milknado.domains.common import RunResult
+from milknado.domains.dispatch import now_iso, runs_dir
+from milknado.domains.execution import NodeLoopOutcome
+from milknado.domains.graph import HostCapacityFull, RunFenceLostError
+
+if TYPE_CHECKING:
+    from milknado.domains.execution import RunLoop
+
+_logger = logging.getLogger("milknado")
+
+# EX_TEMPFAIL: the host worker pool was full, so the node went back to PENDING.
+_DEFERRED_EXIT = 75
+
+
+def _defer_run(graph: object, root: Path, args: _RunnerArgs, exc: HostCapacityFull) -> int:
+    """Hand a node back to PENDING when the host pool stays full.
+
+    The launcher already answered "running" and freed its probe slot, so another
+    process took it. Failing the node would burn a retry on a capacity race, so the
+    claim is released and the run records why it never started a worker.
+    """
+    _logger.warning(
+        "loop runner deferred: run_id=%s node_id=%d running=%d limit=%d",
+        args.run_id,
+        args.node_id,
+        exc.running,
+        exc.limit,
+    )
+    released = cast(_ReleasableGraph, graph).release(args.node_id, args.run_id)
+    detail = f"deferred: host worker pool full ({exc.running} of {exc.limit} slots held); " + (
+        "node returned to pending, start it again" if released else "node claim was lost"
+    )
+    _ = _finish_run(
+        graph,
+        root,
+        args.run_id,
+        RunResult(
+            status="failed",
+            exit_code=_DEFERRED_EXIT,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=detail,
+        ),
+    )
+    return _DEFERRED_EXIT
+
+
+def _fail_run(graph: object, root: Path, args: _RunnerArgs, exc: Exception) -> int:
+    _logger.exception(
+        "loop runner failed: run_id=%s node_id=%d",
+        args.run_id,
+        args.node_id,
+    )
+    _ = _finish_run(
+        graph,
+        root,
+        args.run_id,
+        RunResult(
+            status="failed",
+            exit_code=1,
+            timed_out=False,
+            ended_at=now_iso(),
+            rebased=False,
+            detail=f"{type(exc).__name__}: {exc}",
+        ),
+    )
+    return 1
+
+
+class _RunFacade(Protocol):
+    def finish(self, run_id: str, result: RunResult) -> None: ...
+
+
+class _GraphWithRuns(Protocol):
+    runs: _RunFacade
+
+
+class _ReleasableGraph(Protocol):
+    def release(self, node_id: int, run_id: str) -> bool: ...
+
+
+class _RunnerArgs(Protocol):
+    node_id: int
+    project_root: str
+    run_id: str
+    target_branch: str
+    base_oid: str
+
+
+def _finish_run(graph: object, root: Path, run_id: str, result: RunResult) -> bool:
+    try:
+        cast(_GraphWithRuns, graph).runs.finish(run_id, result)
+    except RunFenceLostError as exc:
+        detail = str(exc)
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+    else:
+        return True
+    _logger.error("loop terminal persistence failed: run_id=%s detail=%s", run_id, detail)
+    try:
+        _ = (
+            runs_dir(root)
+            .joinpath(f"{run_id}.terminal-error")
+            .write_text(
+                detail + "\n",
+                encoding="utf-8",
+            )
+        )
+    except OSError:
+        _logger.exception("loop terminal error sidecar write failed: run_id=%s", run_id)
+    return False
+
+
+def _supervise_node(
+    driver: RunLoop, intent: ShutdownIntent, run_node: Callable[[], NodeLoopOutcome], node_id: int
+) -> NodeLoopOutcome:
+    def run_and_confirm() -> NodeLoopOutcome:
+        try:
+            outcome = run_node()
+        except HostCapacityFull:
+            raise
+        except Exception:
+            _ = driver.confirm_preserved_stop(
+                NodeLoopOutcome(node_id, False, ownership_preserved=True)
+            )
+            raise
+        return driver.confirm_preserved_stop(outcome)
+
+    return supervise(
+        run_and_confirm,
+        intent,
+        lambda deadline: driver.force_stop_active(deadline),
+        "milknado-node",
+    )
+
+
+def _parse_args(argv: list[str] | None) -> _RunnerArgs:
+    parser = argparse.ArgumentParser(prog="milknado.mcp._loop_node_runner")
+    _ = parser.add_argument("--node-id", type=int, required=True)
+    _ = parser.add_argument("--project-root", required=True)
+    _ = parser.add_argument("--run-id", required=True)
+    _ = parser.add_argument("--target-branch", required=True)
+    _ = parser.add_argument("--base-oid", required=True)
+    return cast(_RunnerArgs, cast(object, parser.parse_args(argv)))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    from milknado.adapters import CrgAdapter, FlockSlotPool, GitAdapter, LoopAdapter
+    from milknado.app.project import open_graph
+    from milknado.app.worker_recovery import reconcile_loop_workers
+    from milknado.domains.common import resolve_flavor_profile
+    from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
+
+    root = Path(args.project_root)
+
+    _logger.info(
+        "loop runner started: run_id=%s node_id=%d target_branch=%s base_oid=%s",
+        args.run_id,
+        args.node_id,
+        args.target_branch,
+        args.base_oid,
+    )
+    graph, cfg = open_graph(root)
+    pid = os.getpid()
+    graph.runs.set_pid(args.run_id, pid)
+    graph.set_pid(args.node_id, args.run_id, pid)
+    driver: RunLoop | None = None
+    try:
+        reconcile_loop_workers(graph)
+        node = graph.get_node(args.node_id)
+        profile = resolve_flavor_profile(cfg, node.flavor if node is not None else None)
+        git = GitAdapter(root)
+        intent = ShutdownIntent()
+        loop = LoopAdapter(graph=graph)
+        loop.bind_shutdown_intent(lambda: intent.requested)
+        executor = Executor(graph=graph, git=git, loop=loop, crg=CrgAdapter(root))
+        executor.use_host_capacity(FlockSlotPool(cfg.host_worker_limit))
+        exec_config = ExecutionConfig(
+            execution_agent=profile.execution_agent,
+            quality_gates=profile.quality_gates,
+            worktree_pattern=cfg.worktree_pattern,
+            project_root=root,
+            brief_prepend=profile.brief_prepend,
+            commit_footer=cfg.commit_footer,
+            review=profile.review,
+            review_agent=profile.review_agent,
+            review_max_rounds=profile.review_max_rounds,
+            review_timeout_seconds=profile.review_timeout_seconds,
+            on_reject=profile.on_reject,
+            session_mode=profile.session_mode,
+            completion_timeout_seconds=int(
+                profile.attempt_timeout_seconds * profile.max_iterations
+            ),
+            attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
+            max_iterations=profile.max_iterations,
+        )
+        driver = RunLoop(
+            executor=executor,
+            graph=graph,
+            loop=loop,
+            config=cfg,
+            shutdown_requested=lambda: intent.requested,
+        )
+        outcome = _supervise_node(
+            driver,
+            intent,
+            lambda: driver.run_node(
+                args.node_id,
+                exec_config,
+                args.target_branch,
+                float(profile.attempt_timeout_seconds),
+                base_oid=args.base_oid,
+                parent_run_id=args.run_id,
+            ),
+            args.node_id,
+        )
+        terminal_written = _finish_run(
+            graph,
+            root,
+            args.run_id,
+            RunResult(
+                status="done" if outcome.success else "failed",
+                exit_code=0 if outcome.success else 1,
+                timed_out=outcome.timed_out,
+                ended_at=now_iso(),
+                rebased=outcome.success,
+                detail=outcome.detail,
+            ),
+        )
+        if not terminal_written:
+            return 2
+        _logger.info(
+            "loop runner terminal: run_id=%s node_id=%d success=%s detail=%s",
+            args.run_id,
+            args.node_id,
+            outcome.success,
+            outcome.detail,
+        )
+        return 0 if outcome.success else 1
+    except ShutdownSignal as shutdown:
+        return 128 + shutdown.signum
+    except HostCapacityFull as exc:
+        return _defer_run(graph, root, args, exc)
+    except Exception as exc:
+        return _fail_run(graph, root, args, exc)
+    finally:
+        graph.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

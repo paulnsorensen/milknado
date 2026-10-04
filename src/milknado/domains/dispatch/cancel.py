@@ -21,7 +21,9 @@ from milknado.domains.dispatch.ports import (
     RunFinalizerPort,
     RunReaderPort,
 )
+from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs, reconcile_node_status
+from milknado.domains.graph import NodeWorkers, RunWorkers
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
@@ -144,9 +146,17 @@ def _adopt_pre_finalized_run(graph: MikadoGraph, git: GitPort, run_id: str) -> d
 
 
 def _recover_dead_owner(
-    graph: MikadoGraph, node: MikadoNode, node_id: int, run_id: str
+    graph: MikadoGraph,
+    node: MikadoNode,
+    node_id: int,
+    run_id: str,
+    process: ProcessTerminationPort,
 ) -> dict[str, object]:
-    _ = fail_stale_running_runs(graph, node_id)
+    if not reap_orphaned_workers(graph, process, ReapRequest(NodeWorkers(node_id))):
+        raise RuntimeError(
+            f"run {run_id!r} worker recovery unresolved; state and worktree preserved"
+        )
+    _ = fail_stale_running_runs(graph, node_id, process)
     record = graph.runs.get(run_id)
     if record is None or record.get("status") == "running":
         raise RuntimeError(f"run {run_id!r} dead-owner recovery lost its terminal write")
@@ -164,11 +174,19 @@ def _cancel_pid_run(
     run_id: str,
 ) -> dict[str, object]:
     pid = cast(int, state["pid"])
-    if not process.terminate_group(pid, _CANCEL_FINALIZE_TIMEOUT_SECS):
+    deadline = time.monotonic() + _CANCEL_FINALIZE_TIMEOUT_SECS
+    if not process.terminate_group(pid, _CANCEL_FINALIZE_TIMEOUT_SECS / 2):
         raise RuntimeError(
             f"run {run_id!r} did not exit after termination; state and worktree preserved"
         )
     typed_graph = cast("MikadoGraph", graph)
+    node_id = cast(int | None, state.get("node_id"))
+    selection = NodeWorkers(node_id) if node_id is not None else RunWorkers(run_id)
+    request = ReapRequest(selection, deadline=deadline)
+    if not reap_orphaned_workers(typed_graph, process, request):
+        raise RuntimeError(
+            f"run {run_id!r} worker recovery unresolved; state and worktree preserved"
+        )
     final = _finalize_cancelled(typed_graph, run_id)
     preserved = _reconcile_cancel(typed_graph, git, cast(int | None, state.get("node_id")), run_id)
     final["worktree_preserved"] = str(preserved) if preserved is not None else None
@@ -227,7 +245,7 @@ def cancel_run(
     owner_pid = node.pid if node is not None and node.run_id == run_id else None
     run_pid = cast(int | None, state.get("pid"))
     if run_pid is not None:
-        # A detached ralph run records the same process as its node owner and
+        # A detached loop run records the same process as its node owner and
         # can be terminated directly. Async runs retain the coordinator as the
         # node owner while their run row names the child worker, so they must
         # use the cooperative sentinel path instead of killing the coordinator's
@@ -243,7 +261,7 @@ def cancel_run(
             f"run {run_id!r} has no confirmed node owner; state and worktree preserved"
         )
     if not pid_alive(owner_pid):
-        return _recover_dead_owner(graph, node, node_id, run_id)
+        return _recover_dead_owner(graph, node, node_id, run_id, process)
     raise RuntimeError(
         f"run {run_id!r} has no confirmed worker exit; state and worktree preserved"
     )

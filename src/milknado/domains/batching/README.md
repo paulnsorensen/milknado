@@ -2,7 +2,7 @@
 
 Token-budgeted, precedence-respecting batch planner for Milknado. Given a list
 of file changes and a token budget, it returns a `BatchPlan` whose batches form
-a DAG of ralphify iterations where each batch fits within the budget and all
+a DAG of loop iterations where each batch fits within the budget and all
 declared dependencies are satisfied.
 
 ## Why This Exists
@@ -62,14 +62,14 @@ BatchPlan
 
 ## What a Batch Is
 
-One batch = one ralphify iteration = one LLM context window.
+One batch = one loop iteration = one LLM context window.
 
 - **Intra-batch ordering** is handled in-pass: the LLM resolves the ordering of
   changes within the same batch without any sequencing guarantee from the planner.
-- **Inter-batch edges** (`Batch.depends_on`) force sequencing: ralph will not
+- **Inter-batch edges** (`Batch.depends_on`) force sequencing: loop will not
   start batch N until every batch listed in `depends_on` has completed.
-- **Sibling batches** (batches with no dependency relationship) fan out: ralph
-  runs them concurrently as independent ralphify iterations.
+- **Sibling batches** (batches with no dependency relationship) fan out: loop
+  runs them concurrently as independent loop iterations.
 
 ## Choosing a Budget
 
@@ -101,7 +101,7 @@ exist between in-flight changes.
 
 ## Concurrent Execution (Q5)
 
-The `Batch.depends_on` field encodes the Mikado DAG that ralph uses to fan out
+The `Batch.depends_on` field encodes the Mikado DAG that loop uses to fan out
 work. Independent branches run concurrently; dependent chains run sequentially.
 
 **Worked example — chain plus detached node:**
@@ -123,7 +123,7 @@ Output BatchPlan:
   solver_status = "OPTIMAL"
 ```
 
-Ralph fans out batch 0 (a and g run concurrently in one ralphify iteration),
+Loop fans out batch 0 (a and g run concurrently in one loop iteration),
 waits for batch 0 to complete, then runs batch 1, then batch 2.
 
 `g` has no predecessors so it lands in the earliest available batch alongside
@@ -145,7 +145,7 @@ returning `INFEASIBLE`, the planner passes it through:
 - Ordering constraints into and out of oversized batches are enforced by the
   same CP-SAT precedence relations used everywhere else.
 
-Ralph treats oversized batches as **linear ralph loops** — one symbol-level
+Loop treats oversized batches as **linear loops** — one symbol-level
 task at a time inside that batch — rather than a single LLM context window.
 
 **Worked example — oversized passthrough:**
@@ -195,7 +195,7 @@ weights are not used.
 **Pass 1 — minimise composite total cost:**
 
 - Objective: `minimise total_cost`.
-- For each non-empty batch, `total_cost` combines the fixed 2,000-token Ralph
+- For each non-empty batch, `total_cost` combines the fixed 2,000-token Loop
   startup charge with that batch's token mass multiplied by a
   size-dependent multiplier `(100 + (k*12 - 1)*10)`, where `k` is the number
   of normal SCCs in the batch.  CP-SAT values are scaled by 100.
@@ -242,7 +242,7 @@ spread = max(batch_index) − min(batch_index)
 across all batches that contain a change touching `symbol`.
 
 - `spread == 0`: every change touching this symbol landed in the same batch.
-  This is ideal — the reviewer sees all related edits in one ralphify iteration.
+  This is ideal — the reviewer sees all related edits in one loop iteration.
 - Higher values flag symbols that are fragmented across the plan; the reviewer
   must inspect multiple batches to understand the full impact on that symbol.
 

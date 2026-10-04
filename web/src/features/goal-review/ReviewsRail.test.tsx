@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
 import { ReviewsRail } from './ReviewsRail';
 import { resetReviews } from './reviewsState';
+import { getState, resetStore, setSelection } from '../../app/store';
 import { getSelectedReviewId, resetReviewSelection } from './selection';
 
 vi.mock('../../app/api', () => ({ get: vi.fn(), post: vi.fn() }));
@@ -37,13 +38,27 @@ describe('ReviewsRail', () => {
     await waitFor(() => screen.getByText('No goal reviews are pending.'));
   });
 
-  it('lists a pending review and selects it on Open', async () => {
+  it('lists a pending review with its goal and node state', async () => {
     vi.mocked(get).mockResolvedValue([REVIEW]);
     render(<ReviewsRail />);
 
-    await waitFor(() => screen.getByText('evidence text'));
+    await waitFor(() => screen.getByText('Goal review 1'));
+    expect(screen.getByText('node 1')).toBeTruthy();
+    expect(screen.getByText('pending')).toBeTruthy();
     screen.getByText('Open').click();
 
     expect(getSelectedReviewId()).toBe(1);
+  });
+
+  it('clears the node selection when a review opens', async () => {
+    resetStore();
+    setSelection(9);
+    vi.mocked(get).mockResolvedValue([REVIEW]);
+    render(<ReviewsRail />);
+
+    await waitFor(() => screen.getByText('Goal review 1'));
+    screen.getByText('Open').click();
+
+    expect(getState().selection).toBeNull();
   });
 });

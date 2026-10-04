@@ -16,17 +16,20 @@ from milknado.domains.common import (
     RunResult,
     WorktreeMode,
 )
+from milknado.domains.common.protocols import HostCapacityPort
+from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch.brief import render_brief
 from milknado.domains.dispatch.isolate import (
     IsolateContext,
     MergeBackResult,
-    merge_back_isolated,
+    merge_back_if_done,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.ports import (
     FinishDispatchPort,
     ProcessPort,
+    ProcessTerminationPort,
     WorkerOutcomePort,
 )
 from milknado.domains.dispatch.reconcile import (
@@ -53,6 +56,7 @@ class SyncDispatchRequest:
     worktree_mode: WorktreeMode = WorktreeMode.ISOLATE
     merge_back: bool = True
     worktree_pattern: str = ""
+    host_capacity: HostCapacityPort | None = None
 
 
 def _setup_sync_worktree(
@@ -124,7 +128,23 @@ def dispatch_node_sync(
             f"node {request.node_id} has kind={node.kind.value}; only task nodes can be dispatched"
         )
     run_id = make_run_id(request.node_id)
-    graph.claim_node_for_dispatch(request.node_id, run_id, now=now_iso())
+    lease = claim_with_host_slot(
+        graph, request.host_capacity, (request.node_id, run_id), request.project_root
+    )
+    try:
+        return _run_claimed_node(graph, git, request, (node, run_id))
+    finally:
+        if lease is not None:
+            lease.release()
+
+
+def _run_claimed_node(
+    graph: MikadoGraph,
+    git: GitPort,
+    request: SyncDispatchRequest,
+    claimed: tuple[MikadoNode, str],
+) -> dict[str, object]:
+    node, run_id = claimed
     log_path = runs_dir(request.project_root) / f"{run_id}.log"
     started = False
     try:
@@ -155,7 +175,9 @@ def dispatch_node_sync(
             process=request.process,
         )
         terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
-        merge = _maybe_merge_back(git, request, isolate, terminal)
+        merge = merge_back_if_done(
+            git, request.project_root, isolate if request.merge_back else None, terminal
+        )
         if merge is not None and not merge.rebased:
             terminal = "failed"
         _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
@@ -202,31 +224,18 @@ def dispatch_node_sync(
     }
 
 
-def _maybe_merge_back(
-    git: GitPort,
-    request: SyncDispatchRequest,
-    context: IsolateContext | None,
-    worker_terminal: str,
-) -> MergeBackResult | None:
-    if context is None or not request.merge_back or worker_terminal != "done":
-        return None
-    result = merge_back_isolated(git, request.project_root, context)
-    if result.worktree_preserved is not None:
-        _logger.warning(
-            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
-            context.worker_branch,
-            result.worktree_preserved,
-        )
-    return result
-
-
-def reclaim_stale_node(graph: MikadoGraph, node_id: int, fence_run_id: str | None) -> None:
+def reclaim_stale_node(
+    graph: MikadoGraph,
+    node_id: int,
+    fence_run_id: str | None,
+    process: ProcessTerminationPort,
+) -> None:
     """Reconcile a running node before a new async dispatch.
 
     The terminal-run lookup is always scoped to the current owning run_id.
     Legacy nodes without a run_id use an explicitly unowned terminal lookup.
     """
-    _ = fail_stale_running_runs(graph, node_id)
+    _ = fail_stale_running_runs(graph, node_id, process)
     if fence_run_id is None:
         orphan = graph.runs.latest_unowned_terminal(node_id)
         if orphan is not None:

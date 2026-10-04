@@ -63,6 +63,7 @@ class OwnerCapabilities(msgspec.Struct, frozen=True, kw_only=True):
     actions: tuple[SessionAction, ...]
     permission_ids: tuple[str, ...]
     published_at: str
+    permission_commands: tuple[tuple[str, str], ...] = ()
 
 
 class CommandFenceError(ValueError):

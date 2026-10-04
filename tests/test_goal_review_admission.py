@@ -171,11 +171,14 @@ def test_review_wins_direct_claim_race_across_connections(
         run_id: str,
         *,
         now: str,
+        concurrency_limit: int,
         pid: int | None = None,
     ) -> bool:
         entered.set()
         assert release.wait(5)
-        return original(pipeline, conn, node_id, run_id, now=now, pid=pid)
+        return original(
+            pipeline, conn, node_id, run_id, now=now, concurrency_limit=concurrency_limit, pid=pid
+        )
 
     monkeypatch.setattr(status, "claim_node", delayed)
     worker = Thread(
@@ -634,11 +637,13 @@ def test_goal_review_cli_refuses_noninteractive_decision(tmp_path: Path) -> None
 def test_goal_review_cli_decides_from_confirmed_human_boundary(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Record a managed decision after interactive human confirmation."""
     graph, nodes = _hierarchy(tmp_path, project_db=True)
     review = _request(graph, nodes["goal_a"])
     monkeypatch.setenv(CONTROLLER_MASTER_ENV, "external-controller-master")
     graph.register_controller_master()
     graph.close()
+    monkeypatch.delenv(CONTROLLER_MASTER_ENV, raising=False)
 
     import milknado.cli.graph as cli_graph
 

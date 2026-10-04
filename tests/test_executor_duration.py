@@ -107,12 +107,12 @@ class _FakeGit:
         return ()
 
 
-class _FakeRalph:
+class _FakeLoop:
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -122,11 +122,12 @@ class _FakeRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _FakeRun:
         _ = (
             agent,
-            ralph_dir,
-            ralph_file,
+            loop_dir,
+            loop_file,
             quality_gates,
             project_root,
             commit_footer,
@@ -135,6 +136,7 @@ class _FakeRalph:
             completion_probe,
             max_iterations,
             timeout,
+            env,
         )
         return _FakeRun(state=_FakeRunState(run_id=run_id or "run-dur-1"))
 
@@ -154,6 +156,14 @@ class _FakeRalph:
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = (run_id, timeout)
+        return True
+
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = graph_run_id, deadline
         return True
 
     def list_runs(self) -> list[_FakeRun]:
@@ -211,15 +221,16 @@ class _FakeRalph:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> _FakeReview:
-        _ = (agent, prompt, worktree, project_root, timeout_seconds)
+        _ = (agent, prompt, worktree, project_root, timeout_seconds, graph_run_id)
         return _FakeReview()
 
     def verify_spec(self, spec_text: str, graph_state: str) -> VerifySpecResult:
         _ = (spec_text, graph_state)
         return VerifySpecResult(outcome="done")
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,
@@ -284,7 +295,7 @@ def config(tmp_path: Path) -> ExecutionConfig:
 
 @pytest.fixture()
 def executor(graph: MikadoGraph) -> Executor:
-    return Executor(graph=graph, git=_FakeGit(), ralph=_FakeRalph(), crg=_FakeCrg())
+    return Executor(graph=graph, git=_FakeGit(), loop=_FakeLoop(), crg=_FakeCrg())
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +383,7 @@ class TestCompletionDuration:
     ) -> None:
         fake_git = _FakeGit()
         fake_git.rebase_result = RebaseResult(success=False)
-        ex = Executor(graph=graph, git=fake_git, ralph=_FakeRalph(), crg=_FakeCrg())
+        ex = Executor(graph=graph, git=fake_git, loop=_FakeLoop(), crg=_FakeCrg())
         _ = graph.add_node("conflicted task")
         _ = ex.dispatch(1, config)
 

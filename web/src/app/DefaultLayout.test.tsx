@@ -4,8 +4,13 @@ import { getState, resetStore, setGraphView } from './store';
 
 vi.mock('../design-system', () => ({
   Milknado: {
-    MikadoGraph: (props: { onLayout: (layout: { lod: string; collapsed: string[] }) => void }) => (
-      <button onClick={() => props.onLayout({ lod: 'pill', collapsed: ['x'] })}>trigger</button>
+    MikadoGraph: (props: {
+      compact?: boolean;
+      onLayout: (layout: { lod: string; collapsed: string[] }) => void;
+    }) => (
+      <button data-compact={String(props.compact)} onClick={() => props.onLayout({ lod: 'pill', collapsed: ['x'] })}>
+        trigger
+      </button>
     ),
   },
 }));
@@ -27,5 +32,11 @@ describe('DefaultLayout', () => {
 
     expect(getState().graphView.lod).toBe('pill');
     expect(getState().graphView.collapsed).toEqual([42]);
+  });
+
+  it('uses compact graph cards so layout spacing matches the card width', () => {
+    render(<DefaultLayout />);
+
+    expect(screen.getByText('trigger')).toHaveAttribute('data-compact', 'true');
   });
 });

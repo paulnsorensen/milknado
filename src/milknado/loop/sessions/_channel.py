@@ -100,12 +100,20 @@ class SessionChannel:
 
     def _capability_state(
         self, context: SessionContext | None, invocation_id: str = ""
-    ) -> tuple[SessionContext | None, tuple[SessionAction, ...], str, tuple[str, ...]]:
+    ) -> tuple[
+        SessionContext | None,
+        tuple[SessionAction, ...],
+        str,
+        tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
+    ]:
         return (
             context,
             self._actions,
             invocation_id or self._invocation_id,
-            tuple(event.event_id for event in self._permissions.values()),
+            (
+                tuple(event.event_id for event in self._permissions.values()),
+                tuple((event.event_id, event.text) for event in self._permissions.values()),
+            ),
         )
 
     def view(self) -> SessionView:

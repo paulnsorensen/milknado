@@ -1,9 +1,4 @@
-"""Data types for run configuration and state.
-
-These are the core types shared across the engine, CLI, manager, and UI
-modules.  They are intentionally separate from ``engine.py`` so modules
-that only need the types don't pull in the engine's execution logic.
-"""
+"""Shared run configuration and state types."""
 
 from __future__ import annotations
 
@@ -18,14 +13,16 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common import SessionContext, SessionEvent, SessionInput
 from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 
 if TYPE_CHECKING:
     from milknado.loop.sessions import SessionChannel
 
 DEFAULT_COMMAND_TIMEOUT: float = 60
-"""Default timeout in seconds for commands defined in RALPH.md frontmatter."""
+"""Default timeout in seconds for commands defined in LOOP.md frontmatter."""
 
-DEFAULT_COMPLETION_SIGNAL = "RALPH_PROMISE_COMPLETE"
+DEFAULT_COMPLETION_SIGNAL = "LOOP_PROMISE_COMPLETE"
 """Default inner ``<promise>...</promise>`` text that marks promise completion."""
 
 RUN_ID_LENGTH: int = 12
@@ -75,7 +72,7 @@ _STATUS_REASONS: dict[RunStatus, StopReason] = {
 
 @dataclass(slots=True)
 class Command:
-    """A named command from RALPH.md frontmatter."""
+    """A named command from LOOP.md frontmatter."""
 
     name: str
     run: str
@@ -104,10 +101,10 @@ class RunConfig:
     """
 
     agent: str
-    ralph_dir: Path
-    ralph_file: Path | None = None
+    loop_dir: Path
+    loop_file: Path | None = None
     # In-memory prompt *body* (no frontmatter). Mutually exclusive with
-    # ``ralph_file``: supply exactly one. Placeholders are still resolved.
+    # ``loop_file``: supply exactly one. Placeholders are still resolved.
     prompt: str | None = None
     commands: list[Command] = field(default_factory=list)
     args: dict[str, str] = field(default_factory=dict)
@@ -137,16 +134,17 @@ class RunConfig:
     # Unlike ``completion_verifier``, it can establish completion without a
     # promise tag when an external system commits the terminal signal.
     completion_probe: Callable[[], bool] | None = None
-    # Structured session context and durable event sink, when this run is
     session_context: SessionContext | None = None
     session_sink: Callable[[SessionEvent], None] | None = None
     session_admitter: Callable[[SessionInput], SessionInput | None] | None = None
     session_state_sink: Callable[[SessionInput, str], None] | None = None
     session_durable_drain: Callable[[], tuple[SessionInput, ...]] | None = None
+    env: dict[str, str] | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
 
     def __post_init__(self) -> None:
-        if (self.prompt is None) == (self.ralph_file is None):
-            raise ValueError("RunConfig requires exactly one of `prompt` or `ralph_file`")
+        if (self.prompt is None) == (self.loop_file is None):
+            raise ValueError("RunConfig requires exactly one of `prompt` or `loop_file`")
 
 
 @dataclass(slots=True)

@@ -1,0 +1,160 @@
+"""Per-invocation worker lifeline; graph access is injected by its adapter."""
+
+from __future__ import annotations
+
+import logging
+import os
+import selectors
+import sqlite3
+import time
+from typing import Protocol
+
+from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
+from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
+from milknado.loop._process_identity import terminate_verified_result as terminate_verified
+
+_log = logging.getLogger(__name__)
+
+
+class WorkerEvidence(Protocol):
+    @property
+    def invocation_id(self) -> str: ...
+    @property
+    def pid(self) -> int: ...
+    @property
+    def pgid(self) -> int: ...
+    @property
+    def start_token(self) -> float: ...
+    @property
+    def helper_pid(self) -> int | None: ...
+    @property
+    def helper_start_token(self) -> float | None: ...
+    @property
+    def helper_generation(self) -> int: ...
+    @property
+    def snapshot_seq(self) -> int: ...
+    @property
+    def observation_owner(self) -> str | None: ...
+    @property
+    def descendants(self) -> tuple[Descendant, ...]: ...
+    @property
+    def ended_at(self) -> str | None: ...
+
+
+class EvidenceStore(Protocol):
+    def set_deadline(self, deadline: float) -> None: ...
+    def get(self, invocation_id: str) -> WorkerEvidence | None: ...
+    def begin(self, key: ObservationKey) -> None: ...
+    def commit(self, key: ObservationKey, descendants: tuple[Descendant, ...]) -> None: ...
+    def ready(self, helper: HelperIdentity, sequence: int) -> bool: ...
+    def end(self, invocation_id: str, snapshot_seq: int, helper_generation: int) -> None: ...
+
+
+def _worker(record: WorkerEvidence) -> WorkerIdentity:
+    return WorkerIdentity(record.invocation_id, record.pid, record.pgid, record.start_token)
+
+
+def _current(record: WorkerEvidence | None, helper: HelperIdentity) -> bool:
+    return (
+        record is not None
+        and record.ended_at is None
+        and record.helper_generation == helper.generation
+        and record.helper_pid == helper.pid
+        and record.helper_start_token == helper.start_token
+    )
+
+
+def _await_record(
+    store: EvidenceStore, helper: HelperIdentity, deadline: float
+) -> WorkerEvidence | None:
+    while time.monotonic() < deadline:
+        record = store.get(helper.invocation_id)
+        if _current(record, helper):
+            return record
+        time.sleep(0.02)
+    return None
+
+
+def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> int:
+    store.set_deadline(deadline)
+    try:
+        record = store.get(helper.invocation_id)
+    except (sqlite3.OperationalError, TimeoutError) as exc:
+        _log.warning("lifeline evidence unavailable: %s", exc)
+        return 1
+    if not _current(record, helper):
+        return 1
+    assert record is not None
+    worker = _worker(record)
+    durable_targets = record.descendants
+    if record.observation_owner is None:
+        key = ObservationKey(
+            helper.invocation_id,
+            "helper",
+            record.snapshot_seq + 1,
+            helper.generation,
+            helper.pid,
+            helper.start_token,
+        )
+        try:
+            store.begin(key)
+            observed = observe_descendants(worker)
+            store.commit(key, observed)
+            durable_targets += observed
+        except (OSError, RuntimeError, sqlite3.OperationalError, TimeoutError) as exc:
+            _log.warning(
+                "lifeline observation unresolved invocation=%s: %s", helper.invocation_id, exc
+            )
+            _ = terminate_verified(worker, record.descendants, deadline)
+            return 1
+    try:
+        current = store.get(helper.invocation_id)
+    except (sqlite3.OperationalError, TimeoutError) as exc:
+        _log.warning("lifeline evidence unavailable: %s", exc)
+        _ = terminate_verified(worker, durable_targets, deadline)
+        return 1
+    if not _current(current, helper):
+        return 1
+    assert current is not None
+    result = terminate_verified(worker, current.descendants, deadline)
+    if not result.covered_exited or current.observation_owner is not None:
+        return 1
+    try:
+        store.end(helper.invocation_id, current.snapshot_seq, helper.generation)
+    except (sqlite3.OperationalError, TimeoutError, RuntimeError) as exc:
+        _log.warning("lifeline completion unresolved: %s", exc)
+        return 1
+    return 0
+
+
+def run_lifeline(read_fd: int, helper: HelperIdentity, store: EvidenceStore) -> int:
+    """Arm EOF before READY; on parent loss persist discovery before signaling."""
+    with selectors.DefaultSelector() as selector:
+        _ = selector.register(read_fd, selectors.EVENT_READ)
+        record = _await_record(store, helper, time.monotonic() + 8)
+        if record is None:
+            return 1
+        if identity_state(record.pid, record.start_token) != "live":
+            return 1
+        if any(
+            identity_state(pid, token) not in ("live", "gone")
+            for pid, token, _ in record.descendants
+        ):
+            return 1
+        if not store.ready(helper, record.snapshot_seq):
+            return 1
+        parts = (
+            "READY",
+            helper.invocation_id,
+            str(helper.generation),
+            str(helper.pid),
+            str(helper.start_token),
+            str(record.snapshot_seq),
+        )
+        print(" ".join(parts), flush=True)
+        while True:
+            if selector.select(timeout=1) and os.read(read_fd, 1) == b"":
+                return _cleanup(store, helper, time.monotonic() + 3)
+            record = store.get(helper.invocation_id)
+            if not _current(record, helper):
+                return 1

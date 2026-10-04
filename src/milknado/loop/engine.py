@@ -39,7 +39,7 @@ from milknado.loop._events import (
 from milknado.loop._frontmatter import (
     FIELD_AGENT,
     FIELD_COMMANDS,
-    RALPH_MARKER,
+    LOOP_MARKER,
     parse_frontmatter,
 )
 from milknado.loop._output import format_duration
@@ -54,11 +54,11 @@ from milknado.loop._runner import run_command
 from milknado.loop.adapters import CLIAdapter, select_adapter
 from milknado.loop.sessions import SessionChannel, is_supported, run_session
 
-_RELATIVE_CMD_PREFIX = "./"  # commands starting with this run from the ralph directory
+_RELATIVE_CMD_PREFIX = "./"  # commands starting with this run from the loop directory
 
 
 def _field_hint(field_name: str) -> str:
-    return f"Check the '{field_name}' field in your {RALPH_MARKER} frontmatter."
+    return f"Check the '{field_name}' field in your {LOOP_MARKER} frontmatter."
 
 
 def _footer_instruction(footer: str) -> str:
@@ -87,13 +87,13 @@ def _handle_control_signals(state: RunState) -> bool:
 
 def _run_commands(
     commands: list[Command],
-    ralph_dir: Path,
+    loop_dir: Path,
     project_root: Path,
     user_args: dict[str, str],
 ) -> dict[str, str]:
     """Execute all commands and return a dict of name→output.
 
-    Commands with paths starting with ``./`` run relative to the ralph
+    Commands with paths starting with ``./`` run relative to the loop
     directory.  Other commands run from the project root.
     """
     results: dict[str, str] = {}
@@ -101,7 +101,7 @@ def _run_commands(
     for cmd in commands:
         run_str = resolve_args(cmd.run, quoted_args)
         if run_str.lstrip().startswith(_RELATIVE_CMD_PREFIX):
-            cwd = ralph_dir
+            cwd = loop_dir
         else:
             cwd = project_root
         try:
@@ -130,10 +130,10 @@ def _run_commands(
     return results
 
 
-def _build_ralph_context(config: RunConfig, state: RunState) -> dict[str, str]:
-    """Build the context dict for ``{{ ralph.X }}`` placeholders."""
+def _build_loop_context(config: RunConfig, state: RunState) -> dict[str, str]:
+    """Build the context dict for ``{{ loop.X }}`` placeholders."""
     ctx: dict[str, str] = {
-        "name": config.ralph_dir.name,
+        "name": config.loop_dir.name,
         "iteration": str(state.iteration),
     }
     if config.max_iterations is not None:
@@ -151,7 +151,7 @@ def _assemble_prompt(
     """Build the full prompt for one iteration.
 
     Uses ``config.prompt`` as the body when set (no file read, no
-    frontmatter parse); otherwise reads the RALPH.md body.  Either way it
+    frontmatter parse); otherwise reads the LOOP.md body.  Either way it
     resolves user args, command output, and context placeholders.
 
     ``verifier_feedback`` carries a rejecting ``completion_verifier``'s
@@ -161,11 +161,11 @@ def _assemble_prompt(
     if config.prompt is not None:
         prompt = config.prompt
     else:
-        assert config.ralph_file is not None  # __post_init__ guarantees one is set
-        raw = config.ralph_file.read_text(encoding="utf-8")
+        assert config.loop_file is not None  # __post_init__ guarantees one is set
+        raw = config.loop_file.read_text(encoding="utf-8")
         _, prompt = parse_frontmatter(raw)
-    ralph_context = _build_ralph_context(config, state)
-    prompt = resolve_all(prompt, command_outputs, config.args, ralph_context)
+    loop_context = _build_loop_context(config, state)
+    prompt = resolve_all(prompt, command_outputs, config.args, loop_context)
     if verifier_feedback:
         prompt += _VERIFIER_FEEDBACK_HEADER + verifier_feedback
     if guidance:
@@ -212,6 +212,8 @@ def _launch_agent(
         max_turns_grace=config.max_turns_grace,
         force_stop_event=state.force_stop_event,
         cwd=config.project_root,
+        env=config.env,
+        spawn_worker=config.spawn_worker,
     )
     try:
         if is_supported(tuple(cmd)):
@@ -402,7 +404,7 @@ def _run_iteration(
         )
         command_outputs = _run_commands(
             config.commands,
-            config.ralph_dir,
+            config.loop_dir,
             config.project_root,
             config.args,
         )
@@ -422,11 +424,20 @@ def _run_iteration(
         PromptAssembledData(iteration=iteration),
     )
 
+    timed_out_before = state.timed_out_count
     agent_succeeded, promise_would_complete = _run_agent_phase(prompt, config, state, emit)
     if state.status is RunStatus.STOPPED:
         return False, promise_would_complete
 
-    if not agent_succeeded and config.stop_on_error:
+    # A timed-out attempt is retriable while a finite budget has room: it spends
+    # one iteration instead of ending the run the way a crashed agent command
+    # does. Without an iteration or failure cap, the timeout fails the run.
+    attempt_timed_out = state.timed_out_count > timed_out_before
+    if config.max_iterations is None:
+        retry_remains = config.max_consecutive_failures is not None
+    else:
+        retry_remains = state.iteration < config.max_iterations
+    if not agent_succeeded and config.stop_on_error and not (attempt_timed_out and retry_remains):
         if state.try_commit_failure():
             emit.log_error("Stopping due to --stop-on-error.")
         return False, promise_would_complete

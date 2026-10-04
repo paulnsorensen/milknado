@@ -174,7 +174,7 @@ def resolve_execution_agent_command(
     execution_agent: str | None = None,
     tools: Sequence[str] | None = None,
 ) -> str:
-    """Return the execution agent command for ralph loop workers.
+    """Return the execution agent command for loop workers.
 
     Explicit commands remain configurable, but every consuming subprocess
     boundary validates their executable with :func:`validate_worker_argv`.

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import queue
-from collections import deque
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -12,12 +11,13 @@ from unittest.mock import MagicMock
 import msgspec
 import pytest
 
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters.loop import (
-    LoopAdapter,
-    _drain_review_run,  # pyright: ignore[reportPrivateUsage]
+from milknado.adapters import FlockSlotPool
+from milknado.adapters._loop_local_runs import (
     _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
+    drain_review_run,
 )
+from milknado.adapters._loop_types import ReviewVerdict
+from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     Gate,
     GitPort,
@@ -34,22 +34,22 @@ from milknado.domains.common.agent_argv import (
     build_resume_command,
     capture_session_id,
 )
+from milknado.domains.common.protocols import LoopPort
 from milknado.domains.dispatch.brief import (
     _resolve_spec_path,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.execution import (
-    CompletionResult,
-    DispatchResult,
     ExecutionConfig,
     Executor,
     RebaseConflict,
     RunLoop,
-    run_node_to_completion,
 )
+from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import build_review_prompt
 from milknado.domains.execution.executor import RuntimePolicy
-from milknado.domains.execution.run_loop._completion import handle_completion
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.execution.run_loop._completion import CompletionContext, handle_completion
+from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop._events import (
     Event,
     EventData,
@@ -120,35 +120,36 @@ def _handler_loop(result: CompletionResult) -> RunLoop:
     def _complete(_node_id: int, _branch: str) -> CompletionResult:
         return result
 
-    loop = SimpleNamespace(
-        _active={"run-1": 1},
-        _dispatched_at={"run-1": 0.0},
-        _progress_by_run={},
-        _input=SimpleNamespace(overlay_state=None),
-        _graph=SimpleNamespace(get_node=_get_node),
-        _executor=SimpleNamespace(complete=_complete),
-        _completion_durations=deque[float](),
-        _logs=deque[str](),
-        _attempts={},
-        _strict=True,
-        _failure_triggered=False,
-        _stopped_nodes=set(),
-        _stopped=0,
-        _terminal_runs=deque(),
-        _ralph=_ReviewRalph([]),
+    loop = RunLoop(
+        executor=cast(Executor, cast(object, SimpleNamespace(complete=_complete))),
+        graph=cast(MikadoGraph, cast(object, SimpleNamespace(get_node=_get_node))),
+        loop=cast(LoopPort, cast(object, _ReviewLoop([]))),
     )
-    # The test double implements only the fields used by the completion handler.
-    return cast(RunLoop, cast(object, loop))
+    loop._strict = True  # pyright: ignore[reportPrivateUsage]
+    loop._scheduler.admit_run("run-1", 1, 0.0)  # pyright: ignore[reportPrivateUsage]
+    return loop
 
 
-class _ReviewRalph:
+def _completion_context(loop: RunLoop) -> CompletionContext:
+    return CompletionContext(
+        loop._scheduler,  # pyright: ignore[reportPrivateUsage]
+        loop._graph,  # pyright: ignore[reportPrivateUsage]
+        loop._executor,  # pyright: ignore[reportPrivateUsage]
+        loop._loop,  # pyright: ignore[reportPrivateUsage]
+        loop._input,  # pyright: ignore[reportPrivateUsage]
+        loop._logs,  # pyright: ignore[reportPrivateUsage]
+        loop._strict,  # pyright: ignore[reportPrivateUsage]
+    )
+
+
+class _ReviewLoop:
     def __init__(self, verdicts: list[bool]) -> None:
         self.verdicts: Iterator[bool] = iter(verdicts)
         self.created: list[dict[str, object]] = []
         self.started: list[str] = []
         self.stdout_requests: list[str] = []
         self.reviews: list[tuple[str, str, Path]] = []
-        self.ralph_md_calls: list[dict[str, object]] = []
+        self.loop_md_calls: list[dict[str, object]] = []
         self.timeout_seconds_seen: list[float] = []
         self._next_id: int = 0
         self.session_context: SessionContext | None = None
@@ -157,8 +158,8 @@ class _ReviewRalph:
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -168,15 +169,16 @@ class _ReviewRalph:
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> _Run:
-        _ = (max_iterations, timeout)
+        _ = (max_iterations, timeout, env)
         self._next_id += 1
         resolved_run_id = run_id or f"run-{self._next_id}"
         self.created.append(
             {
                 "agent": agent,
-                "ralph_dir": ralph_dir,
-                "ralph_file": ralph_file,
+                "loop_dir": loop_dir,
+                "loop_file": loop_file,
                 "quality_gates": quality_gates,
                 "project_root": project_root,
                 "commit_footer": commit_footer,
@@ -204,6 +206,14 @@ class _ReviewRalph:
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
         _ = run_id, timeout
+        return True
+
+    def stop_active_workers(self, deadline: float) -> bool:
+        _ = deadline
+        return True
+
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool:
+        _ = graph_run_id, deadline
         return True
 
     def list_runs(self) -> Sequence[_Run]:
@@ -261,8 +271,9 @@ class _ReviewRalph:
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
-        _ = project_root
+        _ = project_root, graph_run_id
         self.timeout_seconds_seen.append(timeout_seconds)
         self.reviews.append((agent, prompt, worktree))
         return ReviewVerdict(
@@ -274,7 +285,7 @@ class _ReviewRalph:
         _ = spec_text, graph_state
         return VerifySpecResult(outcome="done")
 
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,
@@ -283,7 +294,7 @@ class _ReviewRalph:
         findings_round: int | None = None,
     ) -> Path:
         _ = brief, quality_gates
-        self.ralph_md_calls.append(
+        self.loop_md_calls.append(
             {"prior_findings": prior_findings, "findings_round": findings_round}
         )
         return output_path
@@ -335,30 +346,52 @@ def _config(root: Path, **overrides: Unpack[_ConfigOverrides]) -> ExecutionConfi
 def _executor(
     graph: MikadoGraph,
     root: Path,
-    ralph: _ReviewRalph,
+    loop: _ReviewLoop,
     git: FakeGit | None = None,
 ) -> Executor:
     del root
     return Executor(
         graph=graph,
         git=_as_git_port(git or FakeGit()),
-        ralph=ralph,
+        loop=loop,
         crg=FakeCrg(),
+    )
+
+
+def _seed_context(
+    executor: Executor,
+    node_id: int,
+    root: Path,
+    worker_run_id: str,
+    *,
+    owner_fence: str | None = None,
+    base_oid: str = "base-oid",
+) -> None:
+    executor._context_by_node[node_id] = NodeExecutionContext(  # pyright: ignore[reportPrivateUsage]
+        worker_run_id=worker_run_id,
+        owner_fence=owner_fence,
+        worktree=root,
+        session=None,
+        target_branch="main",
+        target_oid=base_oid,
+        base_oid=base_oid,
+        review_round=0,
+        config=_config(root),
     )
 
 
 def test_reject_redispatches_pinned_worktree_and_resumes_session(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    ralph = _ReviewRalph([False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("reviewed change")
 
     first = executor.dispatch(1, _config(tmp_path))
     rejected = executor.complete(1, "main")
     assert rejected.redispatch is not None
     assert rejected.redispatch.worktree == first.worktree
-    runtime_policy = cast(RuntimePolicy, ralph.created[1]["runtime_policy"])
+    runtime_policy = cast(RuntimePolicy, loop.created[1]["runtime_policy"])
     assert runtime_policy.session is not None
     assert runtime_policy.session.session_id == "session-1"
     assert runtime_policy.session.worktree_path == str(first.worktree.resolve())
@@ -381,10 +414,10 @@ def test_reject_redispatches_pinned_worktree_and_resumes_session(
 def test_review_resume_uses_protocol_identity_instead_of_raw_output(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    ralph = _ReviewRalph([False])
-    ralph.session_context = SessionContext(family="omp", cwd=str(tmp_path))
-    ralph.session_id = "rpc-session"
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False])
+    loop.session_context = SessionContext(family="omp", cwd=str(tmp_path))
+    loop.session_id = "rpc-session"
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("preserve RPC session")
 
     _ = executor.dispatch(1, _config(tmp_path, execution_agent="omp -p --model luna"))
@@ -394,38 +427,38 @@ def test_review_resume_uses_protocol_identity_instead_of_raw_output(
     session_file = tmp_path / ".milknado" / "sessions" / "node-1.json"
     saved = msgspec.json.decode(session_file.read_bytes(), type=dict[str, object])
     assert (saved["family"], saved["session_id"]) == ("omp", "rpc-session")
-    assert ralph.stdout_requests == []
+    assert loop.stdout_requests == []
 
 
 def test_review_timeout_seconds_reaches_the_reviewer_port(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    ralph = _ReviewRalph([True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("custom timeout")
 
     _ = executor.dispatch(1, _config(tmp_path, review_timeout_seconds=123))
     _ = executor.complete(1, "main")
 
-    assert ralph.timeout_seconds_seen == [123]
+    assert loop.timeout_seconds_seen == [123]
 
 
-def test_redispatch_threads_findings_into_ralph_regeneration(
+def test_redispatch_threads_findings_into_loop_regeneration(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    """#298: the redispatched worker's RALPH.md regenerates with the rejecting
+    """#298: the redispatched worker's LOOP.md regenerates with the rejecting
     round's findings threaded in memory — required reading, not re-derived."""
-    ralph = _ReviewRalph([False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("findings thread")
 
     _ = executor.dispatch(1, _config(tmp_path))
     rejected = executor.complete(1, "main")
 
     assert rejected.redispatch is not None
-    assert ralph.ralph_md_calls[0] == {"prior_findings": "", "findings_round": None}
-    assert ralph.ralph_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
-    assert ralph.ralph_md_calls[1]["findings_round"] == 1
+    assert loop.loop_md_calls[0] == {"prior_findings": "", "findings_round": None}
+    assert loop.loop_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
+    assert loop.loop_md_calls[1]["findings_round"] == 1
 
 
 def test_notify_review_dual_writes_node_reviews_and_run_messages(
@@ -433,8 +466,8 @@ def test_notify_review_dual_writes_node_reviews_and_run_messages(
 ) -> None:
     """#298: every notified verdict lands in node_reviews (audit trail, no runs
     dependency) AND in run_messages (FK satisfied by the curd-A runs row)."""
-    ralph = _ReviewRalph([False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("verdict audit")
 
     _ = executor.dispatch(1, _config(tmp_path))
@@ -445,7 +478,7 @@ def test_notify_review_dual_writes_node_reviews_and_run_messages(
     assert rows[0]["verdict"] == "reject"
     assert rows[0]["round"] == 1
     assert rows[0]["findings"] == "[P1][correctness] finding"
-    worker_run_id = ralph.started[0]
+    worker_run_id = loop.started[0]
     assert graph.runs.latest_message(worker_run_id, "node_review") is not None
 
 
@@ -454,8 +487,8 @@ def test_findings_delivered_in_memory_when_db_writes_fail(
 ) -> None:
     """#298: the DB being down at redispatch must not lose the findings — the
     handoff is the in-memory thread, never a DB read-back."""
-    ralph = _ReviewRalph([False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("db down redispatch")
 
     _ = executor.dispatch(1, _config(tmp_path))
@@ -466,19 +499,19 @@ def test_findings_delivered_in_memory_when_db_writes_fail(
 
     assert rejected.review_notification_failed is True
     assert rejected.redispatch is not None
-    assert ralph.ralph_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
-    assert ralph.ralph_md_calls[1]["findings_round"] == 1
+    assert loop.loop_md_calls[1]["prior_findings"] == "[P1][correctness] finding"
+    assert loop.loop_md_calls[1]["findings_round"] == 1
 
 
 def test_second_rejection_round_accumulates_audits_and_labels_round_2(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
     """#298: consecutive rejections are distinct rounds — node_reviews keeps one
-    row per round (PK is (node_id, round)) and the round-2 RALPH regeneration
+    row per round (PK is (node_id, round)) and the round-2 LOOP regeneration
     is labeled round 2, so the worker can tell its second attempt was rejected
     again rather than mistaking it for a fresh dispatch."""
-    ralph = _ReviewRalph([False, False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("two rejections")
 
     _ = executor.dispatch(1, _config(tmp_path, review_max_rounds=2))
@@ -489,27 +522,27 @@ def test_second_rejection_round_accumulates_audits_and_labels_round_2(
     rows = graph.runs.reviews_for_node(1)
     assert [r["round"] for r in rows] == [1, 2]
     assert all(r["verdict"] == "reject" for r in rows)
-    assert ralph.ralph_md_calls[1]["findings_round"] == 1
-    assert ralph.ralph_md_calls[2]["findings_round"] == 2
-    assert ralph.ralph_md_calls[2]["prior_findings"] == "[P1][correctness] finding"
+    assert loop.loop_md_calls[1]["findings_round"] == 1
+    assert loop.loop_md_calls[2]["findings_round"] == 2
+    assert loop.loop_md_calls[2]["prior_findings"] == "[P1][correctness] finding"
 
 
 def test_zero_review_rounds_preserves_merge_path(graph: MikadoGraph, tmp_path: Path) -> None:
-    ralph = _ReviewRalph([False])
+    loop = _ReviewLoop([False])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node("no review")
 
     _ = executor.dispatch(1, _config(tmp_path, review_max_rounds=0))
     result = executor.complete(1, "main")
     assert result.rebased is True
-    assert not ralph.reviews
+    assert not loop.reviews
 
 
 def test_warn_policy_merges_after_review_round_budget(graph: MikadoGraph, tmp_path: Path) -> None:
-    ralph = _ReviewRalph([False, False])
+    loop = _ReviewLoop([False, False])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node("warn review")
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject="warn"))
@@ -526,9 +559,9 @@ def test_warn_policy_merges_after_review_round_budget(graph: MikadoGraph, tmp_pa
 def test_block_policy_retains_pinned_worktree(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ralph = _ReviewRalph([False, False])
+    loop = _ReviewLoop([False, False])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node("blocked review")
     monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
 
@@ -558,7 +591,7 @@ def test_durable_spec_path_prefers_xdg_corpus(
 
 
 def test_loop_adapter_resume_command_keeps_cwd_and_controls(tmp_path: Path) -> None:
-    prompt_file = tmp_path / "RALPH.md"
+    prompt_file = tmp_path / "LOOP.md"
     _ = prompt_file.write_text("prompt", encoding="utf-8")
     session = NodeAgentSession(1, "claude", "s1", str(tmp_path), "now")
     adapter = LoopAdapter()
@@ -579,18 +612,22 @@ def test_loop_adapter_resume_command_keeps_cwd_and_controls(tmp_path: Path) -> N
 def test_capture_session_handles_nested_json_and_failures(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    ralph = _ReviewRalph([True])
-    ralph.get_run_stdout = lambda run_id: [  # type: ignore[method-assign]
+    loop = _ReviewLoop([True])
+    loop.get_run_stdout = lambda run_id: [  # type: ignore[method-assign]
         "not-json",
         '{"event":{"session_id":"nested"}}',
     ]
-    executor = _executor(graph, tmp_path, ralph)
-    node = MikadoNode(id=9, description="session", run_id="worker", worktree_path=str(tmp_path))
+    executor = _executor(graph, tmp_path, loop)
+    node = MikadoNode(
+        id=9, description="session", run_id="worker", worktree_path=str(tmp_path / "stale")
+    )
+    _seed_context(executor, 9, tmp_path, "worker")
     session = executor._capture_session(  # pyright: ignore[reportPrivateUsage]
         node, _config(tmp_path, agent_family="codex")
     )
     assert session is not None
     assert session.session_id == "nested"
+    assert session.worktree_path == str(tmp_path.resolve())
     assert (
         executor._capture_session(  # pyright: ignore[reportPrivateUsage]
             node, _config(tmp_path, agent_family="codex")
@@ -603,7 +640,7 @@ def test_capture_session_handles_nested_json_and_failures(
             MikadoNode(id=10, description="missing"),
             _config(tmp_path),
         )
-    ralph.get_run_stdout = lambda run_id: ["{}"]  # type: ignore[method-assign]
+    loop.get_run_stdout = lambda run_id: ["{}"]  # type: ignore[method-assign]
     with pytest.raises(ValueError, match="resumable session id"):
         _ = executor._capture_session(  # pyright: ignore[reportPrivateUsage]
             MikadoNode(id=11, description="invalid", run_id="worker"),
@@ -614,12 +651,12 @@ def test_capture_session_handles_nested_json_and_failures(
 def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    ralph = _ReviewRalph([True])
+    loop = _ReviewLoop([True])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     node = MikadoNode(id=12, description="helper", artifact_path="spec.md")
-    executor._base_oid_by_node[node.id] = "base-oid"  # pyright: ignore[reportPrivateUsage]
-    _ = (tmp_path / "RALPH.md").write_text("generated context", encoding="utf-8")
+    _seed_context(executor, node.id, tmp_path, "fixture-run-12", base_oid="base-oid")
+    _ = (tmp_path / "LOOP.md").write_text("generated context", encoding="utf-8")
     prompt = build_review_prompt(
         node,
         tmp_path,
@@ -632,7 +669,8 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
         node, tmp_path, _config(tmp_path, session_mode="fresh")
     )
-    assert "diff from base-oid" in ralph.reviews[0][1]
+    assert "diff from base-oid" in loop.reviews[0][1]
+    _ = executor._context_by_node.pop(node.id)  # pyright: ignore[reportPrivateUsage]
     _ = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="reject", findings_md="finding"
     )
@@ -643,7 +681,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
     no_reviewer = Executor(
         graph=graph,
         git=_as_git_port(FakeGit()),
-        ralph=_MissingReviewer(),  # pyright: ignore[reportArgumentType]
+        loop=_MissingReviewer(),  # pyright: ignore[reportArgumentType]
         crg=FakeCrg(),
     )
     with pytest.raises(ValueError, match="requires a LoopPort reviewer"):
@@ -661,7 +699,7 @@ def test_executor_review_helpers_cover_spec_and_missing_reviewer(
 def test_review_true_without_reviewer_fails_before_dispatch(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
-    executor = _executor(graph, tmp_path, _ReviewRalph([True]))
+    executor = _executor(graph, tmp_path, _ReviewLoop([True]))
     _ = graph.add_node("missing reviewer")
 
     with pytest.raises(ValueError, match="review=true"):
@@ -673,8 +711,8 @@ def test_adopted_review_keeps_parent_fence_and_notifies_worker(
 ) -> None:
     from milknado.domains.dispatch._runstate import now_iso
 
-    ralph = _ReviewRalph([False, True])
-    executor = _executor(graph, tmp_path, ralph)
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
     _ = graph.add_node("adopted review")
     parent_fence = "parent-fence"
     assert graph.claim_node(1, parent_fence, now=now_iso())
@@ -683,13 +721,13 @@ def test_adopted_review_keeps_parent_fence_and_notifies_worker(
 
     _ = executor.dispatch(1, _config(tmp_path), parent_run_id=parent_fence)
     rejected = executor.complete(1, "main")
-    round_run_id = ralph.created[0]["run_id"]
+    round_run_id = loop.created[0]["run_id"]
 
     assert rejected.redispatch is not None
     node = graph.get_node(1)
     assert node is not None
     assert node.run_id == parent_fence
-    assert ralph.stdout_requests == [round_run_id]
+    assert loop.stdout_requests == [round_run_id]
     assert notified.call_args.args[0] == round_run_id
 
     approved = executor.complete(1, "main")
@@ -704,7 +742,7 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
 ) -> None:
     for node_id, policy in ((1, "block"), (2, "warn")):
         _ = graph.add_node(f"notification {policy}")
-        executor = _executor(graph, tmp_path, _ReviewRalph([False, False]))
+        executor = _executor(graph, tmp_path, _ReviewLoop([False, False]))
         _ = executor.dispatch(node_id, _config(tmp_path, on_reject=policy))
         monkeypatch.setattr(
             graph.runs,
@@ -728,7 +766,7 @@ def test_review_notification_failure_is_explicit_for_block_and_warn(
 
 
 def test_review_prompt_requires_dispatch_base_oid(graph: MikadoGraph, tmp_path: Path) -> None:
-    executor = _executor(graph, tmp_path, _ReviewRalph([True]))
+    executor = _executor(graph, tmp_path, _ReviewLoop([True]))
     with pytest.raises(ValueError, match="dispatch base oid"):
         _ = executor._run_review(  # pyright: ignore[reportPrivateUsage]
             MikadoNode(id=20, description="missing base"),
@@ -741,13 +779,12 @@ def test_review_redispatch_fails_closed_when_fence_changes(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _ = graph.add_node("unfenced redispatch")
-    executor = _executor(graph, tmp_path, _ReviewRalph([True]))
+    executor = _executor(graph, tmp_path, _ReviewLoop([True]))
     node = graph.get_node(1)
     from milknado.domains.dispatch._runstate import now_iso
 
     assert node is not None
-    executor._worker_run_id_by_node[1] = "worker-1"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[1] = "base-1"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 1, tmp_path, "worker-1", base_oid="base-1")
     monkeypatch.setattr(graph, "replace_run_id", MagicMock(return_value=False))
     with pytest.raises(ValueError, match="fence lost"):
         _ = executor._redispatch_review_round(  # pyright: ignore[reportPrivateUsage]
@@ -756,9 +793,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
 
     _ = graph.add_node("adopted fence")
     assert graph.claim_node(2, "parent-fence", now=now_iso())
-    executor._owner_fence_by_node[2] = "parent-fence"  # pyright: ignore[reportPrivateUsage]
-    executor._worker_run_id_by_node[2] = "worker-2"  # pyright: ignore[reportPrivateUsage]
-    executor._base_oid_by_node[2] = "base-2"  # pyright: ignore[reportPrivateUsage]
+    _seed_context(executor, 2, tmp_path, "worker-2", owner_fence="parent-fence", base_oid="base-2")
     original_get_node = graph.get_node
 
     def changed_fence(node_id: int) -> MikadoNode | None:
@@ -779,7 +814,7 @@ def test_review_redispatch_fails_closed_when_fence_changes(
 def test_review_failure_blocks_without_redispatch(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    class FailingReviewRalph(_ReviewRalph):
+    class FailingReviewLoop(_ReviewLoop):
         def run_node_review(  # pyright: ignore[reportImplicitOverride]
             self,
             agent: str,
@@ -788,10 +823,12 @@ def test_review_failure_blocks_without_redispatch(
             project_root: Path,
             *,
             timeout_seconds: float,
+            graph_run_id: str | None = None,
         ) -> ReviewVerdict:
+            _ = graph_run_id
             raise RuntimeError("review process failed")
 
-    executor = _executor(graph, tmp_path, FailingReviewRalph([True]))
+    executor = _executor(graph, tmp_path, FailingReviewLoop([True]))
     _ = graph.add_node("review failure")
     monkeypatch.setattr(graph.runs, "deposit_message", MagicMock(return_value=1))
     _ = executor.dispatch(1, _config(tmp_path))
@@ -803,11 +840,42 @@ def test_review_failure_blocks_without_redispatch(
     assert node.status.value == "blocked"
 
 
+def test_unconfirmed_reviewer_preserves_node_run_and_worktree(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    class UnconfirmedReviewLoop(_ReviewLoop):
+        def run_node_review(  # pyright: ignore[reportImplicitOverride]
+            self,
+            agent: str,
+            prompt: str,
+            worktree: Path,
+            project_root: Path,
+            *,
+            timeout_seconds: float,
+            graph_run_id: str | None = None,
+        ) -> ReviewVerdict:
+            _ = agent, prompt, worktree, project_root, timeout_seconds
+            assert graph_run_id is not None
+            raise PreservedWorkerRun(1, graph_run_id)
+
+    executor = _executor(graph, tmp_path, UnconfirmedReviewLoop([True]))
+    _ = graph.add_node("review owner")
+    dispatched = executor.dispatch(1, _config(tmp_path))
+    with pytest.raises(PreservedWorkerRun) as failure:
+        _ = executor.complete(1, "main")
+    assert failure.value.run_id == dispatched.run_id
+    node = graph.get_node(1)
+    assert node is not None and node.status.value == "running"
+    assert dispatched.worktree.exists()
+    run = graph.runs.get(dispatched.run_id)
+    assert run is not None and run["status"] == "running"
+
+
 def test_review_findings_write_failure_still_audits_and_blocks(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     git = FakeGit()
-    executor = _executor(graph, tmp_path, _ReviewRalph([True]), git)
+    executor = _executor(graph, tmp_path, _ReviewLoop([True]), git)
     _ = graph.add_node("findings write failure")
 
     def fail_write(*_args: object, **_kwargs: object) -> None:
@@ -847,8 +915,8 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _advance_clock() -> float:
         return next(clock)
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _advance_clock)
-    timed_out = _drain_review_run(
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _advance_clock)
+    timed_out = drain_review_run(
         timeout_manager,
         "timeout",
         queue.Queue[Event[EventData]](),
@@ -870,8 +938,8 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _zero_clock() -> float:
         return 0.0
 
-    monkeypatch.setattr("milknado.adapters.loop.time.monotonic", _zero_clock)
-    empty = _drain_review_run(
+    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _zero_clock)
+    empty = drain_review_run(
         empty_manager,
         "empty",
         empty_events,
@@ -889,14 +957,19 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
 
     failed_manager = Manager(RuntimeError("stop failed"))
     failed_events = FailedEvents()
-    failed = _drain_review_run(
-        failed_manager,
-        "failed",
-        failed_events,
-        1800.0,
-    )
-    assert failed.approved is False
-    assert "event stream failed" in failed.findings_md
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = drain_review_run(failed_manager, "failed", failed_events, 1800.0)
+    assert failed_manager.stopped
+
+    unconfirmed_manager = Manager()
+
+    def unconfirmed_stop(run_id: str, timeout: float | None = None) -> bool:
+        _ = run_id, timeout
+        return False
+
+    unconfirmed_manager.stop_and_join = unconfirmed_stop  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError, match="reviewer stop was not confirmed"):
+        _ = drain_review_run(unconfirmed_manager, "running", empty_events, 1800.0)
 
 
 def test_agent_session_parser_rejects_bad_shapes() -> None:
@@ -941,7 +1014,7 @@ class _StubManager(RunManager):
 
 def _managed_run(stdout: str | None, result_text: str | None) -> ManagedRun:
     return ManagedRun(
-        config=RunConfig(agent="agent", ralph_dir=Path("."), ralph_file=Path("ralph.md")),
+        config=RunConfig(agent="agent", loop_dir=Path("."), loop_file=Path("loop.md")),
         state=RunState(
             run_id="run",
             last_captured_stdout=stdout,
@@ -1036,7 +1109,7 @@ def test_adapter_review_drain_collects_iteration_output() -> None:
     )
     events.put(Event(EventType.RUN_STOPPED, "r", NoData()))
     manager = RunManager()
-    result = _drain_review_run(manager, "r", events, 1800.0)
+    result = drain_review_run(manager, "r", events, 1800.0)
     assert result.approved is True
 
 
@@ -1083,28 +1156,37 @@ class _HeadlessRoundExecutor:
         return True
 
 
-class _HeadlessRoundRalph:
+class _HeadlessRoundLoop:
     def wait_for_next_completion(
         self, active_run_ids: set[str], timeout: float | None = None
     ) -> tuple[str, TerminalRunOutcome]:
         _ = timeout
         return next(iter(active_run_ids)), TerminalRunOutcome("completed")
 
-    def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        _ = run_id, timeout
-        return True
+    def get_run_output_tail(self, run_id: str, lines: int) -> list[str]:
+        _ = run_id, lines
+        return []
+
+    def get_run_guidance(self, run_id: str) -> list[str]:
+        _ = run_id
+        return []
+
+    def get_run_session(self, run_id: str) -> None:
+        _ = run_id
+        return None
 
 
 def test_headless_follows_review_redispatch() -> None:
+    def get_node(_node_id: int) -> None:
+        return None
+
     config = ExecutionConfig("agent", (), "wt", Path("/tmp"))
-    outcome = run_node_to_completion(
-        _HeadlessRoundExecutor(),
-        _HeadlessRoundRalph(),
-        17,
-        config,
-        "main",
-        30.0,
+    driver = RunLoop(
+        executor=cast(Executor, cast(object, _HeadlessRoundExecutor())),
+        graph=cast(MikadoGraph, cast(object, SimpleNamespace(get_node=get_node))),
+        loop=cast(LoopPort, cast(object, _HeadlessRoundLoop())),
     )
+    outcome = driver.run_node(17, config, "main", 30.0)
     assert outcome.success is True
 
 
@@ -1116,18 +1198,22 @@ def test_completion_handler_tracks_review_round_and_block_paths() -> None:
         redispatch=DispatchResult(1, Path("/tmp/wt"), "run-2"),
     )
     loop = _handler_loop(redispatch)
-    assert handle_completion(loop, "run-1", TerminalRunOutcome("completed"), "main") == (0, 0, [])
-    assert "run-2" in loop._active  # pyright: ignore[reportPrivateUsage]
+    assert handle_completion(
+        _completion_context(loop), "run-1", TerminalRunOutcome("completed"), "main"
+    ) == (0, 0, [])
+    assert [run.run_id for run in loop._scheduler.view().active] == ["run-2"]  # pyright: ignore[reportPrivateUsage]
 
     blocked = _handler_loop(CompletionResult(1, rebased=False, newly_ready=[], blocked=True))
-    assert handle_completion(blocked, "run-1", "completed", "main")[1] == 1
+    assert handle_completion(_completion_context(blocked), "run-1", "completed", "main")[1] == 1
     conflict = RebaseConflict(1, "handler node", ("a.py",), "conflict")
     failed = _handler_loop(
         CompletionResult(1, rebased=False, newly_ready=[], rebase_conflict=conflict)
     )
-    assert handle_completion(failed, "run-1", "completed", "main")[2] == [conflict]
+    assert handle_completion(_completion_context(failed), "run-1", "completed", "main")[2] == [
+        conflict
+    ]
     passed = _handler_loop(CompletionResult(1, rebased=True, newly_ready=[]))
-    assert handle_completion(passed, "run-1", "completed", "main")[0] == 1
+    assert handle_completion(_completion_context(passed), "run-1", "completed", "main")[0] == 1
 
 
 def test_completion_handler_surfaces_review_notification_failure() -> None:
@@ -1139,7 +1225,9 @@ def test_completion_handler_surfaces_review_notification_failure() -> None:
     result = CompletionResult(1, rebased=True, newly_ready=[], review_notification_failed=True)
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     # The node still completes normally — the notice does not change the outcome.
     assert (completed, failed, conflicts) == (1, 0, [])
@@ -1152,16 +1240,18 @@ def test_completion_handler_surfaces_review_audit_failure() -> None:
     )
     loop = _handler_loop(result)
 
-    completed, failed, conflicts = handle_completion(loop, "run-1", "completed", "main")
+    completed, failed, conflicts = handle_completion(
+        _completion_context(loop), "run-1", "completed", "main"
+    )
 
     assert (completed, failed, conflicts) == (0, 1, [])
     assert any("review audit failed" in entry for entry in loop._logs)  # pyright: ignore[reportPrivateUsage]
 
 
 def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: Path) -> None:
-    ralph = _ReviewRalph([True])
+    loop = _ReviewLoop([True])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node("approved audit")
 
     dispatched = executor.dispatch(1, _config(tmp_path))
@@ -1176,9 +1266,9 @@ def test_approval_audit_survives_worktree_cleanup(graph: MikadoGraph, tmp_path: 
 def test_approval_audit_failure_blocks_before_merge(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ralph = _ReviewRalph([True])
+    loop = _ReviewLoop([True])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node("audit failure")
     monkeypatch.setattr(
         graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
@@ -1199,16 +1289,16 @@ def test_approval_audit_failure_blocks_before_merge(
 def test_rejection_audit_failure_blocks_before_merge(
     graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, policy: str
 ) -> None:
-    ralph = _ReviewRalph([False])
+    loop = _ReviewLoop([False])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node(f"rejection audit failure {policy}")
     monkeypatch.setattr(
         graph.runs, "insert_review", MagicMock(side_effect=RuntimeError("audit unavailable"))
     )
 
     _ = executor.dispatch(1, _config(tmp_path, on_reject=policy, review_max_rounds=1))
-    executor._review_round_by_node[1] = 1  # pyright: ignore[reportPrivateUsage]
+    executor._context_by_node[1].review_round = 1  # pyright: ignore[reportPrivateUsage]
     result = executor.complete(1, "main")
 
     assert result.blocked is True
@@ -1225,7 +1315,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     graph.close()
 
     reopened = MikadoGraph(db)
-    executor = _executor(reopened, tmp_path, _ReviewRalph([True]))
+    executor = _executor(reopened, tmp_path, _ReviewLoop([True]))
     audit = executor._notify_review(  # pyright: ignore[reportPrivateUsage]
         node, verdict="approve", findings_md="new"
     )
@@ -1235,7 +1325,7 @@ def test_review_sequence_appends_after_executor_restart(tmp_path: Path) -> None:
     reopened.close()
 
 
-class _MalformedReviewRalph(_ReviewRalph):
+class _MalformedReviewLoop(_ReviewLoop):
     def run_node_review(  # pyright: ignore[reportImplicitOverride]
         self,
         agent: str,
@@ -1244,8 +1334,9 @@ class _MalformedReviewRalph(_ReviewRalph):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewVerdict:
-        _ = agent, prompt, worktree, project_root, timeout_seconds
+        _ = agent, prompt, worktree, project_root, timeout_seconds, graph_run_id
         return _parse_review_verdict("progress only")
 
 
@@ -1253,9 +1344,9 @@ class _MalformedReviewRalph(_ReviewRalph):
 def test_invalid_review_blocks_without_worker_revision(
     graph: MikadoGraph, tmp_path: Path, policy: str
 ) -> None:
-    ralph = _MalformedReviewRalph([])
+    loop = _MalformedReviewLoop([])
     git = FakeGit()
-    executor = _executor(graph, tmp_path, ralph, git)
+    executor = _executor(graph, tmp_path, loop, git)
     _ = graph.add_node(f"invalid review {policy}")
 
     _ = executor.dispatch(
@@ -1266,9 +1357,33 @@ def test_invalid_review_blocks_without_worker_revision(
 
     assert result.blocked is True
     assert result.redispatch is None
-    assert len(ralph.created) == 1
+    assert len(loop.created) == 1
     assert not git.rebases
-    assert executor._review_round_by_node.get(1, 0) == 0  # pyright: ignore[reportPrivateUsage]
+    assert executor._context_by_node[1].review_round == 0  # pyright: ignore[reportPrivateUsage]
     rows = graph.runs.reviews_for_node(1)
     assert rows[0]["verdict"] == "error"
     assert rows[0]["findings"] == "progress only"
+
+
+def _host_slot_is_free() -> bool:
+    try:
+        FlockSlotPool(1).acquire("probe", 0, Path("/probe")).release()
+    except HostCapacityFull:
+        return False
+    return True
+
+
+def test_review_redispatch_keeps_the_host_slot_until_the_final_verdict(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    loop = _ReviewLoop([False, True])
+    executor = _executor(graph, tmp_path, loop)
+    executor.use_host_capacity(FlockSlotPool(1))
+    _ = graph.add_node("reviewed change")
+
+    _ = executor.dispatch(1, _config(tmp_path))
+    assert not _host_slot_is_free()
+    assert executor.complete(1, "main").redispatch is not None
+    assert not _host_slot_is_free()
+    assert executor.complete(1, "main").rebased is True
+    assert _host_slot_is_free()

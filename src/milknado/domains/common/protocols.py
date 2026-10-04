@@ -151,12 +151,27 @@ class RunHandle(Protocol):
     def state(self) -> RunStateView: ...
 
 
+class SlotLease(Protocol):
+    """A held claim on one host worker slot."""
+
+    def release(self) -> None:
+        """Free the slot. Calling it again is a no-op."""
+
+
+class HostCapacityPort(Protocol):
+    """Host-wide cap on concurrent task workers, shared by every project database."""
+
+    def acquire(self, run_id: str, node_id: int, project_root: Path) -> SlotLease:
+        """Take a free slot or raise ``HostCapacityFull``."""
+        ...
+
+
 class LoopPort(Protocol):
     def create_run(
         self,
         agent: str,
-        ralph_dir: Path,
-        ralph_file: Path,
+        loop_dir: Path,
+        loop_file: Path,
         quality_gates: tuple[Gate, ...] | None,
         project_root: Path | None = None,
         commit_footer: str | None = None,
@@ -166,6 +181,7 @@ class LoopPort(Protocol):
         completion_probe: Callable[[], bool] | None = None,
         max_iterations: int | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> RunHandle: ...
     def start_run(self, run_id: str) -> None: ...
     def queue_guidance(self, run_id: str, text: str) -> bool: ...
@@ -175,6 +191,8 @@ class LoopPort(Protocol):
     def request_stop_run(self, run_id: str) -> None: ...
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool: ...
+    def stop_active_workers(self, deadline: float) -> bool: ...
+    def stop_run_workers(self, graph_run_id: str, deadline: float) -> bool: ...
     def list_runs(self) -> Sequence[RunHandle]: ...
     def get_run(self, run_id: str) -> RunHandle | None: ...
     def is_run_alive(self, run_id: str) -> bool: ...
@@ -195,13 +213,14 @@ class LoopPort(Protocol):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str | None = None,
     ) -> ReviewResult: ...
     def verify_spec(
         self,
         spec_text: str,
         graph_state: str,
     ) -> VerifySpecResult: ...
-    def generate_ralph_md(
+    def generate_loop_md(
         self,
         brief: str,
         quality_gates: tuple[Gate, ...] | None,

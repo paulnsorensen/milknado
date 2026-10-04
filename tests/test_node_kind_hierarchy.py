@@ -165,7 +165,7 @@ class TestRunStartRefusal:
         """milknado_run_loop_start on a roadmap node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp.ralph import milknado_run_loop_start
+        from milknado.mcp.loop import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -173,8 +173,8 @@ class TestRunStartRefusal:
         g.close()
 
         with (
-            patch("milknado.mcp.ralph.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp.ralph.open_graph") as mock_open,
+            patch("milknado.mcp.loop.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.loop.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 
@@ -686,15 +686,15 @@ class TestKindEditClearsFlavor:
         assert node.flavor is None, f"expected None after kind→goal edit; got {node.flavor!r}"
 
 
-# ── hardening: ralph_run_start refusal on GOAL (not just ROADMAP) ─────────────
+# ── hardening: loop_run_start refusal on GOAL (not just ROADMAP) ─────────────
 
 
-class TestRalphRunStartRefusesGoal:
+class TestLoopRunStartRefusesGoal:
     def test_run_loop_start_refuses_goal(self, tmp_path: Path) -> None:
         """milknado_run_loop_start on a GOAL node refuses with ValueError."""
         from unittest.mock import patch
 
-        from milknado.mcp.ralph import milknado_run_loop_start
+        from milknado.mcp.loop import milknado_run_loop_start
 
         graph_path = tmp_path / "test.db"
         g = MikadoGraph(graph_path)
@@ -703,8 +703,8 @@ class TestRalphRunStartRefusesGoal:
         g.close()
 
         with (
-            patch("milknado.mcp.ralph.resolve_project_root", return_value=tmp_path),
-            patch("milknado.mcp.ralph.open_graph") as mock_open,
+            patch("milknado.mcp.loop.resolve_project_root", return_value=tmp_path),
+            patch("milknado.mcp.loop.open_graph") as mock_open,
         ):
             import milknado.domains.common.config as cfg_mod
 

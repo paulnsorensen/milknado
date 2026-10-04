@@ -6,7 +6,7 @@
 - [config-layering](./config-layering.md) — Config Layering — defaults → global → local
 - [distribution](./distribution.md) — Distribution — Portable Plugin Packaging (Skills + MCP) Across Harnesses
 - [entry-points](./entry-points.md) — Entry Points — CLI & MCP Server
-- [execution](./execution.md) — Execution & Dispatch — Parallel Ralph Loops
+- [execution](./execution.md) — Execution & Dispatch — Parallel loops
 - [graph-read-port](./graph-read-port.md) — Graph read port and execution snapshots
 - [graph-status-reconciliation](./graph-status-reconciliation.md) — Graph status reconciliation
 - [graph](./graph.md) — Graph Domain — Mikado Dependency Graph

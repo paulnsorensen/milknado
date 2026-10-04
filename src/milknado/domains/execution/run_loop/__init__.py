@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import dataclasses
-import json
 import logging
 import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
@@ -18,14 +18,28 @@ from milknado.domains.common import (
 )
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.types import NodeStatus
-from milknado.domains.execution.executor import (
+from milknado.domains.execution._models import (
+    NodeClaimRejected,
+    PreservedWorkerRun,
     RebaseConflict,
-    get_dispatchable_nodes,
-    get_execution_overview,
 )
-from milknado.domains.execution.run_loop._completion import handle_completion
-from milknado.domains.execution.run_loop._logging import configure_run_logging, ts
-from milknado.domains.execution.run_loop._result import RunLoopResult, VerifyOutcome
+from milknado.domains.execution.executor import get_dispatchable_nodes, get_execution_overview
+from milknado.domains.execution.run_loop._completion import CompletionContext
+from milknado.domains.execution.run_loop._idle import IdleGraphState, settle_once
+from milknado.domains.execution.run_loop._logging import (
+    configure_run_logging,
+    emit_final_telemetry,
+    ts,
+)
+from milknado.domains.execution.run_loop._node import IDLE_RESCAN_SECONDS, NodeDriver
+from milknado.domains.execution.run_loop._projection import project_state
+from milknado.domains.execution.run_loop._result import (
+    NodeLoopOutcome,
+    RunLoopResult,
+    VerifyOutcome,
+)
+from milknado.domains.execution.run_loop._scheduler import ActiveRun, Scheduler
+from milknado.domains.execution.run_loop._verification import RunVerifier
 from milknado.domains.execution.run_loop.input import (
     InputState,
     drain_input,
@@ -33,15 +47,12 @@ from milknado.domains.execution.run_loop.input import (
     stop_input_thread,
 )
 from milknado.domains.execution.run_loop.state import (
-    ActiveRunState,
-    RunActionState,
+    ActiveRunFacts,
+    ProjectionFacts,
     RunLoopState,
-    TerminalRunState,
-    action_reasons,
-    average_duration,
-    progress_state,
     summarize_description,
 )
+from milknado.domains.graph import ConcurrencyLimitReached
 from milknado.loop import RunStatus
 
 __all__ = ["RunLoop", "RunLoopResult", "TerminalRunOutcome"]
@@ -63,38 +74,100 @@ class RunLoop:
         self,
         executor: Executor,
         graph: MikadoGraph,
-        ralph: LoopPort,
+        loop: LoopPort,
         config: MilknadoConfig | None = None,
         planner: Planner | None = None,
+        shutdown_requested: Callable[[], bool] | None = None,
     ) -> None:
         self._executor: Executor = executor
         self._graph: MikadoGraph = graph
-        self._ralph: LoopPort = ralph
+        self._loop: LoopPort = loop
         self._milknado_config: MilknadoConfig | None = config
         self._planner: Planner | None = planner
-        self._active: dict[str, int] = {}
+        eta_n = config.eta_sample_size if config else _ETA_SAMPLE_SIZE_DEFAULT
+        self._scheduler: Scheduler = Scheduler(eta_n)
         self._logs: deque[str] = deque(maxlen=30)
-        self._dispatched_at: dict[str, float] = {}
-        self._attempts: dict[int, int] = {}
-        self._failure_triggered: bool = False
-        self._progress_by_run: dict[str, ProgressEvent] = {}
         self._strict: bool = False
         self._log_path: str | None = None
-        eta_n = config.eta_sample_size if config else _ETA_SAMPLE_SIZE_DEFAULT
-        self._completion_durations: deque[float] = deque(maxlen=eta_n)
         self._input: InputState = InputState()
         self._exec_config: ExecutionConfig | None = None
-        self._stopped_nodes: set[int] = set()
-        self._terminal_runs: deque[TerminalRunState] = deque(maxlen=20)
-        self._completed: int = 0
-        self._failed: int = 0
-        self._stopped: int = 0
         self._state_listener: Callable[[RunLoopState], None] | None = None
         self._process_controls: Callable[[], None] | None = None
+        self._await_owner_work: bool = False
+        self._idle_sleep: Callable[[float], None] = time.sleep
         self._completion_wait_started: float = 0.0
-        self._scheduling_stopped: bool = False
+        self._shutdown_requested: Callable[[], bool] | None = shutdown_requested
         self._scheduling_lock: Lock = Lock()
         self._logged_blocks: set[tuple[int, int, tuple[str, ...]]] = set()
+        self._spec: tuple[str | None, Path | None] = (None, None)
+        self._idle_settled_graph: IdleGraphState | None = None
+        self._verify_outcome: VerifyOutcome | None = None
+
+    def _node_driver(self) -> NodeDriver:
+        return NodeDriver(
+            CompletionContext(
+                self._scheduler,
+                self._graph,
+                self._executor,
+                self._loop,
+                self._input,
+                self._logs,
+                self._strict,
+            )
+        )
+
+    def run_node(
+        self,
+        node_id: int,
+        config: ExecutionConfig,
+        feature_branch: str,
+        timeout: float,
+        *,
+        base_oid: str | None = None,
+        parent_run_id: str | None = None,
+    ) -> NodeLoopOutcome:
+        return self._node_driver().run_node(
+            node_id,
+            config,
+            feature_branch,
+            timeout,
+            base_oid=base_oid,
+            parent_run_id=parent_run_id,
+        )
+
+    def confirm_preserved_stop(self, outcome: NodeLoopOutcome) -> NodeLoopOutcome:
+        return self._node_driver().confirm_preserved_stop(outcome)
+
+    def _handle_terminal(
+        self, run_id: str, outcome: TerminalRunOutcome, feature_branch: str
+    ) -> tuple[int, int, list[RebaseConflict]] | None:
+        return self._node_driver().handle_terminal(run_id, outcome, feature_branch)
+
+    def _handle_completion_timeout(self, timeout: CompletionTimeout) -> int:
+        return self._node_driver().handle_completion_timeout(timeout)
+
+    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
+        stopped = self._executor.force_stop_run(run_id, timeout)
+        self._publish_state()
+        return stopped
+
+    def force_stop_active(self, deadline: float) -> bool:
+        self._scheduler.close_admission()
+        stopped = self._loop.stop_active_workers(deadline)
+        for run in self._scheduler.view().active:
+            remaining = max(0.0, deadline - time.monotonic())
+            stopped = self._executor.force_stop_run(run.run_id, remaining) and stopped
+        return stopped
+
+    def admit_stop_scheduling(self) -> None:
+        with self._scheduling_lock:
+            self._scheduler.close_admission()
+
+    def stop_scheduling(self) -> None:
+        self.admit_stop_scheduling()
+        for run in self._scheduler.view().active:
+            self._loop.request_stop_run(run.run_id)
+        self._publish_state()
 
     def set_state_listener(self, listener: Callable[[RunLoopState], None]) -> None:
         """Set the application-layer state sink used during execution."""
@@ -102,67 +175,58 @@ class RunLoop:
 
     def state(self) -> RunLoopState:
         """Build a bounded immutable execution state for the application layer."""
-        active_items = tuple(sorted(self._active.items(), key=lambda item: item[1]))
+        scheduler = self._scheduler.view()
+        active = sorted(scheduler.active, key=lambda run: run.node_id)
         goal, descriptions, available = get_execution_overview(
             self._graph,
-            [node_id for _, node_id in active_items],
-            self._stopped_nodes,
+            [run.node_id for run in active],
+            set(scheduler.stopped_nodes),
         )
-        return RunLoopState(
+        cfg = self._milknado_config
+        facts = ProjectionFacts(
             goal=goal,
             active_runs=tuple(
-                self._active_state(run_id, node_id, descriptions.get(node_id, str(node_id)))
-                for run_id, node_id in active_items
+                self._active_facts(run, descriptions.get(run.node_id, str(run.node_id)))
+                for run in active
             ),
-            terminal_runs=tuple(self._terminal_runs),
-            completed=self._completed,
-            failed=self._failed,
-            stopped=self._stopped,
+            terminal_runs=scheduler.terminal_runs,
+            completed=scheduler.completed,
+            failed=scheduler.failed,
+            stopped=scheduler.stopped,
             available=available,
             event_lines=tuple(self._logs),
             execution_agent=(
                 self._exec_config.execution_agent if self._exec_config else "(unknown)"
             ),
             log_path=self._log_path,
-        )
-
-    def _active_state(self, run_id: str, node_id: int, description: str) -> ActiveRunState:
-        run = self._ralph.get_run(run_id)
-        state = run.state if run is not None else None
-        status = getattr(state, "status", RunStatus.RUNNING)
-        stop_requested = bool(getattr(state, "stop_requested", False))
-        cancel_reason, guidance_reason, force_stop_reason = action_reasons(
-            status, stop_requested, bool(getattr(state, "force_stop_requested", False))
-        )
-        progress, progress_pct = progress_state(self._progress_by_run.get(run_id))
-        elapsed_seconds = (now := time.monotonic()) - self._dispatched_at.get(run_id, now)
-        avg_dur = average_duration(self._completion_durations)
-        eta_seconds = max(0.0, avg_dur - elapsed_seconds) if avg_dur is not None else None
-        cfg = self._milknado_config
-        stalled = progress_pct is None and elapsed_seconds >= (
-            cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
-        )
-        return ActiveRunState(
-            run_id=run_id,
-            node_id=node_id,
-            description=description,
-            status=status,
-            progress=progress,
-            stop_requested=stop_requested,
-            actions=RunActionState(
-                cancel_reason=cancel_reason,
-                guidance_reason=guidance_reason,
-                force_stop_reason=force_stop_reason,
+            completion_durations=scheduler.completion_durations,
+            stall_threshold_seconds=(
+                cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
             ),
-            output=tuple(self._ralph.get_run_output_tail(run_id, 30)),
-            pending_guidance=tuple(self._ralph.get_run_guidance(run_id)),
-            elapsed_seconds=elapsed_seconds,
-            progress_pct=progress_pct,
-            eta_seconds=eta_seconds,
-            attempt=self._attempts.get(node_id, 0) + 1,
             max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
-            stalled=stalled,
-            session=self._ralph.get_run_session(run_id),
+        )
+        return project_state(facts, time.monotonic())
+
+    def _active_facts(self, active: ActiveRun, description: str) -> ActiveRunFacts:
+        run_id = active.run_id
+        run = self._loop.get_run(run_id)
+        state = run.state if run is not None else None
+        progress = active.progress
+        return ActiveRunFacts(
+            run_id=run_id,
+            node_id=active.node_id,
+            description=description,
+            status=getattr(state, "status", RunStatus.RUNNING),
+            stop_requested=bool(getattr(state, "stop_requested", False)),
+            force_stop_requested=bool(getattr(state, "force_stop_requested", False)),
+            output=tuple(self._loop.get_run_output_tail(run_id, 30)),
+            pending_guidance=tuple(self._loop.get_run_guidance(run_id)),
+            dispatched_at=active.dispatched_at,
+            prior_attempts=active.prior_attempts,
+            progress_message=progress.message if progress else "",
+            progress_work=progress.work if progress else None,
+            progress_total=progress.total if progress else None,
+            session=self._loop.get_run_session(run_id),
         )
 
     def _publish_state(self) -> None:
@@ -178,36 +242,19 @@ class RunLoop:
             )
 
     def queue_guidance(self, run_id: str, text: str) -> bool:
-        accepted = self._ralph.queue_guidance(run_id, text)
+        accepted = self._loop.queue_guidance(run_id, text)
         self._publish_state()
         return accepted
 
     def session_input(self, run_id: str, command: SessionInput) -> bool:
-        if run_id not in self._active:
+        if run_id not in {run.run_id for run in self._scheduler.view().active}:
             return False
-        accepted = self._ralph.session_input(run_id, command)
+        accepted = self._loop.session_input(run_id, command)
         self._publish_state()
         return accepted
 
     def cancel(self, run_id: str) -> None:
-        self._ralph.request_stop_run(run_id)
-        self._publish_state()
-
-    def force_stop(self, run_id: str, timeout: float = 10.0) -> bool:
-        stopped = self._executor.force_stop_run(run_id, timeout)
-        self._publish_state()
-        return stopped
-
-    def admit_stop_scheduling(self) -> None:
-        """Atomically close scheduling admission before a control is queued."""
-        with self._scheduling_lock:
-            self._scheduling_stopped = True
-
-    def stop_scheduling(self) -> None:
-        """Prevent redispatch and ask every currently active run to stop."""
-        self.admit_stop_scheduling()
-        for run_id in self._active:
-            self._ralph.request_stop_run(run_id)
+        self._loop.request_stop_run(run_id)
         self._publish_state()
 
     def run(
@@ -221,17 +268,17 @@ class RunLoop:
         process_controls: Callable[[], None] | None = None,
         *,
         interactive: bool = True,
+        await_owner_work: bool = False,
     ) -> RunLoopResult:
         self._strict = strict
         self._exec_config = config
         self._process_controls = process_controls
-        self._stopped_nodes.clear()
+        self._await_owner_work = await_owner_work
+        self._scheduler.reset_run()
         self._logged_blocks.clear()
-        self._terminal_runs.clear()
-        self._completed = 0
-        self._failed = 0
-        self._stopped = 0
         self._log_path = None
+        self._spec = (spec_text, spec_path)
+        self._idle_settled_graph, self._verify_outcome = None, None
         if self._process_controls is not None:
             self._process_controls()
         timeout = (
@@ -248,17 +295,23 @@ class RunLoop:
             dispatched, completed, failed, conflicts, interrupted = self._execute_run(
                 config, feature_branch, concurrency_limit, timeout, interactive
             )
+            root = self._graph.get_root()
+            result = RunLoopResult(
+                root_done=root is not None and root.status == NodeStatus.DONE,
+                dispatched_total=dispatched,
+                completed_total=completed,
+                failed_total=failed,
+                rebase_conflicts=tuple(conflicts),
+                strict_exit=strict and self._scheduler.view().failure_triggered,
+            )
+            emit_final_telemetry(result, self._scheduler.view().stopped, interrupted)
 
-        self._emit_final_telemetry(dispatched, completed, failed, conflicts, interrupted)
         verify_outcome = self._verify_if_scheduling_open(spec_text, spec_path, config)
         root = self._graph.get_root()
-        return RunLoopResult(
+        return dataclasses.replace(
+            result,
             root_done=root is not None and root.status == NodeStatus.DONE,
-            dispatched_total=dispatched,
-            completed_total=completed,
-            failed_total=failed,
-            rebase_conflicts=tuple(conflicts),
-            strict_exit=strict and self._failure_triggered,
+            strict_exit=strict and self._scheduler.view().failure_triggered,
             verify_outcome=verify_outcome,
         )
 
@@ -275,21 +328,29 @@ class RunLoop:
         interrupted = False
         try:
             if interactive:
-                drain_input(self._input, self._active)
+                active = self._scheduler.view().active
+                drain_input(
+                    self._input,
+                    MappingProxyType({run.run_id: run.node_id for run in active}),
+                )
             if self._process_controls is not None:
                 self._process_controls()
             added, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
             dispatched += added
-            self._failed += failed
+            self._scheduler.count_outcomes(failed=failed)
             self._completion_wait_started = time.monotonic()
             self._publish_state()
-            while self._active:
+            idle_added = 0
+            while self._scheduler.view().active or (
+                idle_added := self._wait_for_owner_work(config, concurrency_limit)
+            ):
+                dispatched += idle_added
+                idle_added = 0
                 added, completed, failed, new_conflicts, timed_out = self._poll_and_complete(
                     config, feature_branch, concurrency_limit, timeout, interactive
                 )
                 dispatched += added
-                self._completed += completed
-                self._failed += failed
+                self._scheduler.count_outcomes(completed, failed)
                 conflicts.extend(new_conflicts)
                 self._publish_state()
                 if timed_out:
@@ -302,31 +363,42 @@ class RunLoop:
             if interactive:
                 stop_input_thread(self._input)
             self._publish_state()
-        return dispatched, self._completed, self._failed, conflicts, interrupted
+        totals = self._scheduler.view()
+        return dispatched, totals.completed, totals.failed, conflicts, interrupted
 
-    def _handle_completion_timeout(self, ct: CompletionTimeout) -> int:
-        _logger.warning(
-            "Completion timeout after %.1fs; active runs: %s",
-            ct.waited_seconds,
-            sorted(ct.active_run_ids),
-        )
-        newly_failed = 0
-        for timed_out_id in list(self._active):
-            nid = self._active[timed_out_id]
-            if not self._executor.stop_run(timed_out_id, timeout=10.0):
-                _logger.error(
-                    "worker did not exit after stop; preserving ownership node_id=%d run_id=%s",
-                    nid,
-                    timed_out_id,
-                )
-                continue
-            _ = self._active.pop(timed_out_id)
-            self._executor.fail(nid)
-            self._logs.append(f"[{ts()}] ⏱ node {nid} timeout")
-            newly_failed += 1
-        if self._strict:
-            self._failure_triggered = True
-        return newly_failed
+    def _wait_for_owner_work(self, config: ExecutionConfig, concurrency_limit: int) -> int:
+        owner_wait = self._await_owner_work and self._process_controls is not None
+        if not self._scheduler.view().capacity_deferred and not owner_wait:
+            return 0
+        while True:
+            if self._process_controls is not None:
+                self._process_controls()
+            if self._strict and self._scheduler.view().failure_triggered:
+                return 0
+            with self._scheduling_lock:
+                if self._scheduler.view().scheduling_stopped or (
+                    self._shutdown_requested is not None and self._shutdown_requested()
+                ):
+                    return 0
+            self._idle_settled_graph = settle_once(
+                self._graph,
+                self._idle_settled_graph,
+                lambda: self._verify_if_scheduling_open(*self._spec, config),
+            )
+            root = self._graph.get_root()
+            if root is not None and root.status == NodeStatus.DONE:
+                return 0
+            added, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+            self._scheduler.count_outcomes(failed=failed)
+            if added:
+                self._completion_wait_started = time.monotonic()
+                self._publish_state()
+                return added
+            if failed:
+                self._publish_state()
+            if not self._scheduler.view().capacity_deferred and not owner_wait:
+                return 0
+            self._idle_sleep(IDLE_RESCAN_SECONDS)
 
     def _poll_and_complete(
         self,
@@ -336,65 +408,66 @@ class RunLoop:
         timeout: float | None,
         interactive: bool,
     ) -> tuple[int, int, int, list[RebaseConflict], bool]:
-        """One poll-and-handle iteration.
-
-        Returns (dispatched, completed, failed, conflicts, timed_out).
-        """
         if self._process_controls is not None:
             self._process_controls()
         wait_timeout = timeout
         if self._process_controls is not None:
             wait_timeout = 0.1 if timeout is None else min(timeout, 0.1)
+        elif self._scheduler.view().capacity_deferred:
+            wait_timeout = (
+                IDLE_RESCAN_SECONDS if timeout is None else min(timeout, IDLE_RESCAN_SECONDS)
+            )
         try:
-            run_id, outcome = self._ralph.wait_for_next_completion(
-                set(self._active.keys()), timeout=wait_timeout
+            run_id, outcome = self._loop.wait_for_next_completion(
+                {run.run_id for run in self._scheduler.view().active}, timeout=wait_timeout
             )
         except CompletionTimeout as ct:
             if self._process_controls is not None and (
                 timeout is None or time.monotonic() - self._completion_wait_started < timeout
             ):
                 self._process_controls()
-                return 0, 0, 0, [], False
+                dispatched, failed = self._retry_deferred_if_due(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
+                return dispatched, 0, failed, [], False
+            if self._scheduler.view().capacity_deferred and (
+                timeout is None or time.monotonic() - self._completion_wait_started < timeout
+            ):
+                dispatched, failed = self._dispatch_if_scheduling_open(config, concurrency_limit)
+                if dispatched:
+                    self._completion_wait_started = time.monotonic()
+                return dispatched, 0, failed, [], False
             return 0, 0, self._handle_completion_timeout(ct), [], True
         if isinstance(outcome, ProgressEvent):
-            self._progress_by_run[outcome.run_id] = outcome
+            self._scheduler.record_progress(outcome)
             if self._process_controls is not None:
                 self._process_controls()
+            else:
+                self._completion_wait_started = time.monotonic()
             self._publish_state()
             return 0, 0, 0, [], False
         self._completion_wait_started = time.monotonic()
         if interactive:
-            drain_input(self._input, self._active)
-        completed, failed, conflicts = handle_completion(self, run_id, outcome, feature_branch)
+            active = self._scheduler.view().active
+            drain_input(self._input, MappingProxyType({run.run_id: run.node_id for run in active}))
+        transition = self._handle_terminal(run_id, outcome, feature_branch)
+        if transition is None:
+            return 0, 0, 0, [], True
+        completed, failed, conflicts = transition
         dispatched, dispatch_failures = self._dispatch_if_scheduling_open(
             config, concurrency_limit
         )
         return dispatched, completed, failed + dispatch_failures, list(conflicts), False
 
-    def _emit_final_telemetry(
-        self,
-        dispatched: int,
-        completed: int,
-        failed: int,
-        conflicts: list[RebaseConflict],
-        interrupted: bool,
-    ) -> None:
-        root_node = self._graph.get_root()
-        _logger.info(
-            "FINAL_TELEMETRY %s",
-            json.dumps(
-                {
-                    "dispatched": dispatched,
-                    "completed": completed,
-                    "failed": failed,
-                    "stopped": self._stopped,
-                    "conflicts": len(conflicts),
-                    "root_done": root_node is not None and root_node.status == NodeStatus.DONE,
-                    "strict_exit": self._strict and self._failure_triggered,
-                    "interrupted": interrupted,
-                }
-            ),
-        )
+    def _retry_deferred_if_due(
+        self, config: ExecutionConfig, concurrency_limit: int
+    ) -> tuple[int, int]:
+        """Retry a capacity-deferred dispatch at the idle-rescan cadence."""
+        if not self._scheduler.view().capacity_deferred:
+            return 0, 0
+        if not self._scheduler.retry_deferred(time.monotonic(), IDLE_RESCAN_SECONDS):
+            return 0, 0
+        return self._dispatch_if_scheduling_open(config, concurrency_limit)
 
     def _dispatch_if_scheduling_open(
         self,
@@ -402,7 +475,9 @@ class RunLoop:
         concurrency_limit: int,
     ) -> tuple[int, int]:
         with self._scheduling_lock:
-            if self._scheduling_stopped:
+            if self._scheduler.view().scheduling_stopped or (
+                self._shutdown_requested is not None and self._shutdown_requested()
+            ):
                 return 0, 0
             return self._dispatch_batch(config, concurrency_limit)
 
@@ -413,68 +488,37 @@ class RunLoop:
         config: ExecutionConfig,
     ) -> VerifyOutcome | None:
         with self._scheduling_lock:
-            if self._scheduling_stopped:
+            if self._scheduler.view().scheduling_stopped or (
+                self._shutdown_requested is not None and self._shutdown_requested()
+            ):
                 return None
+            verifier = RunVerifier(self._graph, self._loop, self._scheduler, self._planner)
             if spec_text:
-                return self._maybe_verify_spec(spec_text, spec_path, config)
-            self._complete_root_if_settled()
+                outcome = verifier.maybe_verify_spec(spec_text, spec_path, config)
+                self._verify_outcome = outcome or self._verify_outcome
+                return self._verify_outcome
+            verifier.complete_root_if_settled()
             return None
-
-    def _complete_root_if_settled(self) -> None:
-        """Complete the root structurally when no spec was supplied to verify against."""
-        if self._failure_triggered or self._active:
-            return
-        root = self._graph.get_root()
-        if root is None:
-            return
-        if not any(n.id != root.id for n in self._graph.get_all_nodes()):
-            return  # undecomposed goal: nothing was done, so nothing is achieved
-        _ = self._graph.complete_root()
-
-    def _maybe_verify_spec(
-        self,
-        spec_text: str | None,
-        spec_path: Path | None,
-        config: ExecutionConfig,
-    ) -> VerifyOutcome | None:
-        if not spec_text or self._failure_triggered or self._active:
-            return None
-        root = self._graph.get_root()
-        if root is None or root.status == NodeStatus.DONE:
-            return None
-        non_root_all_done = all(
-            n.status == NodeStatus.DONE for n in self._graph.get_all_nodes() if n.id != root.id
-        )
-        if not non_root_all_done:
-            return None
-        result = self._ralph.verify_spec(spec_text, str(self._graph))
-        outcome = VerifyOutcome(done=result.outcome == "done", goal_delta=result.goal_delta)
-        if result.outcome == "done":
-            self._graph.mark_running(root.id)
-            self._graph.mark_done(root.id)
-        elif result.outcome == "gaps" and self._planner and result.goal_delta:
-            _ = self._planner.replan_with_delta(result.goal_delta, config.project_root, spec_path)
-        return outcome
 
     def _dispatch_batch(
         self,
         config: ExecutionConfig,
         concurrency_limit: int,
     ) -> tuple[int, int]:
-        if self._strict and self._failure_triggered:
-            return 0, 0
-        available = concurrency_limit - len(self._active)
-        if available <= 0:
+        plan = self._scheduler.plan_dispatch(concurrency_limit, self._strict)
+        if plan.available == 0:
             return 0, 0
         exclusions = self._graph.dispatch_exclusions()
         dispatchable = [
             node_id
             for node_id in get_dispatchable_nodes(self._graph, self._logged_blocks)
-            if node_id not in self._stopped_nodes and node_id not in exclusions
+            if node_id not in plan.stopped_nodes and node_id not in exclusions
         ]
         dispatched = 0
         failed = 0
-        for node_id in dispatchable[:available]:
+        for node_id in dispatchable[: plan.available]:
+            if self._shutdown_requested is not None and self._shutdown_requested():
+                break
             node = self._graph.get_node(node_id)
             desc = summarize_description(node.description) if node else str(node_id)
             node_config = config
@@ -491,9 +535,42 @@ class RunLoop:
                     review_timeout_seconds=profile.review_timeout_seconds,
                     on_reject=profile.on_reject,
                     session_mode=profile.session_mode,
+                    max_iterations=profile.max_iterations,
+                    attempt_timeout_seconds=float(profile.attempt_timeout_seconds),
+                    completion_timeout_seconds=(
+                        profile.attempt_timeout_seconds * profile.max_iterations
+                    ),
                 )
             try:
                 result = self._executor.dispatch(node_id, node_config)
+            except ConcurrencyLimitReached as exc:
+                self._scheduler.defer_capacity()
+                _logger.info(
+                    "node_deferred node_id=%d running=%d limit=%d",
+                    node_id,
+                    exc.running,
+                    exc.limit,
+                )
+                break
+            except NodeClaimRejected:
+                self._scheduler.defer_capacity()
+                break
+            except PreservedWorkerRun as exc:
+                _ = self.confirm_preserved_stop(
+                    NodeLoopOutcome(
+                        node_id,
+                        False,
+                        str(exc),
+                        ownership_preserved=True,
+                        worker_run_id=exc.run_id,
+                        owner_run_id=exc.owner_run_id,
+                    )
+                )
+                self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
+                failed += 1
+                if self._scheduler.dispatch_failed(self._strict).stop_batch:
+                    break
+                continue
             except Exception as exc:
                 _logger.exception(
                     "Dispatch failed for node %d (%s): %s: %s",
@@ -505,12 +582,10 @@ class RunLoop:
                 self._executor.fail(node_id)
                 self._logs.append(f"[{ts()}] ✗ dispatch node {node_id}: {type(exc).__name__}")
                 failed += 1
-                if self._strict:
-                    self._failure_triggered = True
+                if self._scheduler.dispatch_failed(self._strict).stop_batch:
                     break
                 continue
-            self._active[result.run_id] = node_id
-            self._dispatched_at[result.run_id] = time.monotonic()
+            self._scheduler.admit_run(result.run_id, node_id, time.monotonic())
             self._logs.append(f"[{ts()}] → node {node_id}: {desc}")
             _logger.info("node_dispatched node_id=%d run_id=%s", node_id, result.run_id)
             dispatched += 1

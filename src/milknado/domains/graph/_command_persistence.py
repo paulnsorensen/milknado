@@ -46,6 +46,7 @@ def publish_capabilities(  # noqa: PLR0913
     owner_incarnation: str,
     actions: tuple[str, ...],
     permission_ids: tuple[str, ...] = (),
+    permission_commands: tuple[tuple[str, str], ...] = (),
     *,
     published_at: str | None = None,
     _in_transaction: bool = False,
@@ -72,11 +73,13 @@ def publish_capabilities(  # noqa: PLR0913
         _ = conn.execute(
             "INSERT INTO owner_capabilities "  # pyright: ignore[reportImplicitStringConcatenation]
             "(run_id, node_id, invocation_id, owner_incarnation, actions_json, "
-            "permission_ids_json, published_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "permission_ids_json, permission_commands_json, published_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(run_id) DO UPDATE SET node_id=excluded.node_id, "
             "invocation_id=excluded.invocation_id, owner_incarnation=excluded.owner_incarnation, "
             "actions_json=excluded.actions_json, "
             "permission_ids_json=excluded.permission_ids_json, "
+            "permission_commands_json=excluded.permission_commands_json, "
             "published_at=excluded.published_at",
             (
                 run_id,
@@ -85,6 +88,7 @@ def publish_capabilities(  # noqa: PLR0913
                 owner_incarnation,
                 caps_json(actions),
                 caps_json(permission_ids),
+                caps_json(permission_commands),
                 timestamp,
             ),
         )
@@ -96,6 +100,7 @@ def publish_capabilities(  # noqa: PLR0913
         actions=cast(tuple[SessionAction, ...], actions),
         permission_ids=permission_ids,
         published_at=timestamp,
+        permission_commands=permission_commands,
     )
 
 

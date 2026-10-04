@@ -1,0 +1,16 @@
+Pass 3 real command receipt evidence
+=====================================
+
+Fixture: /tmp/milknado-pass3-real-final9
+Run: node-2-20260928T070051Z-0f8909e3
+Command text: proof
+Command id: 1d6314077100483cb9cb02431137d249
+
+| receipt_seq | status    | recorded_at                       |
+|-------------|-----------|-----------------------------------|
+| 1           | queued    | 2026-09-28T07:01:38.275568+00:00 |
+| 2           | submitted | 2026-09-28T07:01:38.293640+00:00 |
+| 3           | delivered | 2026-09-28T07:01:38.797781+00:00 |
+
+The rows were read from the live `command_receipts` table after `milknado watch --attached` submitted the command. The timestamps show the refresh-interval timing.
+The wide web and watch completion captures show the matching delivered `proof` message.

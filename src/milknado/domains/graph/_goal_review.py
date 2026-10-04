@@ -128,6 +128,17 @@ def latest_goal_review(conn: sqlite3.Connection, goal_id: int) -> GoalReviewReco
     return _record(row) if row is not None else None
 
 
+def pending_goal_reviews(conn: sqlite3.Connection) -> tuple[GoalReviewRecord, ...]:
+    rows = fetchall(
+        conn,
+        "SELECT review.* FROM goal_reviews review "
+        + "JOIN nodes goal ON goal.id = review.goal_id "
+        + "WHERE review.decision = 'pending' AND goal.archived_at IS NULL "
+        + "ORDER BY review.review_id",
+    )
+    return tuple(_record(row) for row in rows)
+
+
 def decide_goal_review(
     conn: sqlite3.Connection,
     request: GoalReviewDecisionRequest,

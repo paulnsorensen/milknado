@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import signal
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from operator import attrgetter
+from pathlib import Path
 from queue import Queue
 from threading import Event, Thread, get_ident
 from time import monotonic, sleep
@@ -12,22 +15,39 @@ from unittest.mock import MagicMock
 import pytest
 from typing_extensions import override
 
+from milknado.app._shutdown import ShutdownIntent, ShutdownSignal
 from milknado.app.run import (
     ActiveRunSnapshot,
     ExecutionController,
     ExecutionRunStatus,
     ExecutionSnapshot,
     RunActionAvailability,
+    build_execution_controller,
 )
 from milknado.app.run_source import NodeSnapshotRequest
-from milknado.domains.common import MilknadoConfig, SessionContext, SessionEvent
+from milknado.app.run_tui import ExecutionApp
+from milknado.app.watch import WatchSnapshotSource
+from milknado.domains.common import (
+    MilknadoConfig,
+    NodeKind,
+    NodeSpec,
+    RunResult,
+    SessionContext,
+    SessionEvent,
+)
 from milknado.domains.execution import ExecutionConfig, RunLoop
 from milknado.domains.execution.run_loop.state import (
     ActiveRunState,
     RunActionState,
     RunLoopState,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    MikadoGraph,
+)
 from milknado.loop import RunStatus
 
 
@@ -56,6 +76,7 @@ class FakeLoop:
     cancelled: list[str] = field(default_factory=list)
     force_stops: list[tuple[str, float]] = field(default_factory=list)
     stop_scheduling_calls: int = 0
+    force_stop_deadlines: list[float] = field(default_factory=list)
 
     def state(self) -> RunLoopState:
         return self.current_state
@@ -87,6 +108,10 @@ class FakeLoop:
 
     def force_stop(self, run_id: str, timeout: float) -> bool:
         self.force_stops.append((run_id, timeout))
+        return True
+
+    def force_stop_active(self, deadline: float) -> bool:
+        self.force_stop_deadlines.append(deadline)
         return True
 
 
@@ -152,6 +177,19 @@ def snapshot(*, output: tuple[str, ...] = ("last line",)) -> ExecutionSnapshot:
     )
 
 
+def _request_goal_review(graph: MikadoGraph, goal_id: int, evidence: str) -> GoalReviewRecord:
+    return graph.request_goal_review(
+        GoalReviewRequest(
+            goal_id=goal_id,
+            goal_revision="sha256:goal",
+            evidence=evidence,
+            proposed_change="Review proposed change",
+            reviewer="worker",
+            assessed_at="2026-09-13T12:00:00+00:00",
+        )
+    )
+
+
 def test_controller_delegates_run_and_control_ports() -> None:
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
@@ -171,6 +209,7 @@ def test_controller_delegates_run_and_control_ports() -> None:
         "spec_text": "spec",
         "spec_path": None,
         "interactive": False,
+        "await_owner_work": False,
     }
     assert controller.queue_guidance("run-1", "accepted") is True
     assert controller.queue_guidance("run-1", "rejected") is False
@@ -181,6 +220,168 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.cancelled == ["run-1"]
     assert loop.force_stops == [("run-1", 2.5)]
     assert loop.stop_scheduling_calls == 1
+
+
+def test_force_stop_all_calls_loop_without_control_queue() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    start = monotonic()
+
+    assert controller.force_stop_all(timeout=1.0) is True
+    assert len(loop.force_stop_deadlines) == 1
+    assert start + 1.0 <= loop.force_stop_deadlines[0] <= monotonic() + 1.0
+
+
+def test_force_stop_all_returns_at_deadline_when_cleanup_blocks() -> None:
+    release = Event()
+
+    class BlockedStop(FakeLoop):
+        @override
+        def force_stop_active(self, deadline: float) -> bool:
+            self.force_stop_deadlines.append(deadline)
+            _ = release.wait(0.3)
+            return True
+
+    loop = BlockedStop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    start = monotonic()
+    try:
+        assert controller.force_stop_all(timeout=0.05) is False
+        assert monotonic() - start < 0.2
+    finally:
+        release.set()
+
+
+def test_main_thread_observes_signal_while_execution_thread_blocks() -> None:
+    started = Event()
+    release = Event()
+    intent = ShutdownIntent()
+
+    class BlockedLoop(FakeLoop):
+        @override
+        def run(self, **kwargs: object) -> str:
+            del kwargs
+            started.set()
+            _ = release.wait(2.0)
+            return "result"
+
+    loop = BlockedLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop),
+        _none_config(),
+        _none_limit(),
+        _policy_config(),
+        shutdown_intent=intent,
+    )
+    signaler = Thread(target=lambda: (started.wait(), intent.record(signal.SIGTERM, None)))
+    signaler.start()
+    start = monotonic()
+    try:
+        with pytest.raises(ShutdownSignal) as caught:
+            _ = controller.run(feature_branch="feature")
+    finally:
+        release.set()
+        signaler.join(1.0)
+
+    assert caught.value.signum == signal.SIGTERM
+    assert monotonic() - start < 1.0
+    assert loop.force_stop_deadlines == [intent.deadline(8.0)]
+
+
+@pytest.mark.asyncio
+async def test_tui_quit_force_stops_real_controller_before_exit() -> None:
+    started = Event()
+    released = Event()
+    stopped = Event()
+
+    class BlockingLoop(FakeLoop):
+        @override
+        def run(self, **kwargs: object) -> str:
+            del kwargs
+            started.set()
+            assert released.wait(3.0)
+            return "result"
+
+        @override
+        def force_stop_active(self, deadline: float) -> bool:
+            self.force_stop_deadlines.append(deadline)
+            stopped.set()
+            released.set()
+            return True
+
+    loop = BlockingLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+    app = ExecutionApp(controller, feature_branch="feature")
+    async with app.run_test(size=(120, 36)) as pilot:
+        assert await asyncio.to_thread(started.wait, 2.0)
+        await pilot.press("q", "y")
+        assert await asyncio.to_thread(stopped.wait, 2.0)
+        assert loop.stop_scheduling_calls == 0
+        assert len(loop.force_stop_deadlines) == 1
+
+
+def test_controller_preflight_reconciles_unassociated_workers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import milknado.app.worker_recovery as worker_recovery
+
+    graph = MikadoGraph(tmp_path / "graph.db")
+    reconciled: list[MikadoGraph] = []
+    monkeypatch.setattr(worker_recovery, "reconcile_loop_workers", reconciled.append)
+    try:
+        _ = build_execution_controller(graph, _policy_config(), tmp_path)
+        assert reconciled == [graph]
+    finally:
+        graph.close()
+
+
+def test_project_and_watch_snapshots_share_pending_goal_review_filter(tmp_path: Path) -> None:
+    db_path = tmp_path / "milknado.db"
+    graph = MikadoGraph(db_path)
+    pending_goal = graph.add_node("Pause execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    archived_goal = graph.add_node("Archived execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    graph.mark_running(archived_goal.id)
+    graph.mark_done(archived_goal.id)
+    archived_review = _request_goal_review(graph, archived_goal.id, "Archived evidence")
+    _ = graph.archive_subtree(archived_goal.id)
+
+    accepted_goal = graph.add_node("Accepted execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    accepted_review = _request_goal_review(graph, accepted_goal.id, "Accepted evidence")
+    rejected_goal = graph.add_node("Rejected execution", spec=NodeSpec(kind=NodeKind.GOAL))
+    rejected_review = _request_goal_review(graph, rejected_goal.id, "Rejected evidence")
+    graph.register_controller_master()
+    _ = graph.decide_goal_review(
+        GoalReviewDecisionRequest(accepted_review.review_id, GoalReviewDecision.ACCEPTED),
+        decided_by="controller",
+    )
+    _ = graph.decide_goal_review(
+        GoalReviewDecisionRequest(rejected_review.review_id, GoalReviewDecision.REJECTED),
+        decided_by="controller",
+    )
+    pending_review = _request_goal_review(graph, pending_goal.id, "Pending evidence")
+
+    try:
+        run_snapshot = ExecutionController._project_snapshot(  # pyright: ignore[reportPrivateUsage]
+            loop_state(), graph
+        )
+    finally:
+        graph.close()
+
+    source = WatchSnapshotSource(tmp_path, db_path)
+    try:
+        watch_snapshot = source.snapshot()
+    finally:
+        source.close()
+
+    assert archived_review not in run_snapshot.pending_goal_reviews
+    assert run_snapshot.pending_goal_reviews == watch_snapshot.pending_goal_reviews
+    assert run_snapshot.pending_goal_reviews == (pending_review,)
 
 
 def test_controller_refuses_protected_branch_before_run() -> None:
@@ -198,7 +399,7 @@ def test_controller_refuses_protected_branch_before_run() -> None:
 def test_controller_waits_for_worker_cleanup_before_return(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import milknado.app.run as run_module
+    import milknado.app._shutdown as shutdown_module
 
     loop = FakeLoop(loop_state())
     controller = ExecutionController(
@@ -225,7 +426,7 @@ def test_controller_waits_for_worker_cleanup_before_return(
                 outcome_ready.set()
                 _ = release_worker.wait(timeout=1)
 
-    monkeypatch.setattr(run_module, "Queue", GatedQueue)
+    monkeypatch.setattr(shutdown_module, "Queue", GatedQueue)
 
     def run_first() -> None:
         first_result.append(controller.run(feature_branch="feature"))
@@ -243,6 +444,40 @@ def test_controller_waits_for_worker_cleanup_before_return(
 
     assert first_result == ["result"]
     assert controller.run(feature_branch="feature") == "result"
+
+
+def test_controller_snapshot_uses_durable_run_totals(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    try:
+        node = graph.add_node("node")
+        outcomes = (("failed", "worker failed"), ("failed", "cancelled"), ("done", None))
+        for index, (status, error) in enumerate(outcomes):
+            run_id = f"run-{index}"
+            graph.runs.start(run_id, node.id, "", "2026-09-11T00:00:00+00:00", 60)
+            graph.runs.finish(
+                run_id,
+                RunResult(
+                    status=status,
+                    exit_code=0 if status == "done" else 1,
+                    timed_out=False,
+                    ended_at="2026-09-11T00:00:01+00:00",
+                    error=error,
+                    detail=None,
+                    rebased=None,
+                ),
+            )
+
+        controller = ExecutionController(
+            _as_run_loop(FakeLoop(loop_state())),
+            _none_config(),
+            _none_limit(),
+            _policy_config(),
+            graph,
+        )
+        snapshot = controller.snapshot()
+        assert (snapshot.completed, snapshot.failed, snapshot.stopped) == (1, 1, 1)
+    finally:
+        graph.close()
 
 
 def test_controller_subscription_delivers_replacement_snapshot_and_unsubscribes() -> None:

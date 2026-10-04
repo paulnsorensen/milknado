@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "milknado"
 version = "0.2.1"
-description = "Mikado execution engine — decomposes goals into dependency graphs, executes as parallel ralph loops"
+description = "Mikado execution engine — decomposes goals into dependency graphs, executes as parallel loops"
 requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
@@ -24,6 +24,9 @@ dependencies = [
     "starlette>=0.47.0",
     "uvicorn>=0.35.0",
     "sse-starlette>=3.0.0",
+    "filelock>=3.19.1",
+    "psutil>=7.0.0",
+    "pywin32>=311; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -40,6 +43,9 @@ markers = [
     "e2e: live-API end-to-end tests (claude CLI + ANTHROPIC_API_KEY required; slow)",
     "browser: Playwright end-to-end tests over a real committed build; excluded from the xdist coverage run",
 ]
+
+[tool.coverage.run]
+patch = ["subprocess", "execv"]
 
 [tool.importlinter]
 root_package = "milknado"
@@ -187,7 +193,6 @@ max-statements = 40
 "src/milknado/domains/dispatch/reconcile.py" = ["ANN001"]
 "src/milknado/domains/dispatch/runner.py" = ["PLR0913", "SIM108"]
 "src/milknado/domains/execution/executor.py" = ["BLE001", "PLR0913", "SIM102", "SIM103"]
-"src/milknado/domains/execution/headless.py" = ["PLR0913"]
 "src/milknado/domains/execution/run_loop/__init__.py" = ["PLR0913", "PLR0915"]
 "src/milknado/domains/github/bind.py" = ["PLR0913", "PLR0915"]
 "src/milknado/domains/github/exporter.py" = ["PLR0913"]
@@ -205,7 +210,7 @@ max-statements = 40
 "src/milknado/loop/_run_types.py" = ["PTH201"]
 "src/milknado/loop/adapters/_generic.py" = ["ARG002"]
 "src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
-"src/milknado/mcp/_ralph_node_runner.py" = ["ANN001", "BLE001"]
+"src/milknado/mcp/_loop_node_runner.py" = ["ANN001", "BLE001"]
 "src/milknado/mcp/run.py" = ["PLR0913"]
 "src/milknado/mcp/server.py" = ["PLR0913"]
 "src/milknado/mcp/todo_mutate.py" = ["ANN001", "PLR0913"]
@@ -218,7 +223,7 @@ max-statements = 40
 "src/milknado/mcp/todo.py" = ["ANN001"]
 "src/milknado/adapters/gh.py" = ["PLR0913"]
 "src/milknado/adapters/process.py" = ["ANN001", "PLR0913"]
-"src/milknado/app/ralph.py" = ["ANN001", "PLR0913"]
+"src/milknado/app/loop.py" = ["ANN001", "PLR0913"]
 "src/milknado/domains/batching/_model.py" = ["PLR0913"]
 "src/milknado/domains/batching/_tarjan.py" = ["PLR0913"]
 "src/milknado/domains/batching/graph_build.py" = ["PLR0913"]
@@ -234,7 +239,7 @@ max-statements = 40
 "src/milknado/domains/planning/batching_bridge.py" = ["PLR0913"]
 "src/milknado/domains/wiki/exporter.py" = ["PLR0913"]
 "src/milknado/domains/wiki/importer.py" = ["PLR0913"]
-"src/milknado/mcp/ralph.py" = ["PLR0913"]
+"src/milknado/mcp/loop.py" = ["PLR0913"]
 "src/milknado/mcp/rebalance.py" = ["PLR0913"]
 "src/milknado/loop/adapters/__init__.py" = ["F401"]
 "tests/loop/helpers.py" = ["PLR0913"]
@@ -248,7 +253,7 @@ max-statements = 40
 "tests/test_github_bind.py" = ["PLR0913"]
 "tests/test_github_exporter.py" = ["PLR0913"]
 "tests/test_mcp_deposit_review.py" = ["PLR0913"]
-"tests/test_mcp_ralph.py" = ["PLR0913"]
+"tests/test_mcp_loop.py" = ["PLR0913"]
 "tests/test_mcp_run_enhancements.py" = ["PLR0913"]
 "tests/test_mcp_server.py" = ["PLR0913"]
 "tests/test_planning.py" = ["E402", "PLR0913"]
@@ -262,11 +267,13 @@ dev = [
     "ruff>=0.15.13",
     "import-linter>=2.13",
     "basedpyright>=1.39.10",
+    "types-pywin32>=311",
     "watchfiles>=1.2.0",
     "pytest-xdist>=3.8.0",
     "vulture>=2.16",
     "httpx>=0.28.1",
     "pytest-playwright>=0.7.1",
+    "pytest-testmon>=2.2.0",
 ]
 
 # typeCheckingMode is deliberately unset: basedpyright's default "recommended"
@@ -342,13 +349,13 @@ max_file_lines = 300
 "src/milknado/adapters/loop.py" = { max_lines = 458, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
 "src/milknado/app/run.py" = { max_lines = 664, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 662 for the shared apply_runnable_root_exclusions helper used by both the CLI run path and the web run host." }
-"src/milknado/cli/__init__.py" = { max_lines = 326, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split." }
+"src/milknado/cli/__init__.py" = { max_lines = 328, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split. Bumped from 326 for the doctor host pool report." }
 "src/milknado/domains/common/agent_argv.py" = { max_lines = 365, reason = "Pre-existing agent command boundary; keep its measured ceiling until command builders are split." }
 "src/milknado/domains/common/flavor_codec.py" = { max_lines = 304, reason = "Pre-existing flavor codec boundary; keep its measured ceiling until codec concerns are split. Bumped from 300 for the review_timeout_seconds field mirroring review_max_rounds." }
-"src/milknado/domains/common/config.py" = { max_lines = 669, reason = "Pre-existing config boundary; keep its measured ceiling until serialization is split." }
+"src/milknado/domains/common/config.py" = { max_lines = 695, reason = "Pre-existing config boundary; keep its measured ceiling until serialization is split. Bumped from 669 for the global-only host_worker_limit key, then to 695 for reading it independent of inherit_global." }
 "src/milknado/domains/dispatch/async_run.py" = { max_lines = 396, reason = "Pre-existing async dispatch boundary; keep its measured ceiling until lifecycle is split." }
-"src/milknado/domains/execution/executor.py" = { max_lines = 1490, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split. Bumped from 1488 for the configurable review_timeout_seconds deadline." }
-"src/milknado/domains/execution/run_loop/__init__.py" = { max_lines = 575, reason = "Pre-existing run loop boundary; keep its measured ceiling until phases are split. Bumped from 574 for the configurable review_timeout_seconds deadline." }
+"src/milknado/domains/execution/executor.py" = { max_lines = 1529, reason = "Pre-existing execution controller; keep its measured ceiling until orchestration is split. Bumped from 1490 for host worker slot bookkeeping and its release-on-failure guards." }
+"src/milknado/domains/execution/run_loop/__init__.py" = { max_lines = 601, reason = "Pre-existing run loop boundary; keep its measured ceiling until phases are split. Bumped from 574 for the configurable review_timeout_seconds deadline and the capacity-deferred dispatch retry, then to 601 for the completion-timer reset on deferred admits." }
 "src/milknado/domains/graph/_mutations.py" = { max_lines = 356, reason = "Pre-existing graph mutation boundary; keep its measured ceiling until mutations are split. Bumped from 321 for the atomic edit_node mutation (web AC-12)." }
 "src/milknado/domains/graph/_persistence.py" = { max_lines = 759, reason = "Pre-existing graph persistence boundary; keep its measured ceiling until persistence concerns are split. Bumped from 757 for the single-owner runs.status constant (issue #329)." }
 "src/milknado/domains/graph/_status.py" = { max_lines = 342, reason = "Pre-existing graph status boundary; keep its measured ceiling until status transitions are split." }

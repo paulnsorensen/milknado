@@ -1,12 +1,17 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { post } from '../../app/api';
-import { resetStore, setSnapshot } from '../../app/store';
+import { resetStore, setSelection, setSnapshot } from '../../app/store';
 import { PermissionActions } from './PermissionActions';
 
 vi.mock('../../app/api', () => ({ post: vi.fn().mockResolvedValue({}) }));
 
-function snapshotWithPermissions(permissionIds: string[]) {
+function snapshotWithPermissions(
+  permissionIds: string[],
+  permissionCommands: Array<[string, string]> = permissionIds.map(
+    (id): [string, string] => [id, 'git status'],
+  ),
+) {
   return {
     goal: null,
     graph: null,
@@ -18,7 +23,14 @@ function snapshotWithPermissions(permissionIds: string[]) {
       graph_edits: { available: true, reason: null },
       review_decision: { available: true, reason: null },
       git: { available: true, reason: null },
-      owner: { available: true, run_id: 'run-1', permission_ids: permissionIds },
+      host_owner: { available: true, reason: null },
+      owner: {
+        available: true,
+        run_id: 'run-1',
+        node_id: 1,
+        permission_ids: permissionIds,
+        permission_commands: permissionCommands,
+      },
     },
   };
 }
@@ -32,6 +44,7 @@ describe('PermissionActions', () => {
   afterEach(cleanup);
 
   it('renders nothing with no pending permission request', () => {
+    setSelection(1);
     setSnapshot(snapshotWithPermissions([]));
     const { container } = render(<PermissionActions />);
     expect(container.children.length).toBe(0);
@@ -39,7 +52,7 @@ describe('PermissionActions', () => {
 
   it('approves the oldest pending permission request', () => {
     setSnapshot(snapshotWithPermissions(['perm-1', 'perm-2']));
-
+    setSelection(1);
     render(<PermissionActions />);
     screen.getByText('Approve').click();
 
@@ -49,9 +62,60 @@ describe('PermissionActions', () => {
     );
   });
 
-  it('denies the oldest pending permission request', () => {
+
+  it('hides controls when selection is not the owner node', () => {
+    setSelection(2);
     setSnapshot(snapshotWithPermissions(['perm-1']));
 
+    const { container } = render(<PermissionActions />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('hides controls when the owner cannot provide a command line', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1'], []));
+
+    const { container } = render(<PermissionActions />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('hides controls when permission_commands has no entry for the pending permission', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1'], [['perm-2', 'git status']]));
+
+    const { container } = render(<PermissionActions />);
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('shows the pending request id and command line from owner capabilities', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1']));
+
+    render(<PermissionActions />);
+
+    expect(screen.getByText('perm-1')).toBeVisible();
+    expect(screen.getByLabelText('Request ID perm-1')).toBeVisible();
+    expect(screen.getByText('git status')).toBeVisible();
+  });
+
+  it('shows Approve and Deny for an empty-string permission command', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1'], [['perm-1', '']]));
+
+    render(<PermissionActions />);
+
+    expect(screen.getByText('Approve')).toBeVisible();
+    expect(screen.getByText('Deny')).toBeVisible();
+    expect(screen.queryByText('Command line')).toBeNull();
+  });
+
+  it('denies the oldest pending permission request', () => {
+    setSelection(1);
+    setSnapshot(snapshotWithPermissions(['perm-1']));
+    setSelection(1);
     render(<PermissionActions />);
     screen.getByText('Deny').click();
 

@@ -45,14 +45,14 @@ command group lives in its own module so no file blows the 300-line cap.
 
 - **Top-level commands** (`cli/__init__.py`): `init` (create `milknado.toml`, init DB + CRG
   index, optionally install Rust tools, wire worker hooks), `index` (rebuild CRG), `status`
-  (render the graph tree, enriched with live ralph run states), `rebalance` (sweep finished
+  (render the graph tree, enriched with live loop run states), `rebalance` (sweep finished
   subtrees, regroup orphans, reap worktrees — see [[graph-status-reconciliation]]),
   `crg` (architecture overview), `add-node`, `doctor` (health checks).
 - **Planning** (`cli/plan.py`): the `plan` command. Accepts `--spec` (.md) and/or `--issue`
   (GitHub refs fetched via `gh`), materializes a combined spec into `.milknado/issues/`,
   derives a goal from the first `# heading`, and delegates to `domains.planning.Planner`.
   Supports `--interactive` accept/revise/cancel iteration.
-- **Execution** (`cli/run.py`): the `run` command (parallel ralph loops over ready leaf
+- **Execution** (`cli/run.py`): the `run` command (parallel loops over ready leaf
   nodes) and `attach` (join an in-flight run's TUI).
 - **Agents** (`cli/agents.py`): `agents check` — prints resolved planning/execution commands
   and a sample planning argv (with env/stdin redacted).
@@ -76,7 +76,7 @@ The shared `FastMCP` instance and the project-root/graph helpers (`resolve_proje
 **`src/milknado/mcp/_core.py`** — split out so the tool modules register against one `mcp` without forming
 an import cycle. Project root comes from the `project_root` arg or `MILKNADO_PROJECT_ROOT`.
 
-`main()` in `mcp/server.py` imports the tool modules — `github`, `node`, `ralph`,
+`main()` in `mcp/server.py` imports the tool modules — `github`, `node`, `loop`,
 `rebalance`, `run`, `todo`, `todo_mutate`, `wiki` — purely for their **import side effect**:
 each module's `@mcp.tool()` decorators register on the shared instance at import time. It then
 calls `mcp.run()`. (`mcp/server.py` itself also defines `milknado_graph_summary`,
@@ -96,9 +96,9 @@ calls `mcp.run()`. (`mcp/server.py` itself also defines `milknado_graph_summary`
   relationships (hash anchors / symbol refs) and turns them into a batch plan, guarding
   against mega-batches over a change threshold; `milknado_plan_apply` writes a caller-produced
   `milknado.plan.v2` manifest to the graph as nodes.
-- **Run start / poll / cancel** (`mcp/run.py`, `mcp/ralph.py`): `milknado_run_inline` (sync),
+- **Run start / poll / cancel** (`mcp/run.py`, `mcp/loop.py`): `milknado_run_inline` (sync),
   `milknado_run_inline_start` / `milknado_run_inline_poll`, `milknado_run_loop_start` /
-  `milknado_run_loop_poll` (detached worktree + full ralph loop), `milknado_run_list`,
+  `milknado_run_loop_poll` (detached worktree + full loop), `milknado_run_list`,
   `milknado_run_cancel`, plus `milknado_deposit_result` / `milknado_deposit_review` for worker
   hand-back. Detached runs claim the node RUNNING via a SQLite conditional UPDATE (cross-process
   mutual exclusion) and survive a server restart; pollers reconcile orphaned or dead-runner

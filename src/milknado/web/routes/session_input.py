@@ -40,9 +40,12 @@ async def session_input_route(request: Request) -> Response:
             handler, cast(str, request.path_params["run_id"]), command
         )
     except ValueError as exc:
-        return json_response({"reason": str(exc)}, status_code=409)
+        return json_response({"reason": f"Session input was rejected: {exc}."}, status_code=409)
     if admitted is None:
-        return json_response({"reason": "Session input was rejected."}, status_code=409)
+        return json_response(
+            {"reason": "Session input was rejected: the command is unavailable."},
+            status_code=409,
+        )
     return json_response(admitted)
 
 

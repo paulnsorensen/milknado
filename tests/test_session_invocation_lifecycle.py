@@ -73,7 +73,9 @@ def test_runtime_uses_distinct_process_invocations_and_stable_turn_identity(
 
 def test_close_clears_actions_after_pending_receipt_cleanup() -> None:
     states: list[tuple[str, str]] = []
-    publications: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+    publications: list[
+        tuple[tuple[str, ...], tuple[tuple[str, ...], tuple[tuple[str, str], ...]]]
+    ] = []
     channel = SessionChannel(
         command_state_sink=lambda command, state: states.append((command.text, state)),
         capability_sink=lambda _context, actions, _invocation, permissions: publications.append(
@@ -93,4 +95,4 @@ def test_close_clears_actions_after_pending_receipt_cleanup() -> None:
     assert channel.view().actions == ()
     assert ("pending", "rejected") in states
     assert all(actions for actions, _permissions in publications[:-1])
-    assert publications[-1] == ((), ())
+    assert publications[-1] == ((), ((), ()))

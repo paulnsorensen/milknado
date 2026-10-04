@@ -1,41 +1,60 @@
-// The `sidecar-action` contribution: Cancel run and Force stop. Cancel is
-// always active (the server rejects it with a domain reason when there is
-// no live run); Force stop is gated by capabilities, matching the server's
-// owner-only enforcement.
+// The `sidecar-action` contribution: Cancel run and Force stop for the
+// owner's selected active run. A selected non-owner node sees disabled
+// controls with the server reason; no node selection, or a watch host
+// (host_owner unavailable), renders no controls.
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { dispatchAction } from '../../app/actions';
+import { canActOnSelectedRun, getState, selectedNodeId, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
-import { cancelRun, forceStopRun } from './commands';
-import { requestConfirm } from './confirmState';
+
+interface RunControlButtonsProps {
+  canAct: boolean;
+  runId: string;
+  forceStopAvailable: boolean;
+}
+
+function RunControlButtons({ canAct, runId, forceStopAvailable }: RunControlButtonsProps): ReactElement {
+  const { Button } = Milknado;
+  return (
+    <div className="mk-button-row">
+      <Button
+        className="mk-btn-sm"
+        disabled={!canAct || runId === ''}
+        onClick={() => dispatchAction('run.cancel')}
+      >
+        Cancel run
+      </Button>
+      <Button
+        className="mk-btn-sm"
+        disabled={!canAct || !forceStopAvailable}
+        onClick={() => dispatchAction('run.force-stop')}
+      >
+        Force stop
+      </Button>
+    </div>
+  );
+}
 
 export function RunControlsSidecar(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
-  const { Button } = Milknado;
   const capabilities = store.capabilities;
+  const canAct = canActOnSelectedRun(store);
 
-  if (!capabilities) {
+  if (!capabilities || selectedNodeId(store) === null || !capabilities.host_owner.available) {
     return null;
   }
 
   const runId = capabilities.owner.run_id ?? '';
   const forceStop = capabilities.force_stop;
-
   return (
-    <div className="mk-run-controls">
-      <Button
-        disabled={runId === ''}
-        onClick={() => requestConfirm('Cancel this run?', () => void cancelRun(runId))}
-      >
-        Cancel run
-      </Button>
-      <Button
-        disabled={!forceStop.available}
-        onClick={() => requestConfirm('Force stop this run?', () => void forceStopRun(runId))}
-      >
-        Force stop
-      </Button>
-      {!forceStop.available && <p role="note">{forceStop.reason}</p>}
-    </div>
+    <section className="mk-section" aria-label="Run controls">
+      <RunControlButtons canAct={canAct} runId={runId} forceStopAvailable={forceStop.available} />
+      {!forceStop.available && (
+        <p role="note" className="mk-text-caption mk-muted">
+          {forceStop.reason}
+        </p>
+      )}
+    </section>
   );
 }

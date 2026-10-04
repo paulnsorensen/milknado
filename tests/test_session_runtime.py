@@ -171,10 +171,13 @@ def _spec(worker: Path, tmp_path: Path, args: tuple[str, ...]) -> AgentRunSpec:
 
 def _wait_for_pid(pid_path: Path) -> int:
     deadline = time.monotonic() + 3.0
-    while not pid_path.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        if pid_path.exists():
+            value = pid_path.read_text(encoding="utf-8").strip()
+            if value:
+                return int(value)
         time.sleep(0.02)
-    assert pid_path.exists()
-    return int(pid_path.read_text(encoding="utf-8"))
+    pytest.fail(f"worker PID was not written to {pid_path}")
 
 
 def _running_graph(tmp_path: Path) -> tuple[MikadoGraph, int]:
@@ -215,10 +218,17 @@ def test_terminal_frame_rejects_attached_admission_before_channel_close(
         _context: SessionContext,
         actions: tuple[str, ...],
         invocation_id: str,
-        permission_ids: tuple[str, ...],
+        permissions: tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
     ) -> None:
+        permission_ids, permission_commands = permissions
         _ = graph.commands.publish_capabilities(
-            "run-1", node_id, invocation_id, "owner-1", actions, permission_ids
+            "run-1",
+            node_id,
+            invocation_id,
+            "owner-1",
+            actions,
+            permission_ids,
+            permission_commands,
         )
         if terminal_seen and not attempts:
             probe = admit_from_process(
@@ -277,6 +287,30 @@ def test_run_session_provides_complete_worker_identity(
     worker = _worker(tmp_path, "identity")
 
     result = run_session(_spec(worker, tmp_path, ("identity",)), SessionChannel())
+
+    identity = cast(dict[str, str | None], json.loads(result.result_text or ""))
+    assert identity["MILKNADO_PROJECT_ROOT"] == str(tmp_path)
+    assert identity["MILKNADO_NODE_ID"] == "17"
+    assert identity["MILKNADO_RUN_ID"] == "run-17"
+    invocation_id = identity["MILKNADO_INVOCATION_ID"]
+    assert isinstance(invocation_id, str)
+    assert len(invocation_id) == 32
+
+
+def test_run_session_threads_spec_env_into_worker_identity(tmp_path: Path) -> None:
+    """``spec.env`` (not the parent process env) supplies worker identity on
+    the session runtime path every claude/codex/omp worker takes."""
+    worker = _worker(tmp_path, "identity")
+    spec = replace(
+        _spec(worker, tmp_path, ("identity",)),
+        env={
+            "MILKNADO_PROJECT_ROOT": str(tmp_path),
+            "MILKNADO_NODE_ID": "17",
+            "MILKNADO_RUN_ID": "run-17",
+        },
+    )
+
+    result = run_session(spec, SessionChannel())
 
     identity = cast(dict[str, str | None], json.loads(result.result_text or ""))
     assert identity["MILKNADO_PROJECT_ROOT"] == str(tmp_path)
@@ -384,7 +418,7 @@ def test_interrupted_iteration_does_not_stop_on_error(
     channel.set_sink(sink)
     config = RunConfig(
         agent=shlex.join(("claude", "claude.py", "engine", str(counter))),
-        ralph_dir=tmp_path,
+        loop_dir=tmp_path,
         prompt="initial prompt",
         max_iterations=2,
         stop_on_error=True,

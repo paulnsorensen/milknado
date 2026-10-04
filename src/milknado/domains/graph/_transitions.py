@@ -12,6 +12,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import cast
 
+from typing_extensions import override
+
 import milknado.domains.graph._goal_review as _goal_review
 from milknado.domains.common import VALID_TRANSITIONS, NodeStatus
 from milknado.domains.common.errors import InvalidTransition
@@ -21,6 +23,13 @@ from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_FILTER,
 )
 from milknado.domains.graph._sqlite_rows import fetchone
+
+_NO_OPEN_WORKERS = (
+    "NOT EXISTS (SELECT 1 FROM run_workers AS w WHERE w.node_id = nodes.id AND w.ended_at IS NULL)"
+)
+_NO_OPEN_WORKERS_ALIASED = (
+    "NOT EXISTS (SELECT 1 FROM run_workers AS w WHERE w.node_id = n.id AND w.ended_at IS NULL)"
+)
 
 
 def _values(row: sqlite3.Row) -> tuple[object, ...]:
@@ -87,7 +96,8 @@ def transition_status(conn: sqlite3.Connection, node_id: int, target: NodeStatus
         conn,
         node_id,
         target,
-        "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ? AND status = ?",
+        "UPDATE nodes SET status = ?, completed_at = ? WHERE id = ? AND status = ? AND "
+        + _NO_OPEN_WORKERS,
         (target.value, completed_at, node_id, current.value),
     )
 
@@ -99,7 +109,9 @@ def mark_failed(conn: sqlite3.Connection, node_id: int) -> None:
         node_id,
         NodeStatus.FAILED,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        + "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        + "worktree_path = NULL, branch_name = NULL, run_id = NULL "
+        + "WHERE id = ? AND status = ? AND "
+        + _NO_OPEN_WORKERS,
         (NodeStatus.FAILED.value, node_id, current.value),
     )
 
@@ -119,7 +131,9 @@ def mark_running(
         READY_NODE_ADMISSION_CTE
         + "UPDATE nodes AS n SET status = ?, completed_at = NULL, "
         + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ? AND "
-        + READY_NODE_ADMISSION_FILTER,
+        + READY_NODE_ADMISSION_FILTER
+        + " AND "
+        + _NO_OPEN_WORKERS_ALIASED,
         (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
         admission_guard=True,
     )
@@ -132,34 +146,81 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
         node_id,
         NodeStatus.PENDING,
         "UPDATE nodes SET status = ?, completed_at = NULL, "
-        + "worktree_path = NULL, branch_name = NULL, run_id = NULL WHERE id = ? AND status = ?",
+        + "worktree_path = NULL, branch_name = NULL, run_id = NULL "
+        + "WHERE id = ? AND status = ? AND "
+        + _NO_OPEN_WORKERS,
         (NodeStatus.PENDING.value, node_id, current.value),
     )
 
 
 # --- Atomic optimistic claim / reclaim / fence ---------------------------------
-# These bypass assert_transition deliberately: the SQL WHERE clause IS the guard,
-# evaluated atomically by SQLite (a single conditional UPDATE serialized by the
-# write lock), which makes it correct across processes — unlike an in-process
-# mutex. `cursor.rowcount == 1` tells the caller whether it won.
+# Claims hold SQLite's writer lock across the capacity count and guarded UPDATE.
+# Other fenced transitions rely on their conditional UPDATE for cross-process safety.
 
 _CLAIMABLE = ("pending", "failed", "blocked")
 
 
+class ConcurrencyLimitReached(Exception):
+    def __init__(self, running: int, limit: int) -> None:
+        self.running: int = running
+        self.limit: int = limit
+        super().__init__(f"execution capacity is full ({running}/{limit})")
+
+
+class HostCapacityFull(ConcurrencyLimitReached):
+    """The host-wide worker pool has no free slot."""
+
+    def __init__(self, running: int, limit: int) -> None:
+        super().__init__(running, limit)
+
+    @override
+    def __str__(self) -> str:
+        return f"host worker capacity is full ({self.running}/{self.limit})"
+
+
 def claim_node(
-    conn: sqlite3.Connection, node_id: int, run_id: str, now: str, *, pid: int | None = None
+    conn: sqlite3.Connection,
+    node_id: int,
+    run_id: str,
+    now: str,
+    concurrency_limit: int,
+    *,
+    pid: int | None = None,
 ) -> bool:
-    """Atomically claim a claimable node, including its dispatch PID fence."""
-    _ = conn.execute(
-        READY_NODE_ADMISSION_CTE
-        + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
-        + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
-        + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER}",
-        (run_id, now, pid, node_id),
-    )
-    row = cast(tuple[int] | None, conn.execute("SELECT changes()").fetchone())
-    conn.commit()
-    return row is not None and row[0] == 1
+    """Claim a task under SQLite's writer lock, with its dispatch PID fence."""
+    _ = conn.execute("BEGIN IMMEDIATE")
+    try:
+        node = fetchone(
+            conn,
+            READY_NODE_ADMISSION_CTE
+            + "SELECT n.status, n.kind FROM nodes AS n WHERE n.id = ? AND "
+            + READY_NODE_ADMISSION_FILTER,
+            (node_id,),
+        )
+        if node is not None and node["kind"] == "task" and node["status"] in _CLAIMABLE:
+            running = cast(
+                int,
+                conn.execute(
+                    "SELECT COUNT(*) FROM nodes "
+                    + "WHERE status = 'running' AND kind = 'task' AND run_id IS NOT NULL"
+                ).fetchone()[0],
+            )
+            if running >= concurrency_limit:
+                raise ConcurrencyLimitReached(running, concurrency_limit)
+        _ = conn.execute(
+            READY_NODE_ADMISSION_CTE
+            + "UPDATE nodes AS n SET status = 'running', run_id = ?, dispatched_at = ?, pid = ?, "
+            + "worktree_path = NULL, branch_name = NULL WHERE n.id = ? "
+            + f"AND n.status IN {_CLAIMABLE} AND {READY_NODE_ADMISSION_FILTER} AND "
+            + _NO_OPEN_WORKERS_ALIASED,
+            (run_id, now, pid, node_id),
+        )
+        changed = cast(int, conn.execute("SELECT changes()").fetchone()[0])
+        conn.commit()
+        return changed == 1
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
@@ -176,7 +237,8 @@ def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
     cur = conn.execute(
         "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
         + "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
-        + "WHERE id = ? AND run_id = ? AND status = 'running'",
+        + "WHERE id = ? AND run_id = ? AND status = 'running' AND "
+        + _NO_OPEN_WORKERS,
         (node_id, owner_run_id),
     )
     conn.commit()
@@ -196,7 +258,8 @@ def mark_terminal(
         completed_at = datetime.now(UTC).isoformat()
         sql = (
             "UPDATE nodes SET status = ?, completed_at = ? "
-            + "WHERE id = ? AND run_id = ? AND status = 'running'"
+            + "WHERE id = ? AND run_id = ? AND status = 'running' AND "
+            + _NO_OPEN_WORKERS
         )
         params: Sequence[object] = (NodeStatus.DONE.value, completed_at, node_id, run_id)
     elif status is NodeStatus.FAILED:
@@ -207,7 +270,8 @@ def mark_terminal(
         )
         sql = (
             f"UPDATE nodes SET status = ?, completed_at = NULL, {recovery} "
-            + "WHERE id = ? AND run_id = ? AND status = 'running'"
+            + "WHERE id = ? AND run_id = ? AND status = 'running' AND "
+            + _NO_OPEN_WORKERS
         )
         params = (NodeStatus.FAILED.value, node_id, run_id)
     else:
@@ -219,7 +283,8 @@ def mark_blocked(conn: sqlite3.Connection, node_id: int, run_id: str) -> bool:
     """Fence a RUNNING node into BLOCKED without clearing its worktree pin."""
     cur = conn.execute(
         "UPDATE nodes SET status = ?, completed_at = NULL "
-        + "WHERE id = ? AND run_id = ? AND status = ?",
+        + "WHERE id = ? AND run_id = ? AND status = ? AND "
+        + _NO_OPEN_WORKERS,
         (NodeStatus.BLOCKED.value, node_id, run_id, NodeStatus.RUNNING.value),
     )
     conn.commit()

@@ -1,8 +1,14 @@
+# pyright: reportPrivateUsage=false
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import Mock
 
 import pytest
 
+from milknado.cli.web import (
+    _owner_capabilities,
+    _SnapshotReader,
+)
 from milknado.domains.common import SessionInput
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph.commands import OwnerCapabilities
@@ -11,6 +17,7 @@ from milknado.web import (
     ObserverHandlers,
     OwnerHandlers,
     WebCommands,
+    build_capabilities,
     observer_commands,
     owner_commands,
 )
@@ -25,6 +32,54 @@ def _snapshot_capabilities(commands: WebCommands) -> dict[str, dict[str, object]
     )
 
 
+def test_host_owner_capability_is_stable_across_active_run_counts() -> None:
+    owner = OwnerCapabilities(
+        run_id="run-1",
+        node_id=1,
+        invocation_id="inv-1",
+        owner_incarnation="owner-1",
+        actions=(),
+        permission_ids=("permission-1",),
+        published_at="now",
+        permission_commands=(("permission-1", "git status"),),
+    )
+
+    for active_count in (0, 1, 4):
+        active_runs = tuple(
+            SimpleNamespace(run_id=f"run-{index}") for index in range(1, active_count + 1)
+        )
+        snapshot = SimpleNamespace(active_runs=active_runs)
+
+        def read_snapshot(current_snapshot: SimpleNamespace = snapshot) -> SimpleNamespace:
+            return current_snapshot
+
+        source = cast(
+            _SnapshotReader,
+            cast(object, SimpleNamespace(snapshot=read_snapshot)),
+        )
+
+        def capability_for(run_id: str) -> OwnerCapabilities | None:
+            return owner if run_id == "run-1" else None
+
+        graph = cast(
+            MikadoGraph,
+            cast(object, SimpleNamespace(commands=SimpleNamespace(capabilities=capability_for))),
+        )
+        owner_for_host = _owner_capabilities(source, graph)
+        commands = owner_commands(
+            OwnerHandlers(),
+            HostDependencies(owner_capabilities=owner_for_host),
+        )
+        payload = build_capabilities(commands)
+        host_owner = cast(dict[str, object], payload["host_owner"])
+        run_owner = cast(dict[str, object], payload["owner"])
+
+        assert host_owner == {"available": True, "reason": None}
+        assert run_owner["available"] is (active_count == 1)
+        if active_count == 1:
+            assert run_owner["run_id"] == "run-1"
+
+
 def test_owner_builder_exposes_owner_capability_matrix() -> None:
     owner = OwnerCapabilities(
         run_id="run-1",
@@ -32,8 +87,9 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
         invocation_id="inv-1",
         owner_incarnation="owner-1",
         actions=(),
-        permission_ids=(),
+        permission_ids=("permission-1",),
         published_at="now",
+        permission_commands=(("permission-1", "git status"),),
     )
     commands = owner_commands(
         OwnerHandlers(
@@ -50,6 +106,8 @@ def test_owner_builder_exposes_owner_capability_matrix() -> None:
         for name in ("session_input", "cancel", "force_stop", "stop_scheduling")
     )
     assert capabilities["owner"]["available"] is True
+    assert capabilities["host_owner"] == {"available": True, "reason": None}
+    assert capabilities["owner"]["permission_commands"] == [["permission-1", "git status"]]
     assert capabilities["owner"]["published_at"] == "now"
 
 
@@ -129,7 +187,7 @@ def test_observer_session_input_reads_new_owner_fence_per_request(
 
     admitted = commands.session_input("run-1", command)
 
-    assert admitted is not None
+    assert isinstance(admitted, SessionInput)
     assert admitted.command_id == "request-1"
 
 
@@ -154,6 +212,10 @@ def test_observer_builder_reports_owner_only_commands_unavailable() -> None:
     assert capabilities["review_decision"]["available"] is False
     assert capabilities["git"]["available"] is False
     assert capabilities["owner"]["available"] is True
+    assert capabilities["host_owner"] == {
+        "available": False,
+        "reason": "This web host is read-only.",
+    }
     assert capabilities["owner"]["run_id"] == "run-1"
     assert capabilities["owner"]["published_at"] == "now"
 
@@ -194,7 +256,8 @@ def test_owner_controller_builder_targets_requested_run_id() -> None:
     commands = owner_commands(controller, HostDependencies(owner_capabilities=owner))
     assert commands.session_input is not None
     command = SessionInput(action="steer", request_id="request")
-    assert commands.session_input("request-run", command) is None
+    with pytest.raises(ValueError, match="not active"):
+        _ = commands.session_input("request-run", command)
     assert commands.session_input("owner-run", command) == command
     assert commands.cancel is not None
     assert commands.cancel("owner-run") == {"run_id": "owner-run", "state": "cancelled"}
@@ -212,10 +275,10 @@ def test_observer_builder_wires_graph_process_and_project_dependencies(
         )
     )
     assert commands.session_input is not None
-    assert (
-        commands.session_input("missing-run", SessionInput(action="steer", request_id="request"))
-        is None
-    )
+    with pytest.raises(ValueError, match="not active"):
+        _ = commands.session_input(
+            "missing-run", SessionInput(action="steer", request_id="request")
+        )
     assert commands.cancel is not None
     with pytest.raises(ValueError, match="not found"):
         _ = commands.cancel("missing-run")

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import cast, final
+from typing import Protocol, cast, final
 
 from rich.console import RenderableType
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.events import MouseScrollDown, MouseScrollUp
 from textual.widgets import Button, DataTable, Input, Select, Static
 from typing_extensions import override
 
@@ -22,6 +23,21 @@ from milknado.app.session_view import (
 )
 from milknado.domains.common import MikadoNode, SessionAction, SessionView
 from milknado.domains.graph import NodeDetailSnapshot
+
+
+class _OutputHost(Protocol):
+    def pause_auto_follow(self) -> None: ...
+
+
+@final
+class OutputPanel(VerticalScroll):
+    """Suspend following when the user scrolls transcript output."""
+
+    def on_mouse_scroll_up(self, _event: MouseScrollUp) -> None:
+        cast(_OutputHost, cast(object, self.app)).pause_auto_follow()
+
+    def on_mouse_scroll_down(self, _event: MouseScrollDown) -> None:
+        cast(_OutputHost, cast(object, self.app)).pause_auto_follow()
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +64,7 @@ class ChangesPanelState:
 class SessionPanel(VerticalScroll):
     """Transcript and explicit protocol controls for one selected run."""
 
+    _run_id: str | None = None
     _action_choices: tuple[tuple[str, SessionAction], ...] = ()
     _permission_choices: tuple[tuple[str, str], ...] = ()
 
@@ -71,7 +88,7 @@ class SessionPanel(VerticalScroll):
     @override
     def compose(self) -> ComposeResult:
         yield Static(id="session-state", markup=False)
-        with VerticalScroll(id="output") as output:
+        with OutputPanel(id="output") as output:
             output.border_title = "Session"
             yield Static(id="output-text", markup=False)
         with VerticalScroll(id="session-errors") as errors:
@@ -99,9 +116,11 @@ class SessionPanel(VerticalScroll):
         self._update_errors(view)
         self.query_one("#actions", Static).display = not state.read_only and view.context is None
         structured = bool(state.run_id and view.active and view.actions and not state.read_only)
+        selection_changed = state.run_id != self._run_id
         with self.prevent(Input.Changed, Select.Changed):
-            self._update_selectors(state, structured)
-            self._update_inputs(state, structured)
+            self._update_selectors(state, structured, selection_changed)
+            self._update_inputs(state, structured, selection_changed)
+        self._run_id = state.run_id
 
     def _update_errors(self, view: SessionView) -> None:
         error_box = self.query_one("#session-errors", VerticalScroll)
@@ -109,7 +128,9 @@ class SessionPanel(VerticalScroll):
         has_errors = any(event.kind == "error" for event in view.events)
         _ = error_box.set_class(not has_errors, "hidden")
 
-    def _update_selectors(self, state: SessionPanelState, structured: bool) -> None:
+    def _update_selectors(
+        self, state: SessionPanelState, structured: bool, selection_changed: bool
+    ) -> None:
         view = state.view
         permissions = permission_options(view) if structured else ()
         available: tuple[SessionAction, ...] = tuple(
@@ -124,29 +145,41 @@ class SessionPanel(VerticalScroll):
         if choices != self._action_choices:
             action_select.set_options(choices)
             self._action_choices = choices
-        action_select.value = (
+        action = (
             state.action
             if state.action in available
-            else available[0]
-            if available
-            else Select.NULL
+            else (available[0] if available else Select.NULL)
         )
+        if action_select.value != action and (
+            selection_changed
+            or not action_select.has_focus
+            or action_select.value not in available
+        ):
+            action_select.value = action
         permission_select = cast(Select[str], self.query_one("#session-permission", Select))
         if permissions != self._permission_choices:
             permission_select.set_options(permissions)
             self._permission_choices = permissions
-        permission_select.value = (
-            state.permission_id
-            if any(value == state.permission_id for _, value in permissions)
-            else Select.NULL
+        permission = next(
+            (value for _, value in permissions if value == state.permission_id), Select.NULL
         )
+        if permission_select.value != permission and (
+            selection_changed
+            or not permission_select.has_focus
+            or not any(value == permission_select.value for _, value in permissions)
+        ):
+            permission_select.value = permission
         permission_select.display = bool(permissions)
 
-    def _update_inputs(self, state: SessionPanelState, structured: bool) -> None:
+    def _update_inputs(
+        self, state: SessionPanelState, structured: bool, selection_changed: bool
+    ) -> None:
         input_row = self.query_one("#session-input-row", Horizontal)
         input_row.display = structured
         message_input = self.query_one("#session-input", Input)
-        if message_input.value != state.draft:
+        if message_input.value != state.draft and (
+            selection_changed or not message_input.has_focus
+        ):
             message_input.value = state.draft
         message_input.disabled = not structured
         self.query_one("#session-submit", Button).disabled = not structured
@@ -196,10 +229,8 @@ class ChangesPanel(Vertical):
         self._update_files(table, state)
         if state.files:
             _ = table.remove_class("hidden")
-            message = f"{len(state.files)} changed file"
-            self.query_one("#changes-state", Static).update(
-                message + ("" if len(state.files) == 1 else "s")
-            )
+            message = f"{len(state.files)} changed file{'s' if len(state.files) != 1 else ''}"
+            self.query_one("#changes-state", Static).update(message)
         else:
             _ = table.add_class("hidden")
             message = "Loading changes..." if state.loading else "No changed files."
@@ -221,18 +252,10 @@ class ChangesPanel(Vertical):
                 changed.status, changed.path, _line_counts(changed), key=changed.path
             )
         if state.files:
-            row = next(
-                (index for index, item in enumerate(state.files) if item.path == cursor_path),
-                self._selected_index(state),
-            )
+            paths = tuple(item.path for item in state.files)
+            selected = paths.index(state.selected_path) if state.selected_path in paths else 0
+            row = paths.index(cursor_path) if cursor_path in paths else selected
             table.move_cursor(row=row, animate=False)
-
-    @staticmethod
-    def _selected_index(state: ChangesPanelState) -> int:
-        return next(
-            (index for index, item in enumerate(state.files) if item.path == state.selected_path),
-            0,
-        )
 
 
 def _line_counts(changed: ChangedFile) -> str:

@@ -16,11 +16,20 @@ export function AddNodeButton(): ReactElement | null {
   }
 
   return (
-    <div className="mk-graph-edits-rail">
-      <Button disabled={!capability.available} onClick={() => openDialog('add')}>
+    <div className="mk-rail-actions">
+      <Button
+        className="mk-rail-btn"
+        glyph="+"
+        disabled={!capability.available}
+        onClick={() => openDialog('add')}
+      >
         Add node
       </Button>
-      {!capability.available && <p role="note">{capability.reason}</p>}
+      {!capability.available && (
+        <p role="note" className="mk-rail-empty">
+          {capability.reason}
+        </p>
+      )}
     </div>
   );
 }

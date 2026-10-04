@@ -50,29 +50,50 @@ from milknado.domains.dispatch import (
     render_brief,
     runs_dir,
 )
+from milknado.domains.execution._host_slots import SlotLedger
+from milknado.domains.execution._models import (
+    CompletionResult,
+    DispatchResult,
+    NodeClaimRejected,
+    PreservedWorkerRun,
+    RebaseConflict,
+)
+from milknado.domains.execution._node_context import ExecutionConfig as ExecutionConfig
+from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import (
     ReviewNotification,
     build_review_prompt,
     persist_review_findings,
 )
+from milknado.domains.execution._review_policy import ReviewDecision, ReviewPolicy, decide_review
+from milknado.domains.execution._stop import (
+    LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    force_stop_graph_run,
+    stop_graph_run,
+)
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
-    from milknado.domains.common.protocols import CrgPort, GitPort, GraphReadPort, LoopPort
+    from milknado.domains.common.protocols import (
+        CrgPort,
+        GitPort,
+        GraphReadPort,
+        HostCapacityPort,
+        LoopPort,
+    )
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
 
-# Cancel-watcher cadence for pid-less in-process ralph runs: poll the on-disk
+# Cancel-watcher cadence for pid-less in-process loop runs: poll the on-disk
 # sentinel often enough that cancel_run's 8s confirm bound is comfortably met.
-_RALPH_CANCEL_POLL_SECS = 0.25
-_RALPH_CANCEL_STOP_TIMEOUT_SECS = 5.0
+_LOOP_CANCEL_POLL_SECS = 0.25
 # Ceiling for the watcher's retry backoff on consecutive force-stop failures:
 # a permanently wedged loop stays loud (first failure logs immediately) but
 # the retry cadence caps at one error line per minute (~1.4k lines/day) instead
 # of polling at full rate forever. Retry-until-stopped semantics are preserved.
-_RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS = 60.0
+_LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS = 60.0
 
 _TRANSIENT_EXIT_CODES = frozenset({124, 137, 143})
 _TRANSIENT_MSG_RE = re.compile(
@@ -90,29 +111,8 @@ class _ReviewCallable(Protocol):
         project_root: Path,
         *,
         timeout_seconds: float,
+        graph_run_id: str,
     ) -> ReviewResult: ...
-
-
-@dataclass(frozen=True)
-class ExecutionConfig:
-    execution_agent: str
-    quality_gates: tuple[Gate, ...] | None
-    worktree_pattern: str
-    project_root: Path
-    brief_prepend: str | None = None
-    dispatch_max_retries: int = 2
-    dispatch_backoff_seconds: float = 5.0
-    commit_footer: str | None = None
-    agent_family: str = "claude"
-    review: bool = False
-    review_agent: str | None = None
-    review_max_rounds: int = 0
-    review_timeout_seconds: int = 1800
-    on_reject: str = "warn"
-    session_mode: str = "fresh"
-    completion_timeout_seconds: int | None = None
-    attempt_timeout_seconds: float | None = None
-    max_iterations: int | None = None
 
 
 @dataclass(frozen=True)
@@ -120,37 +120,10 @@ class RuntimePolicy:
     session: NodeAgentSession | None = None
 
 
-@dataclass(frozen=True)
-class DispatchResult:
-    node_id: int
-    worktree: Path
-    run_id: str
-
-
-@dataclass(frozen=True)
-class CompletionResult:
-    node_id: int
-    rebased: bool
-    newly_ready: list[int]
-    rebase_conflict: RebaseConflict | None = None
-    redispatch: DispatchResult | None = None
-    blocked: bool = False
-    review_notification_failed: bool = False
-    review_audit_failed: bool = False
-
-
-@dataclass(frozen=True)
-class RebaseConflict:
-    node_id: int
-    description: str
-    conflicting_files: tuple[str, ...]
-    detail: str
-
-
-class _RalphRunKwargs(TypedDict, total=False):
+class _LoopRunKwargs(TypedDict, total=False):
     agent: str
-    ralph_dir: Path
-    ralph_file: Path
+    loop_dir: Path
+    loop_file: Path
     quality_gates: tuple[Gate, ...] | None
     project_root: Path
     commit_footer: str | None
@@ -160,6 +133,7 @@ class _RalphRunKwargs(TypedDict, total=False):
     runtime_policy: RuntimePolicy
     max_iterations: int | None
     timeout: float
+    env: dict[str, str]
 
 
 def _build_commit_message(node_id: int, description: str) -> str:
@@ -167,7 +141,7 @@ def _build_commit_message(node_id: int, description: str) -> str:
     return f"feat(milknado-{node_id}): {subject}\n\n{description}\n\nMilknado-Node: {node_id}"
 
 
-_LOOP_SCAFFOLDING = ("RALPH.md", ".ralph-logs/")
+_LOOP_SCAFFOLDING = ("LOOP.md", ".loop-logs/")
 
 
 def _exclude_loop_scaffolding(common: Path | None) -> None:
@@ -190,7 +164,7 @@ def _exclude_loop_scaffolding(common: Path | None) -> None:
 
 
 def _preserve_run_logs(common: Path | None, worktree: Path, node_id: int) -> None:
-    """Copy the worktree's `.ralph-logs/` to `.milknado/logs/<node_id>/` in the
+    """Copy the worktree's `.loop-logs/` to `.milknado/logs/<node_id>/` in the
     main checkout root before the worktree is destroyed, so a run's post-mortem
     evidence survives worktree removal. `.milknado/` is already local, untracked
     state.
@@ -202,7 +176,7 @@ def _preserve_run_logs(common: Path | None, worktree: Path, node_id: int) -> Non
     that is not a git checkout) leaves nothing to preserve, and a copy failure must
     not block worktree cleanup, so failures are logged, not raised.
     """
-    logs = worktree / ".ralph-logs"
+    logs = worktree / ".loop-logs"
     if not logs.is_dir():
         return
     root = common.parent if common is not None else worktree.parent
@@ -235,8 +209,10 @@ def _is_transient(exc: BaseException) -> bool:
 
 
 def _should_retry_dispatch(exc: BaseException) -> bool:
-    # Precondition failures (InvalidTransition/ValueError), not transient worker errors.
-    return not isinstance(exc, (InvalidTransition, ValueError)) and _is_transient(exc)
+    # A preserved worker may still hold the claim and worktree.
+    if isinstance(exc, (InvalidTransition, ValueError, PreservedWorkerRun)):
+        return False
+    return _is_transient(exc)
 
 
 def _dispatchable_node_ids(
@@ -435,28 +411,26 @@ class Executor:
         self,
         graph: MikadoGraph,
         git: GitPort,
-        ralph: LoopPort,
+        loop: LoopPort,
         crg: CrgPort,
     ) -> None:
 
-        self._base_oid_by_node: dict[int, str | None] = {}
-        self._worker_run_id_by_node: dict[int, str] = {}
-        self._owner_fence_by_node: dict[int, str] = {}
+        self._context_by_node: dict[int, NodeExecutionContext] = {}
         # Runs whose dispatch-abort force-stop was never confirmed: the cancel
         # watcher finalizes their rows when the wedged loop later self-exits
         # (no completion path owns these ids — they never enter
-        # _worker_run_id_by_node).
+        # _context_by_node).
         self._unconfirmed_stop_run_ids: set[str] = set()
         self._git: GitPort = git
-        self._target_branch_by_node: dict[int, str] = {}
-        self._target_oid_by_node: dict[int, str] = {}
         self._graph: MikadoGraph = graph
         self._wt: WorktreeManager = WorktreeManager(git)
-        self._ralph: LoopPort = ralph
+        self._loop: LoopPort = loop
         self._crg: CrgPort = crg
-        self._config_by_node: dict[int, ExecutionConfig] = {}
-        self._session_by_node: dict[int, NodeAgentSession] = {}
-        self._review_round_by_node: dict[int, int] = {}
+        self._slots: SlotLedger = SlotLedger()
+
+    def use_host_capacity(self, port: HostCapacityPort) -> None:
+        """Cap concurrent workers across the host through ``port``."""
+        self._slots.use(port)
 
     def dispatch(
         self,
@@ -494,13 +468,17 @@ class Executor:
             result = self._dispatch_once(
                 node_id, config, base_oid=target_oid, parent_run_id=parent_run_id
             )
-            self._base_oid_by_node[node_id] = target_oid
-            self._worker_run_id_by_node[node_id] = result.run_id
-            if parent_run_id is not None:
-                self._owner_fence_by_node[node_id] = parent_run_id
-            self._target_branch_by_node[node_id] = target_branch
-            self._target_oid_by_node[node_id] = target_oid
-            self._config_by_node[node_id] = config
+            self._context_by_node[node_id] = NodeExecutionContext(
+                worker_run_id=result.run_id,
+                owner_fence=parent_run_id,
+                worktree=result.worktree,
+                session=None,
+                target_branch=target_branch,
+                target_oid=target_oid,
+                base_oid=target_oid,
+                review_round=0,
+                config=config,
+            )
             return result
 
         return retryer(_attempt)
@@ -519,6 +497,22 @@ class Executor:
                 + f"{resolved_wt!r} is not under {resolved_root!r}"
             )
         return wt_path, f"milknado/{node_id}-{slug}"
+
+    def _admit(self, node_id: int, owner_run_id: str, root: Path, *, adopted: bool) -> None:
+        """Take a host slot, then claim the node; free the slot if the claim fails."""
+        self._slots.take(owner_run_id, node_id, root, wait=adopted)
+        if adopted:
+            return
+        try:
+            claimed = self._graph.claim_node(
+                node_id, owner_run_id, now=datetime.now(UTC).isoformat(), pid=os.getpid()
+            )
+        except BaseException:
+            self._slots.drop(node_id)
+            raise
+        if not claimed:
+            self._slots.drop(node_id)
+            raise NodeClaimRejected(f"node {node_id} is already claimed; dispatch refused")
 
     def _dispatch_once(
         self,
@@ -542,6 +536,7 @@ class Executor:
                 + f"{node.worktree_path}; resolve and retry merge-back before redispatching"
             )
 
+        wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         adopted = parent_run_id is not None
         if adopted:
             if node.status is not NodeStatus.RUNNING or node.run_id != parent_run_id:
@@ -554,15 +549,11 @@ class Executor:
             owner_run_id = parent_run_id
         else:
             owner_run_id = make_run_id(node_id)
-            if not self._graph.claim_node(
-                node_id, owner_run_id, now=datetime.now(UTC).isoformat(), pid=os.getpid()
-            ):
-                raise ValueError(f"node {node_id} is already claimed; dispatch refused")
+        self._admit(node_id, owner_run_id, config.project_root, adopted=adopted)
 
         create_attempted = False
         run_id: str | None = None
         aborted_run_metadata: list[tuple[str, bool]] = []
-        wt_path, branch = self._resolve_worktree_path(node_id, node, config)
         try:
             self._wt.ensure_clean(node_id)
             wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
@@ -570,15 +561,17 @@ class Executor:
             create_attempted = True
             self._wt.create(node_id, wt_path, branch)
             dispatch_base_oid = base_oid or self._git.resolve_ref(self._git.current_branch())
-            run_id = self._create_ralph_run(
+            run_id = self._create_loop_run(
                 node,
                 config,
                 wt_path,
                 dispatch_base_oid,
                 aborted_run_metadata=aborted_run_metadata,
             )
-            if not adopted and not self._graph.replace_run_id(node_id, owner_run_id, run_id):
-                raise ValueError(f"dispatch fence lost for node {node_id}")
+            if not adopted:
+                if not self._graph.replace_run_id(node_id, owner_run_id, run_id):
+                    raise ValueError(f"dispatch fence lost for node {node_id}")
+                owner_run_id = run_id
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -592,7 +585,7 @@ class Executor:
             aborted_run = aborted_run_metadata[0] if aborted_run_metadata else None
             started_run_id = run_id or (aborted_run[0] if aborted_run else None)
             stop_confirmed = aborted_run[1] if aborted_run else None
-            self._cleanup_failed_dispatch(
+            confirmed = self._cleanup_failed_dispatch(
                 node_id,
                 wt_path,
                 owner_run_id=owner_run_id,
@@ -601,10 +594,12 @@ class Executor:
                 started_run_id=started_run_id,
                 stop_confirmed=stop_confirmed,
             )
+            if not confirmed and started_run_id is not None:
+                raise PreservedWorkerRun(node_id, started_run_id, owner_run_id) from exc
             raise
         return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
 
-    def _create_ralph_run(
+    def _create_loop_run(
         self,
         node: MikadoNode,
         config: ExecutionConfig,
@@ -622,39 +617,44 @@ class Executor:
             prepend=config.brief_prepend,
             project_root=config.project_root,
         )
-        ralph_path = self._ralph.generate_ralph_md(
+        loop_path = self._loop.generate_loop_md(
             brief,
             config.quality_gates,
-            wt_path / "RALPH.md",
+            wt_path / "LOOP.md",
             prior_findings=prior_findings,
             findings_round=findings_round,
         )
-        ralph_run_id = make_run_id(node.id)
-        create_kwargs: _RalphRunKwargs = {
+        loop_run_id = make_run_id(node.id)
+        create_kwargs: _LoopRunKwargs = {
             "agent": config.execution_agent,
-            "ralph_dir": wt_path,
-            "ralph_file": ralph_path,
+            "loop_dir": wt_path,
+            "loop_file": loop_path,
             "quality_gates": config.quality_gates,
             "project_root": wt_path,
             "commit_footer": config.commit_footer,
             "base_oid": base_oid,
-            "run_id": ralph_run_id,
+            "run_id": loop_run_id,
+            "env": {
+                "MILKNADO_NODE_ID": str(node.id),
+                "MILKNADO_RUN_ID": loop_run_id,
+                "MILKNADO_PROJECT_ROOT": str(config.project_root.resolve()),
+            },
         }
         if config.max_iterations is not None:
             create_kwargs["max_iterations"] = config.max_iterations
         if config.attempt_timeout_seconds is not None:
             create_kwargs["timeout"] = config.attempt_timeout_seconds
         if node.flavor == "review":
-            create_kwargs["completion_probe"] = lambda run_id=ralph_run_id: (
+            create_kwargs["completion_probe"] = lambda run_id=loop_run_id: (
                 self._graph.runs.latest_message(run_id, "review_terminal") is not None
             )
         if session is not None:
             create_kwargs["runtime_policy"] = RuntimePolicy(session=session)
-        run = self._ralph.create_run(**create_kwargs)
+        run = self._loop.create_run(**create_kwargs)
         run_id = run.state.run_id
-        if run_id != ralph_run_id:
-            raise ValueError(f"ralph run id mismatch: requested {ralph_run_id!r}, got {run_id!r}")
-        # Register the ralph run in the runs table BEFORE starting the loop so
+        if run_id != loop_run_id:
+            raise ValueError(f"loop run id mismatch: requested {loop_run_id!r}, got {run_id!r}")
+        # Register the loop run in the runs table BEFORE starting the loop so
         # review-verdict run_messages inserts satisfy the FK and run_list/poll
         # can see it (#296). Persistence must precede execution: an unregistered
         # run is worse than a failed dispatch, so a failed insert propagates
@@ -669,7 +669,7 @@ class Executor:
         # the sweep's timeout+grace window), so the row is never false-
         # flipped. No pid means cancel correctly routes through the sentinel
         # path, never _cancel_pid_run.
-        log_dir = wt_path / ".ralph-logs"
+        log_dir = wt_path / ".loop-logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "0000-dispatch.log").touch()
         self._graph.runs.start(
@@ -679,26 +679,24 @@ class Executor:
             datetime.now(UTC).isoformat(),
             config.completion_timeout_seconds,
         )
-        self._ralph.start_run(run_id)
+        self._loop.start_run(run_id)
         try:
-            self._spawn_ralph_cancel_watcher(run_id, config.project_root)
+            self._spawn_loop_cancel_watcher(run_id, config.project_root)
         except Exception:
-            # The run is live but its id never escapes _create_ralph_run, so
-            # the caller's cleanup cannot see it: tear it down here with the
-            # same confirmed-stop + fenced-finalize discipline as every other
-            # dispatch-abort path. Record the outcome for _dispatch_once's
-            # cleanup so an UNCONFIRMED stop preserves the worktree and fails
-            # loud instead of defaulting to discard under a possibly-live loop.
+            # The run ID cannot reach caller cleanup. Preserve the worktree
+            # when its stop cannot be confirmed.
             stop_confirmed = self._stop_aborted_run(
                 run_id, context=f"post-start setup failed for node {node.id}"
             )
             if aborted_run_metadata is not None:
                 aborted_run_metadata.append((run_id, stop_confirmed))
+            if not stop_confirmed:
+                raise PreservedWorkerRun(node.id, run_id) from None
             raise
         return run_id
 
     def _finalize_worker_run(self, run_id: str | None, result: RunResult) -> None:
-        """Best-effort terminal write for an executor ralph run's runs row.
+        """Best-effort terminal write for an executor loop run's runs row.
 
         The pre-check avoids retrying an already-terminal row. A failed finalize
         must not kill node completion.
@@ -711,18 +709,19 @@ class Executor:
                 return
             self._graph.runs.finish(run_id, result)
         except RunFenceLostError:
-            _logger.info("runs-row finalize adopted terminal winner for ralph run %s", run_id)
+            _logger.info("runs-row finalize adopted terminal winner for loop run %s", run_id)
         except Exception:
-            _logger.exception("runs-row finalize failed for ralph run %s", run_id)
+            _logger.exception("runs-row finalize failed for loop run %s", run_id)
 
     def _finish_node_worker_run(self, node_id: int, result: RunResult) -> None:
-        self._finalize_worker_run(self._worker_run_id_by_node.get(node_id), result)
+        context = self._context_by_node.get(node_id)
+        self._finalize_worker_run(context.worker_run_id if context else None, result)
 
-    def _spawn_ralph_cancel_watcher(self, run_id: str, project_root: Path) -> None:
-        """Watch the on-disk cancel sentinel for a pid-less ralph run.
+    def _spawn_loop_cancel_watcher(self, run_id: str, project_root: Path) -> None:
+        """Watch the on-disk cancel sentinel for a pid-less loop run.
 
         cancel_run() marks a pid-less run via the async-sentinel path, but the
-        in-process ralph loop never observes the sentinel — live cancel stalled
+        in-process loop never observes the sentinel — live cancel stalled
         for the full confirm bound and then raised. This daemon thread is the
         observer: on the sentinel it force-stops the loop and finalizes the
         row cancelled, which cancel_run's confirm poll then sees. A dead run
@@ -737,34 +736,34 @@ class Executor:
         instead of tearing a worktree out from under a live worker — but
         the sentinel stays set, so the watcher keeps observing and retries
         the force-stop with a capped exponential backoff (doubling from the
-        poll cadence to _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS): a transient
+        poll cadence to _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS): a transient
         stop failure must not permanently strand the cancel, and a
         permanently wedged loop must not log at full poll rate forever.
         """
         rdir = runs_dir(project_root)
         threading.Thread(
-            target=self._watch_ralph_cancel,
+            target=self._watch_loop_cancel,
             args=(run_id, rdir),
-            name=f"ralph-cancel-watch-{run_id}",
+            name=f"loop-cancel-watch-{run_id}",
             daemon=True,
         ).start()
 
-    def _watch_ralph_cancel(self, run_id: str, rdir: Path) -> None:
-        """Poll loop for one cancel watcher — see _spawn_ralph_cancel_watcher
+    def _watch_loop_cancel(self, run_id: str, rdir: Path) -> None:
+        """Poll loop for one cancel watcher — see _spawn_loop_cancel_watcher
         for the full behavioral contract this implements."""
-        backoff = _RALPH_CANCEL_POLL_SECS
+        backoff = _LOOP_CANCEL_POLL_SECS
         while True:
-            run = self._ralph.get_run(run_id)
+            run = self._loop.get_run(run_id)
             if run is None:
                 # The run record is gone; nothing left to watch.
                 self._unconfirmed_stop_run_ids.discard(run_id)
                 return
-            if not self._ralph.is_run_alive(run_id):
+            if not self._loop.is_run_alive(run_id):
                 self._finalize_dead_watched_thread(run_id)
                 return
             if not is_cancel_requested(rdir, run_id):
-                backoff = _RALPH_CANCEL_POLL_SECS
-                time.sleep(_RALPH_CANCEL_POLL_SECS)
+                backoff = _LOOP_CANCEL_POLL_SECS
+                time.sleep(_LOOP_CANCEL_POLL_SECS)
                 continue
             stopped, backoff = self._attempt_watcher_force_stop(run_id, backoff)
             if stopped is None:
@@ -803,25 +802,25 @@ class Executor:
         backoff)`` once force_stop_run itself resolved either way.
         """
         try:
-            stopped = self.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
-                "force-stop raised for cancelled ralph run %s; row left "
+                "force-stop raised for cancelled loop run %s; row left "
                 + "running so cancel_run fails closed; retrying while the "
                 + "sentinel is set",
                 run_id,
             )
             time.sleep(backoff)
-            return None, min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+            return None, min(backoff * 2, _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS)
         if not stopped:
             _logger.error(
-                "force-stop could not confirm exit for cancelled ralph "
+                "force-stop could not confirm exit for cancelled loop "
                 + "run %s; row left running so cancel_run fails closed; "
                 + "retrying while the sentinel is set",
                 run_id,
             )
             time.sleep(backoff)
-            return None, min(backoff * 2, _RALPH_CANCEL_RETRY_BACKOFF_MAX_SECS)
+            return None, min(backoff * 2, _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS)
         return True, backoff
 
     def _finalize_watcher_stop(self, run_id: str) -> None:
@@ -830,7 +829,7 @@ class Executor:
         force_stop_and_join only confirms the thread exited, not why, so a
         completed run must be left for the normal completion path to
         finalize with the real rebase outcome instead of being stomped."""
-        completed_run = self._ralph.get_run(run_id)
+        completed_run = self._loop.get_run(run_id)
         if completed_run is not None and completed_run.state.status is RunStatus.COMPLETED:
             return
         self._finalize_worker_run(
@@ -852,13 +851,13 @@ class Executor:
         return config.review_max_rounds > 0
 
     def _session_identity(self, run_id: str, family: str) -> tuple[str, str | None]:
-        context = self._ralph.get_run_session(run_id).context
+        context = self._loop.get_run_session(run_id).context
         if context is not None:
             family = context.family
-        session_id = self._ralph.get_run_session_id(run_id)
+        session_id = self._loop.get_run_session_id(run_id)
         if session_id is not None:
             return family, session_id
-        lines = self._ralph.get_run_stdout(run_id)
+        lines = self._loop.get_run_stdout(run_id)
         for output in chain(("\n".join(lines),), reversed(lines)):
             try:
                 return family, capture_session_id(family, output)
@@ -873,10 +872,10 @@ class Executor:
     ) -> NodeAgentSession | None:
         if config.session_mode != "resume":
             return None
-        existing = self._session_by_node.get(node.id)
-        if existing is not None:
-            return existing
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        if context is not None and context.session is not None:
+            return context.session
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             raise ValueError(f"node {node.id} has no worker run id to resume")
         family, session_id = self._session_identity(worker_run_id, config.agent_family)
@@ -884,7 +883,10 @@ class Executor:
             raise ValueError(
                 f"node {node.id} worker output did not contain a resumable session id"
             )
-        worktree = Path(node.worktree_path or config.project_root).resolve()
+        session_worktree = (
+            context.worktree if context else Path(node.worktree_path or config.project_root)
+        )
+        worktree = session_worktree.resolve()
         session = NodeAgentSession(
             node_id=node.id,
             family=family,
@@ -895,7 +897,8 @@ class Executor:
         path = config.project_root / ".milknado" / "sessions" / f"node-{node.id}.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         _ = path.write_text(json.dumps(asdict(session), indent=2) + "\n", encoding="utf-8")
-        self._session_by_node[node.id] = session
+        if context is not None:
+            context.session = session
         return session
 
     def _notify_review(
@@ -912,7 +915,8 @@ class Executor:
         except Exception:
             audit_succeeded = False
             _logger.exception("node_review_table_write_failed node_id=%d", node.id)
-        worker_run_id = self._worker_run_id_by_node.get(node.id) or node.run_id
+        context = self._context_by_node.get(node.id)
+        worker_run_id = context.worker_run_id if context else node.run_id
         if not worker_run_id:
             _logger.error("node_review_notification_missing_run node_id=%d", node.id)
             return ReviewNotification(audit_succeeded, False)
@@ -940,12 +944,15 @@ class Executor:
         _ = self._capture_session(node, config)
         reviewer = cast(
             _ReviewCallable | None,
-            getattr(self._ralph, "run_node_review", None),
+            getattr(self._loop, "run_node_review", None),
         )
         if reviewer is None or config.review_agent is None:
             raise ValueError("configured adversarial review requires a LoopPort reviewer")
-        if not (base_oid := self._base_oid_by_node.get(node.id)):
+        context = self._context_by_node.get(node.id)
+        if context is None or not context.base_oid:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
+        base_oid = context.base_oid
+        graph_run_id = context.worker_run_id
         diff = self._git.diff_for_review(worktree, base_oid) or "(no diff)"
         result: ReviewResult = reviewer(
             config.review_agent,
@@ -953,6 +960,7 @@ class Executor:
             worktree,
             config.project_root,
             timeout_seconds=float(config.review_timeout_seconds),
+            graph_run_id=graph_run_id,
         )
         approved = result.approved
         findings, review_error = result.findings_md.strip(), result.error
@@ -968,8 +976,9 @@ class Executor:
         prior_findings: str = "",
         findings_round: int | None = None,
     ) -> DispatchResult:
-        owner_fence = self._owner_fence_by_node.get(node.id)
-        prior_worker_run_id = self._worker_run_id_by_node.get(node.id)
+        context = self._context_by_node.get(node.id)
+        owner_fence = context.owner_fence if context else None
+        prior_worker_run_id = context.worker_run_id if context else None
         old_worker_run_id = prior_worker_run_id or node.run_id
         if not old_worker_run_id:
             raise ValueError(
@@ -978,11 +987,11 @@ class Executor:
         # The prior round is over (its review already ran) regardless of
         # whether the next round can be created below — finalize it here,
         # unconditionally and exactly once, so a fresh-run failure (raised
-        # out of _create_ralph_run before any fence check runs) can never
+        # out of _create_loop_run before any fence check runs) can never
         # leave it zombied 'running'. Only the recorded worker run id is
         # finalized — never the node.run_id fence fallback, which can be a
         # live parent run's row.
-        review_round = self._review_round_by_node.get(node.id, 0)
+        review_round = context.review_round if context else 0
         self._finalize_worker_run(
             prior_worker_run_id,
             RunResult(
@@ -993,33 +1002,41 @@ class Executor:
                 detail=f"superseded by review round {review_round} redispatch",
             ),
         )
-        base_oid = self._base_oid_by_node.get(node.id)
+        base_oid = context.base_oid if context else None
         if base_oid is None:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
-        session = self._session_by_node.get(node.id)
-        run_id = self._create_ralph_run(
-            node,
-            config,
-            worktree,
-            base_oid,
-            session=session if config.session_mode == "resume" else None,
-            prior_findings=prior_findings,
-            findings_round=findings_round,
-        )
+        session = context.session if context else None
+        try:
+            run_id = self._create_loop_run(
+                node,
+                config,
+                worktree,
+                base_oid,
+                session=session if config.session_mode == "resume" else None,
+                prior_findings=prior_findings,
+                findings_round=findings_round,
+            )
+        except PreservedWorkerRun as exc:
+            raise PreservedWorkerRun(
+                node.id, exc.run_id, owner_fence or old_worker_run_id
+            ) from exc
         if owner_fence is None:
             if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
-                _ = self._stop_aborted_run(
+                if not self._stop_aborted_run(
                     run_id, context=f"review redispatch fence lost for node {node.id}"
-                )
+                ):
+                    raise PreservedWorkerRun(node.id, run_id, old_worker_run_id)
                 raise ValueError(f"review redispatch fence lost for node {node.id}")
         else:
             current = self._graph.get_node(node.id)
             if current is None or current.run_id != owner_fence:
-                _ = self._stop_aborted_run(
+                if not self._stop_aborted_run(
                     run_id, context=f"adopted owner fence lost for node {node.id}"
-                )
+                ):
+                    raise PreservedWorkerRun(node.id, run_id, owner_fence)
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
-        self._worker_run_id_by_node[node.id] = run_id
+        if context is not None:
+            context.worker_run_id = run_id
 
         return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
 
@@ -1033,20 +1050,10 @@ class Executor:
         discard_worktree: bool,
         started_run_id: str | None = None,
         stop_confirmed: bool | None = None,
-    ) -> None:
-        # The ralph run may already have been started when dispatch aborted
-        # (fence loss / set_dispatched_at failure): stop it and finalize its
-        # runs row before the worktree it writes into is discarded, so it
-        # can't leak as a live loop with an unrecoverable zombie 'running'
-        # row. On an UNCONFIRMED stop the row stays 'running' and the
-        # worktree is kept — tearing it out from under a live loop is worse
-        # than a recoverable leftover directory.
-        #
-        # stop_confirmed carries a teardown result across the post-start
-        # window: _create_ralph_run already stopped the run there (its id
-        # never escaped), so cleanup must NOT stop it again — only honor the
-        # outcome. None means cleanup owns the stop attempt for
-        # started_run_id (the fence-loss paths).
+    ) -> bool:
+        # A supplied stop result prevents a second stop of a run whose ID
+        # never escaped _create_loop_run. An unconfirmed stop preserves the
+        # running row and worktree for recovery.
         if stop_confirmed is None:
             stop_confirmed = True
             if started_run_id is not None:
@@ -1055,14 +1062,7 @@ class Executor:
                     context=f"failed-dispatch cleanup for node {node_id}",
                 )
         try:
-            # An unconfirmed stop means the abandoned loop may still be
-            # alive and writing into wt_path: releasing the claim here would
-            # let the caller's transient-retry loop reclaim the node and
-            # start a second worker (race) while the first is still live.
-            # Withhold release until the stop is confirmed (or nothing was
-            # ever started, where stop_confirmed defaults True) — the next
-            # _dispatch_once attempt then hits claim_node failing and raises
-            # ValueError, which the retry loop does not retry.
+            # Keep the claim while the old worker may still write to wt_path.
             if release_claim and stop_confirmed:
                 _ = self._graph.release(node_id, owner_run_id)
         except Exception:
@@ -1077,27 +1077,31 @@ class Executor:
                     self._wt.discard(node_id, wt_path)
                 else:
                     _logger.error(
-                        "worktree %s preserved: ralph run %s was not confirmed "
+                        "worktree %s preserved: loop run %s was not confirmed "
                         + "stopped during failed-dispatch cleanup for node %d",
                         wt_path,
                         started_run_id,
                         node_id,
                     )
 
+        if stop_confirmed:
+            self._slots.drop(node_id)
+        return stop_confirmed
+
     def _stop_aborted_run(self, run_id: str, *, context: str) -> bool:
-        """Force-stop and finalize a ralph run abandoned after start."""
+        """Force-stop and finalize a loop run abandoned after start."""
         try:
-            stopped = self.force_stop_run(run_id, timeout=_RALPH_CANCEL_STOP_TIMEOUT_SECS)
+            stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
             _logger.exception(
-                "force-stop raised for aborted ralph run %s (%s); row left running",
+                "force-stop raised for aborted loop run %s (%s); row left running",
                 run_id,
                 context,
             )
             return False
         if not stopped:
             _logger.error(
-                "force-stop could not confirm exit for aborted ralph run %s (%s); "
+                "force-stop could not confirm exit for aborted loop run %s (%s); "
                 + "row left running",
                 run_id,
                 context,
@@ -1115,29 +1119,20 @@ class Executor:
         )
         return True
 
-    def _stop_with_bookkeeping(self, run_id: str, timeout: float | None, *, force: bool) -> bool:
-        self._unconfirmed_stop_run_ids.add(run_id)
-        stopper = self._ralph.force_stop_run if force else self._ralph.stop_run
-        stopped = stopper(run_id, timeout=timeout)
-        if stopped:
-            self._unconfirmed_stop_run_ids.discard(run_id)
-        return stopped
-
     def stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=False)
+        return stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def force_stop_run(self, run_id: str, timeout: float | None = None) -> bool:
-        """Force-stop a dispatched run and register its unconfirmed outcome."""
-        return self._stop_with_bookkeeping(run_id, timeout, force=True)
+        return force_stop_graph_run(self._loop, self._unconfirmed_stop_run_ids, run_id, timeout)
 
     def _validate_completion_target(self, node_id: int, feature_branch: str) -> None:
-        target_branch = self._target_branch_by_node.get(node_id)
+        context = self._context_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         if target_branch is None:
             return
         current_branch = self._git.current_branch()
         if feature_branch != target_branch or current_branch != target_branch:
-            target_oid = self._target_oid_by_node.get(node_id, "(unknown)")
+            target_oid = context.target_oid if context else "(unknown)"
             raise GitOperationError(
                 "dispatch-time merge target",
                 f"dispatch captured {target_branch!r} at {target_oid}; "
@@ -1253,77 +1248,57 @@ class Executor:
             review_audit_failed=not notification.audit_succeeded,
         )
 
-    def _handle_review_rejection(
+    def _apply_review_decision(
         self,
         node: MikadoNode,
         worktree: Path,
         config: ExecutionConfig,
         findings: str,
-        review_error: bool,
-    ) -> tuple[CompletionResult | None, ReviewNotification]:
-        node_id = node.id
-        round_number = self._review_round_by_node.get(node_id, 0)
-        review_round = round_number + 1
-        verdict = "error" if review_error else "reject"
-        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
-        if not notification.notification_succeeded:
-            _logger.error(
-                "node_review_notification_degraded node_id=%d policy=%s",
-                node_id,
-                config.on_reject,
-            )
-        if not notification.audit_succeeded:
-            blocked = self._block_review(
-                node, worktree, notification, "review blocked after audit failure"
-            )
-            return blocked, notification
-        if review_error:
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after reviewer error: {findings}"
-            )
-            return blocked, notification
-        if round_number < config.review_max_rounds:
-            self._review_round_by_node[node_id] = review_round
+        notification: ReviewNotification,
+        decision: ReviewDecision,
+    ) -> CompletionResult | None:
+        if decision.action == "block":
+            detail = {
+                "approval_audit_failed": "review approval audit failed",
+                "rejection_audit_failed": "review blocked after audit failure",
+                "reviewer_error": f"review blocked after reviewer error: {findings}",
+                "round_limit": f"review blocked after round {decision.next_round}",
+            }[decision.reason]
+            return self._block_review(node, worktree, notification, detail)
+        if decision.action == "redispatch":
+            context = self._context_by_node[node.id]
+            context.review_round = decision.next_round
             redispatch = self._redispatch_review_round(
-                node,
-                config,
-                worktree,
-                prior_findings=findings,
-                findings_round=review_round,
+                node, config, worktree, prior_findings=findings, findings_round=decision.next_round
             )
             _logger.warning(
                 "node_review_rejected node_id=%d round=%d/%d; redispatching",
-                node_id,
-                review_round,
+                node.id,
+                decision.next_round,
                 config.review_max_rounds,
             )
-            return (
-                CompletionResult(
-                    node_id=node_id,
-                    rebased=False,
-                    newly_ready=[],
-                    redispatch=redispatch,
-                    review_notification_failed=not notification.notification_succeeded,
-                ),
-                notification,
+            return CompletionResult(
+                node_id=node.id,
+                rebased=False,
+                newly_ready=[],
+                redispatch=redispatch,
+                review_notification_failed=not notification.notification_succeeded,
             )
-        if config.on_reject == "block":
-            blocked = self._block_review(
-                node, worktree, notification, f"review blocked after round {review_round}"
+        if decision.reason == "round_limit_warn":
+            _logger.warning(
+                "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
+                node.id,
+                config.review_max_rounds,
             )
-            return blocked, notification
-        _logger.warning(
-            "node_review_rejected node_id=%d rounds_exhausted=%d; warn policy merges",
-            node_id,
-            config.review_max_rounds,
-        )
-        return None, notification
+        return None
 
     def _gate_review(
         self, node: MikadoNode, worktree: Path, config: ExecutionConfig
     ) -> tuple[CompletionResult | None, ReviewNotification]:
         try:
             approved, findings, review_error = self._run_review(node, worktree, config)
+        except PreservedWorkerRun as exc:
+            raise PreservedWorkerRun(node.id, exc.run_id, node.run_id) from exc
         except Exception as exc:
             review_error = True
             approved = False
@@ -1332,21 +1307,36 @@ class Executor:
                 persist_review_findings(node, worktree, findings)
             except OSError:
                 _logger.exception(
-                    "adversarial review findings recovery failed for node %d",
-                    node.id,
+                    "adversarial review findings recovery failed for node %d", node.id
                 )
             _logger.exception("adversarial review failed for node %d", node.id)
-        if approved and not review_error:
-            notification = self._notify_review(node, verdict="approve", findings_md=findings)
-            if not notification.audit_succeeded:
-                blocked = self._block_review(
-                    node, worktree, notification, "review approval audit failed"
-                )
-                return blocked, notification
-            return None, notification
-        return self._handle_review_rejection(node, worktree, config, findings, review_error)
+        verdict = "error" if review_error else "approve" if approved else "reject"
+        notification = self._notify_review(node, verdict=verdict, findings_md=findings)
+        if not notification.notification_succeeded and verdict != "approve":
+            _logger.error(
+                "node_review_notification_degraded node_id=%d policy=%s",
+                node.id,
+                config.on_reject,
+            )
+        context = self._context_by_node.get(node.id)
+        decision = decide_review(
+            verdict,
+            notification.audit_succeeded,
+            context.review_round if context else 0,
+            ReviewPolicy(config.review_max_rounds, config.on_reject),
+        )
+        return (
+            self._apply_review_decision(node, worktree, config, findings, notification, decision),
+            notification,
+        )
 
     def complete(self, node_id: int, feature_branch: str) -> CompletionResult:
+        try:
+            return self._complete(node_id, feature_branch)
+        finally:
+            self._settle_node_slot(node_id)
+
+    def _complete(self, node_id: int, feature_branch: str) -> CompletionResult:
         node = self._graph.get_node(node_id)
         if node is None:
             raise ValueError(f"Node {node_id} not found")
@@ -1367,22 +1357,41 @@ class Executor:
                 tuple(VALID_TRANSITIONS[node.status]),
             )
 
+        self._require_worker_cleanup(node)
         self._validate_completion_target(node_id, feature_branch)
+        context = self._context_by_node.get(node_id)
         worktree = Path(node.worktree_path) if node.worktree_path else None
-        config = self._config_by_node.get(node_id)
+        if context is not None:
+            worktree = context.worktree
+        config = context.config if context else None
         notification = ReviewNotification(True, True)
         if worktree is not None and config is not None and self._review_enabled(config):
             early, notification = self._gate_review(node, worktree, config)
             if early is not None:
                 return early
 
-        target_branch = self._target_branch_by_node.get(node_id)
+        target_branch = context.target_branch if context else None
         rebase_result = self._rebase_or_fail(worktree, feature_branch, node, target_branch)
         result = self._finalize_completion(node, rebase_result)
         return replace(
             result,
             review_notification_failed=not notification.notification_succeeded,
         )
+
+    def _require_worker_cleanup(self, node: MikadoNode) -> None:
+        records = self._graph.runs.live_workers(node_id=node.id)
+        if records:
+            run_id = records[0].graph_run_id or records[0].runtime_run_id
+            raise PreservedWorkerRun(node.id, run_id, node.run_id)
+
+    def _settle_node_slot(self, node_id: int) -> None:
+        try:
+            current = self._graph.get_node(node_id)
+            self._slots.settle(
+                node_id, running=current is not None and current.status is NodeStatus.RUNNING
+            )
+        except Exception:
+            _logger.exception("host slot settle failed node_id=%d", node_id)
 
     def _mark_terminal(
         self, node: MikadoNode, status: NodeStatus, *, preserve_recovery: bool = False
@@ -1422,39 +1431,74 @@ class Executor:
             return str(wt)
         return None
 
+    def finish_preserved_abort(self, node_id: int, owner_run_id: str, run_id: str) -> None:
+        try:
+            node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
+            if (
+                node is not None
+                and node.status is NodeStatus.RUNNING
+                and node.run_id == owner_run_id
+            ):
+                _ = self._graph.mark_terminal(
+                    node_id, owner_run_id, NodeStatus.FAILED, preserve_recovery=True
+                )
+            self._finalize_worker_run(
+                run_id,
+                RunResult(
+                    status="failed",
+                    exit_code=None,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    error="dispatch aborted after worker start",
+                ),
+            )
+        finally:
+            self._settle_node_slot(node_id)
+
     def fail(self, node_id: int, detail: str | None = None) -> None:
-        self._wt.ensure_clean(node_id)
-        node = self._graph.get_node(node_id)
-        preserved = self._discard_worktree(node_id, node, "failed") if node else None
-        self._graph.mark_failed(node_id)
-        self._finish_node_worker_run(
-            node_id,
-            RunResult(
-                status="failed",
-                exit_code=None,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                detail=preserved or detail or "node failed",
-            ),
-        )
+        try:
+            node = self._graph.get_node(node_id)
+            if node is not None:
+                self._require_worker_cleanup(node)
+            self._wt.ensure_clean(node_id)
+            preserved = self._discard_worktree(node_id, node, "failed") if node else None
+            self._graph.mark_failed(node_id)
+            self._finish_node_worker_run(
+                node_id,
+                RunResult(
+                    status="failed",
+                    exit_code=None,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    detail=preserved or detail or "node failed",
+                ),
+            )
+        finally:
+            self._settle_node_slot(node_id)
 
     def cancel(self, node_id: int) -> None:
         """Clean a stopped run and make its graph node schedulable next invocation."""
-        node = self._graph.get_node(node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        self._finish_node_worker_run(
-            node_id,
-            RunResult(
-                status="failed",
-                exit_code=-1,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                error="cancelled",
-            ),
-        )
-        _ = self._discard_worktree(node_id, node, "stopped")
-        if node.run_id:
-            _ = self._graph.release(node_id, node.run_id)
-        else:
-            self._graph.mark_pending(node_id)
+        try:
+            node = self._graph.get_node(node_id)
+            if node is None:
+                raise ValueError(f"Node {node_id} not found")
+            self._require_worker_cleanup(node)
+            self._finish_node_worker_run(
+                node_id,
+                RunResult(
+                    status="failed",
+                    exit_code=-1,
+                    timed_out=False,
+                    ended_at=datetime.now(UTC).isoformat(),
+                    error="cancelled",
+                ),
+            )
+            _ = self._discard_worktree(node_id, node, "stopped")
+            if node.run_id:
+                _ = self._graph.release(node_id, node.run_id)
+            else:
+                self._graph.mark_pending(node_id)
+        finally:
+            self._settle_node_slot(node_id)

@@ -1,0 +1,9 @@
+{
+  "projectId": "68ad3112-43c2-4e42-b616-c77f726490ac",
+  "projectName": "Milknado Design System",
+  "shape": "package",
+  "pkg": "web",
+  "direction": "project-to-repo",
+  "vendorDir": "web/vendor/milknado",
+  "lastPull": "2026-09-27"
+}

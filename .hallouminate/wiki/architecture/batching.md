@@ -2,7 +2,7 @@
 
 The batching slice (`src/milknado/domains/batching/`) takes a flat set of file-level
 `FileChange`s and partitions them into an ordered list of `Batch`es, where each batch is one
-ralph-loop execution context. Batches that don't depend on each other run in parallel; the
+loop execution context. Batches that don't depend on each other run in parallel; the
 solver minimizes a token-budgeted cost so each batch fits one model context window. Entry
 point: `plan_batches` in `solver.py`.
 
@@ -70,7 +70,7 @@ without sacrificing cost. `MODEL_INVALID` raises (structural bug); `INFEASIBLE`/
 return an empty/partial plan with that status. `_worse_status` reports the conservative
 status across both passes.
 
-The cost function (`_build_total_cost`) is per-batch: a fixed `batch_size_cost` (ralph
+The cost function (`_build_total_cost`) is per-batch: a fixed `batch_size_cost` (loop
 startup overhead, 2000 tokens/batch when non-empty) plus a token cost scaled by a
 batch-size-dependent multiplier `(k*12 - 1)*10` — larger batches pay more per token, nudging
 the solver toward more, smaller batches. All values are ×100 to stay integer for CP-SAT.

@@ -321,6 +321,8 @@ def doctor(
     config, _ = load_or_default(project_root)
     report = run_doctor(config_path, config)
     text, issue_count = render_report(report)
-    typer.echo(text)
+    from milknado.app.host_capacity import describe_host_pool
+
+    typer.echo(f"{text}\n{describe_host_pool(config.host_worker_limit)}")
     if issue_count > 0:
         raise typer.Exit(code=1)

@@ -2,6 +2,16 @@
 // with the domain-supplied reason instead of throwing on the caller.
 import { pushNotice } from './store';
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
   const response = await fetch(path, {
     method,
@@ -18,7 +28,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     return null;
   }
   if (!response.ok) {
-    throw new Error(`${method} ${path} failed with status ${response.status}.`);
+    throw new ApiError(`${method} ${path} failed with status ${response.status}.`, response.status);
   }
   if (response.status === 204) {
     return null;

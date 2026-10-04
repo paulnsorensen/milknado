@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
+import milknado.domains.graph._worker_persistence as _worker_persistence
 import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._run_persistence import (
@@ -219,6 +220,12 @@ MIGRATIONS: list[tuple[int, str]] = [
     (21, _goal_review_schema.CREATE_PENDING_GOAL_REVIEW_INDEX),
     (22, _controller_capability.CREATE_CONTROLLER_MASTER),
     (23, _controller_capability.CREATE_CONSUMED_CAPABILITY),
+    (
+        24,
+        "ALTER TABLE owner_capabilities ADD COLUMN "
+        + "permission_commands_json TEXT NOT NULL DEFAULT '[]'",
+    ),
+    (25, _worker_persistence.CREATE_RUN_WORKERS),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

@@ -16,9 +16,20 @@ describe('confirmState', () => {
   it('runs the action once on confirm and clears the pending request', () => {
     resetConfirm();
     const action = vi.fn();
-    requestConfirm('Cancel this run?', action);
+    requestConfirm({
+      prompt: 'Force stop the run?',
+      body: 'The run stops now.',
+      dismissLabel: 'Keep the run',
+      confirmLabel: 'Force stop',
+      action,
+    });
 
-    expect(getPendingConfirm()?.prompt).toBe('Cancel this run?');
+    expect(getPendingConfirm()).toMatchObject({
+      prompt: 'Force stop the run?',
+      body: 'The run stops now.',
+      dismissLabel: 'Keep the run',
+      confirmLabel: 'Force stop',
+    });
 
     confirmPending();
 
@@ -26,11 +37,21 @@ describe('confirmState', () => {
     expect(getPendingConfirm()).toBeNull();
   });
 
+  it('uses safe defaults when a caller only supplies prompt and action', () => {
+    resetConfirm();
+    requestConfirm({ prompt: 'Cancel this run?', action: vi.fn() });
+
+    expect(getPendingConfirm()).toMatchObject({
+      body: 'The action runs once. It cannot be undone from here.',
+      dismissLabel: 'Dismiss',
+      confirmLabel: 'Confirm',
+    });
+  });
+
   it('runs nothing on dismiss', () => {
     resetConfirm();
     const action = vi.fn();
-    requestConfirm('Force stop this run?', action);
-
+    requestConfirm({ prompt: 'Force stop the run?', action });
     dismissConfirm();
 
     expect(action).not.toHaveBeenCalled();

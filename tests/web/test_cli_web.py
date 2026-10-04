@@ -67,7 +67,7 @@ def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
 
 
 def test_project_git_inspection_delegates_session_context(tmp_path: Path) -> None:
-    context = SessionContext(family="ralph", cwd=str(tmp_path), base_oid="base")
+    context = SessionContext(family="loop", cwd=str(tmp_path), base_oid="base")
     with patch("milknado.adapters.GitAdapter") as adapter_type:
         adapter = adapter_type.return_value
         adapter.session_changes.return_value = ("changed",)

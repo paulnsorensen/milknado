@@ -1,21 +1,28 @@
 import type { ReactElement } from 'react';
-import { useSyncExternalStore } from 'react';
-import { getState, subscribe } from '../../app/store';
+import { useState, useSyncExternalStore } from 'react';
+import { canActOnSelectedRun, getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { getDraft, registerInputEl, setDraft, subscribeDraft } from './draft';
 import { sendSessionCommand } from './sessionCommand';
 
 type MessageAction = 'steer' | 'follow_up';
+type SessionAction = MessageAction | 'interrupt';
+const SESSION_ACTIONS: SessionAction[] = ['steer', 'follow_up', 'interrupt'];
 
 /** The `sidecar-section` contribution: the guidance draft and its send actions. */
-export function SessionInputSection(): ReactElement {
+export function SessionInputSection(): ReactElement | null {
   const store = useSyncExternalStore(subscribe, getState);
   const draft = useSyncExternalStore(subscribeDraft, getDraft);
   const { Button } = Milknado;
   const sessionInput = store.capabilities?.session_input;
-  const actions = store.capabilities?.owner?.actions ?? [];
+  const owner = store.capabilities?.owner;
+  const actions = owner?.actions ?? [];
+  const firstAllowedAction =
+    SESSION_ACTIONS.find((action) => actions.includes(action)) ?? 'steer';
+  const [selectedAction, setSelectedAction] = useState<SessionAction>(firstAllowedAction);
+  const activeAction = actions.includes(selectedAction) ? selectedAction : firstAllowedAction;
 
-  function send(action: MessageAction): void {
+  function sendMessage(action: MessageAction): void {
     const text = draft;
     void sendSessionCommand(action, { text }).then((sent) => {
       if (sent && getDraft() === text) {
@@ -24,37 +31,91 @@ export function SessionInputSection(): ReactElement {
     });
   }
 
-  // No session backend reads interrupt text, so the draft stays for a later send.
-  function interrupt(): void {
-    void sendSessionCommand('interrupt', { text: '' });
+  function sendSelectedAction(): void {
+    if (activeAction === 'interrupt') {
+      void sendSessionCommand('interrupt', { text: '' }).then((sent) => {
+        if (sent) {
+          setSelectedAction(firstAllowedAction);
+        }
+      });
+      return;
+    }
+    sendMessage(activeAction);
+  }
+
+  if (store.capabilities === null) {
+    return null;
+  }
+  if (!store.capabilities?.host_owner.available) {
+    return <p className="mk-text-caption mk-faint">Read-only</p>;
+  }
+  if (!canActOnSelectedRun(store)) {
+    return null;
   }
 
   if (!sessionInput?.available) {
-    return <p role="note">{sessionInput?.reason ?? 'Session input is not available.'}</p>;
+    return (
+      <p role="note" className="mk-note">
+        {sessionInput?.reason ?? 'Session input is not available.'}
+      </p>
+    );
   }
 
   const textEmpty = draft.trim() === '';
 
   return (
-    <div className="mk-session-input">
+    <section className="mk-stack" aria-label="Session input">
+      <span className="mk-kicker is-live">Session input</span>
       <textarea
+        className="mk-input"
         aria-label="Session guidance"
+        rows={2}
+        placeholder="Guidance for the agent"
         ref={registerInputEl}
         value={draft}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <Button onClick={() => send('steer')} disabled={textEmpty || !actions.includes('steer')}>
-        Steer
-      </Button>
+      <div className="mk mk-seg" role="group" aria-label="Session action">
+        <button
+          type="button"
+          className={activeAction === 'steer' ? 'mk-seg-opt is-on' : 'mk-seg-opt'}
+          aria-pressed={activeAction === 'steer'}
+          onClick={() => setSelectedAction('steer')}
+          disabled={!actions.includes('steer')}
+        >
+          Steer
+        </button>
+        <button
+          type="button"
+          className={activeAction === 'follow_up' ? 'mk-seg-opt is-on' : 'mk-seg-opt'}
+          aria-pressed={activeAction === 'follow_up'}
+          onClick={() => setSelectedAction('follow_up')}
+          disabled={!actions.includes('follow_up')}
+        >
+          Follow up
+        </button>
+        <button
+          type="button"
+          className={activeAction === 'interrupt' ? 'mk-seg-opt is-on' : 'mk-seg-opt'}
+          aria-pressed={activeAction === 'interrupt'}
+          onClick={() => setSelectedAction('interrupt')}
+          disabled={!actions.includes('interrupt')}
+        >
+          Interrupt
+        </button>
+      </div>
       <Button
-        onClick={() => send('follow_up')}
-        disabled={textEmpty || !actions.includes('follow_up')}
+        variant="primary"
+        className="mk-btn-sm mk-session-send"
+        onClick={sendSelectedAction}
+        disabled={
+          activeAction === 'interrupt'
+            ? !actions.includes('interrupt')
+            : textEmpty || !actions.includes(activeAction)
+        }
       >
-        Follow up
+        Send
       </Button>
-      <Button onClick={interrupt} disabled={!actions.includes('interrupt')}>
-        Interrupt
-      </Button>
-    </div>
+    </section>
   );
 }

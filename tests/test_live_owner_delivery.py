@@ -12,6 +12,7 @@ from typing import cast
 
 import pytest
 
+from milknado.adapters import ProcessAdapter
 from milknado.app.watch import graph_command_admitter
 from milknado.domains.common import SessionInput
 from milknado.domains.dispatch import reconcile_orphaned_runs
@@ -183,7 +184,7 @@ def _cleanup_processes(
 def _recover_task(
     graph: MikadoGraph, mode: str, command_id: str
 ) -> tuple[list[str], GraphCommand]:
-    _ = reconcile_orphaned_runs(graph)
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     command = graph.commands.command(command_id)
     assert command is not None
     graph.mark_pending(command.node_id)

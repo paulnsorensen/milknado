@@ -1,47 +1,759 @@
+/* The Main artboard shell: rail | main | sidecar, one fixed screen. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--mk-surface);
+}
+
 .mk-shell {
-  display: grid;
-  grid-template-areas: 'header header header' 'rail canvas sidecar' 'rail dock sidecar';
-  grid-template-columns: var(--mk-rail-width) 1fr var(--mk-sidecar-width);
-  grid-template-rows: auto 1fr auto;
+  position: relative;
+  display: flex;
   height: 100vh;
+  min-width: var(--mk-canvas-min-width);
+  overflow: hidden;
   background: var(--mk-surface);
   color: var(--mk-ink);
-  font-family: var(--mk-font-sans);
-  position: relative;
+  font: var(--mk-type-body);
 }
 
-.mk-shell [data-region='header'] {
-  grid-area: header;
+.mk-shell *,
+.mk-shell *::before,
+.mk-shell *::after {
+  box-sizing: border-box;
 }
 
-.mk-shell [data-region='rail'] {
-  grid-area: rail;
+.mk-shell h1,
+.mk-shell h2,
+.mk-shell h3,
+.mk-shell p,
+.mk-shell ul,
+.mk-shell dl {
+  margin: 0;
 }
 
-.mk-shell [data-region='canvas'] {
-  grid-area: canvas;
-  position: relative;
+.mk-shell ul {
+  padding: 0;
+  list-style: none;
 }
 
-.mk-shell [data-region='dock'] {
-  grid-area: dock;
+.mk-shell [data-region]:empty {
+  display: none;
 }
 
-.mk-shell [data-region='sidecar'] {
-  grid-area: sidecar;
+.mk-muted {
+  color: var(--mk-ink-muted);
+}
+
+.mk-faint {
+  color: var(--mk-ink-faint);
+}
+
+.mk-accent-text {
+  color: var(--mk-accent-text);
+}
+
+/* rail */
+.mk-shell [data-region="rail"] {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--mk-space-4);
+  width: var(--mk-rail-width);
+  padding: var(--mk-space-3);
   overflow-y: auto;
   background: var(--mk-surface-raised);
-  box-shadow: var(--mk-shadow-popover);
+  border-right: 1px solid var(--mk-line);
 }
 
-.mk-shell [data-region='canvas-overlay'] {
+.mk-wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--mk-space-2);
+  padding: 0 var(--mk-space-1);
+  color: var(--mk-ink);
+}
+
+.mk-wordmark img {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+
+.mk-rail-actions,
+.mk-rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+}
+
+.mk-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--mk-space-1);
+}
+
+.mk-shell .mk-rail-btn {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.mk-rail-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--mk-space-2);
+  width: 100%;
+  min-height: var(--mk-row-height);
+  padding: 0 var(--mk-space-1) 0 var(--mk-space-2);
+  border-radius: var(--mk-radius-md);
+  color: var(--mk-ink);
+  font: var(--mk-type-label);
+}
+
+.mk-review-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.mk-review-row .mk-rail-row-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  overflow: hidden;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.mk-review-row .mk-rail-row-title {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-sub {
+  overflow: hidden;
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-review-row .mk-rail-row-state {
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+  text-transform: capitalize;
+}
+
+/* Design-system overrides: adjust vendored component defaults for this
+   shell's layout and truncation needs. */
+.mk-shell .mk-agent-name {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-shell .mk-agent-name b,
+.mk-agent-roster .mk-agent-name b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-shell .mk-node-compact .mk-node-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  text-wrap: balance;
+  white-space: normal;
+}
+
+.mk-shell .mk-path-item {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-shell .mk-root-switcher {
+  max-width: 216px;
+  min-height: 28px;
+  padding: 2px var(--mk-space-2);
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-raised);
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+}
+
+.mk-shell .mk-root-switcher:focus-visible {
+  outline: 2px solid var(--mk-accent);
+  outline-offset: 2px;
+}
+
+.mk-sidecar-description {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--mk-space-1);
+}
+
+.mk-sidecar-title {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.mk-sidecar-title.is-expanded {
+  display: block;
+  overflow: visible;
+}
+
+.mk-rail-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-rail-empty {
+  padding: var(--mk-space-1) var(--mk-space-2);
+  color: var(--mk-ink-faint);
+  font: var(--mk-type-caption);
+}
+
+.mk-rail-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
+  margin-top: auto;
+  min-width: 0;
+  padding: var(--mk-space-3) var(--mk-space-1) 0;
+  border-top: 1px solid var(--mk-line);
+}
+
+.mk-rail-footer > span {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* main */
+.mk-shell [data-region="main"] {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+  min-width: 0;
+  padding: var(--mk-space-4);
+  overflow: hidden;
+}
+
+.mk-shell [data-region="header"] {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--mk-space-4);
+}
+
+.mk-goal-title {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+  min-width: 0;
+}
+
+.mk-goal-title h1 {
+  font: var(--mk-type-display);
+  letter-spacing: -0.01em;
+  color: var(--mk-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mk-header-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--mk-space-2);
+}
+
+.mk-header-controls [role="status"],
+.mk-header-controls [role="note"] {
+  font: var(--mk-type-caption);
+  color: var(--mk-ink-muted);
+}
+
+.mk-shell [data-region="toolbar"] {
+  position: relative;
+  z-index: var(--mk-layer-toolbar);
+}
+
+.mk-shell [data-region="canvas"] {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--mk-radius-lg);
+}
+
+.mk-shell [data-region="canvas-overlay"] {
   position: absolute;
   top: var(--mk-space-3);
   right: var(--mk-space-3);
   z-index: var(--mk-layer-toolbar);
 }
 
-.mk-shell [data-region='toast'] {
+.mk-shell [data-region="banner"] > [role="alert"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+  padding: var(--mk-space-2) var(--mk-space-3);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-blocked-soft);
+  color: var(--mk-blocked);
+  font: var(--mk-type-caption);
+}
+
+/* dock: the events console and the coordinator bar */
+.mk-shell [data-region="dock"] {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+}
+
+.mk-dock-console {
+  position: relative;
+  z-index: var(--mk-layer-sidecar);
+}
+
+.mk-dock-console .mk-console {
+  height: var(--mk-dock-height);
+}
+
+.mk-coordinator-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--mk-space-3);
+  height: 44px;
+  padding: 0 var(--mk-space-3);
+  background: var(--mk-surface-raised);
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-lg);
+}
+
+.mk-coordinator-bar .mk-kicker {
+  flex: none;
+}
+
+.mk-last-event {
+  flex: 1 1 0;
+  min-width: 0;
+  font: var(--mk-type-console);
+  color: var(--mk-ink-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mk-live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--mk-line-strong);
+  background: var(--mk-surface);
+}
+
+.mk-live-dot.is-live {
+  border-color: var(--mk-accent);
+  background: var(--mk-accent);
+  box-shadow: var(--mk-shadow-glow-running);
+}
+
+/* sidecar */
+.mk-shell [data-region="sidecar"] {
+  position: relative;
+  z-index: var(--mk-layer-sidecar);
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+  width: var(--mk-sidecar-width);
+  padding: var(--mk-space-4);
+  overflow-y: auto;
+  background: var(--mk-surface-raised);
+  border-left: 1px solid var(--mk-line);
+}
+
+.mk-shell [data-region="sidecar"].is-wide,
+.mk-shell [data-region="sidecar"]:has(.mk-goal-review) {
+  width: var(--mk-sidecar-width-review);
+}
+
+.mk-shell [data-region="sidecar-action"],
+.mk-shell [data-region="sidecar-section"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+}
+
+.mk-shell [data-region='sidecar-section'] [role='tabpanel'][hidden] {
+  display: none;
+}
+
+.mk-shell [data-region='sidecar-tab'] {
+  display: flex;
+  gap: 14px;
+}
+
+.mk-sidecar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--mk-space-2);
+}
+.mk-path-wrapper {
+  min-width: 0;
+}
+
+.mk-sidecar-title {
+  font: var(--mk-type-title);
+  color: var(--mk-ink);
+}
+
+.mk-badge-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--mk-space-2);
+}
+
+.mk-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+}
+
+.mk-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
+}
+
+.mk-button-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--mk-space-2);
+}
+
+.mk-well {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.mk-console.mk-session {
+  height: 340px;
+}
+
+.mk-console-tab.mk-kicker {
+  color: var(--mk-ink-muted);
+}
+
+.mk-console-tab.mk-kicker.is-live {
+  color: var(--mk-accent-text);
+}
+
+/* key/value rows and notes */
+.mk-kv {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: var(--mk-space-2);
+  font: var(--mk-type-caption);
+  line-height: 18px;
+}
+
+.mk-kv dt {
+  color: var(--mk-ink-muted);
+}
+
+.mk-kv dd {
+  margin: 0;
+  font-family: var(--mk-font-mono);
+  color: var(--mk-ink);
+  overflow-wrap: anywhere;
+}
+
+.mk-note {
+  padding: var(--mk-space-2) var(--mk-space-3);
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-md);
+  color: var(--mk-ink-muted);
+  font: var(--mk-type-caption);
+}
+
+.mk-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mk-space-2);
+  padding: var(--mk-space-2) var(--mk-space-3);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-at-risk-soft);
+  color: var(--mk-at-risk);
+  font: var(--mk-type-console);
+}
+
+.mk-alert .mk-glyph {
+  margin-top: 4px;
+}
+
+.mk-permission {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
+  padding: var(--mk-space-3);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-at-risk-soft);
+}
+
+.mk-permission .mk-rail-head {
+  padding: 0;
+}
+
+.mk-code {
+  padding: var(--mk-space-1) var(--mk-space-2);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-sunken);
+  color: var(--mk-ink);
+  font: var(--mk-type-console);
+}
+.mk-permission .mk-code {
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* changes tab */
+.mk-file-head,
+.mk-file-row {
+  display: grid;
+  grid-template-columns: 18px 1fr 40px 40px;
+  gap: var(--mk-space-2);
+  align-items: center;
+  padding: 0 var(--mk-space-2);
+}
+
+.mk-file-head {
+  padding-bottom: var(--mk-space-1);
+  border-bottom: 1px solid var(--mk-line);
+}
+
+.mk-file-head span:nth-child(n + 3) {
+  text-align: right;
+}
+
+.mk-file-row {
+  width: 100%;
+  min-height: 26px;
+  border: 0;
+  border-radius: var(--mk-radius-sm);
+  background: transparent;
+  color: var(--mk-ink);
+  font: var(--mk-type-data);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mk-file-row:hover {
+  background: color-mix(in srgb, var(--mk-ink) 7%, transparent);
+}
+
+.mk-file-row.is-selected {
+  background: var(--mk-accent-soft);
+}
+
+.mk-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mk-file-add {
+  text-align: right;
+  color: var(--mk-accent-text);
+}
+
+.mk-file-del {
+  text-align: right;
+  color: var(--mk-ink-muted);
+}
+
+.mk-diff-path {
+  padding-top: var(--mk-space-2);
+  border-top: 1px solid var(--mk-line);
+  font: var(--mk-type-data);
+  color: var(--mk-ink-muted);
+}
+
+.mk-diff {
+  overflow-x: auto;
+  padding: var(--mk-space-1) 0;
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface);
+}
+
+.mk-dl {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 6px;
+  padding: 0 var(--mk-space-2);
+  font: var(--mk-type-console);
+  white-space: pre;
+}
+
+.mk-dl-add {
+  background: var(--mk-accent-soft);
+  color: var(--mk-ink);
+}
+
+.mk-dl-del {
+  background: var(--mk-done-soft);
+  color: var(--mk-ink-muted);
+}
+
+.mk-dl-hunk {
+  color: var(--mk-ink-faint);
+}
+
+.mk-dl-ctx {
+  color: var(--mk-ink);
+}
+
+/* dialogs */
+.mk-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: var(--mk-layer-dialog);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--mk-surface-sunken) 72%, transparent);
+}
+
+.mk-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-4);
+  width: var(--mk-dialog-width);
+  max-width: calc(100vw - 2 * var(--mk-space-4));
+  max-height: 85vh;
+  padding: var(--mk-space-6);
+  overflow: auto;
+  background: var(--mk-surface-raised);
+  border-radius: var(--mk-radius-lg);
+  box-shadow: var(--mk-shadow-popover);
+  animation: mk-rise var(--mk-duration-rise) ease-out;
+}
+
+.mk-dialog.is-wide {
+  width: var(--mk-dialog-width-wide);
+}
+
+.mk-dialog-title {
+  font: var(--mk-type-title);
+  color: var(--mk-ink);
+}
+
+.mk-dialog-body {
+  font: var(--mk-type-body);
+  color: var(--mk-ink-muted);
+}
+
+.mk-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--mk-space-2);
+}
+
+.mk-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-3);
+}
+
+.mk-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+}
+
+.mk-field > label,
+.mk-field > span {
+  font: var(--mk-type-caption);
+  color: var(--mk-ink-muted);
+}
+
+.mk-field .mk-input {
+  width: 100%;
+}
+
+.mk-field textarea.mk-input {
+  resize: vertical;
+  padding: 6px 10px;
+}
+
+.mk-help-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--mk-space-6);
+}
+
+.mk-help-columns .mk-kicker {
+  padding-bottom: var(--mk-space-1);
+}
+
+.mk-key-row {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: var(--mk-space-2);
+  align-items: center;
+  min-height: 24px;
+  font: var(--mk-type-caption);
+  color: var(--mk-ink);
+}
+
+.mk-kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--mk-line-strong);
+  border-radius: var(--mk-radius-sm);
+  background: var(--mk-surface-sunken);
+  color: var(--mk-ink);
+  font: var(--mk-type-console);
+  text-align: center;
+}
+
+@keyframes mk-rise {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* toasts */
+.mk-shell [data-region="toast"] {
   position: absolute;
   right: var(--mk-space-4);
   bottom: var(--mk-space-4);
@@ -49,4 +761,134 @@
   display: flex;
   flex-direction: column;
   gap: var(--mk-space-2);
+  width: var(--mk-toast-width);
+}
+
+.mk-toast {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  gap: var(--mk-space-2);
+  align-items: start;
+  padding: var(--mk-space-3);
+  background: var(--mk-surface-raised);
+  border-radius: var(--mk-radius-md);
+  box-shadow: var(--mk-shadow-popover);
+  font: var(--mk-type-body);
+  color: var(--mk-ink);
+  animation: mk-rise var(--mk-duration-rise) ease-out;
+}
+
+.mk-toast .mk-glyph {
+  margin-top: 4px;
+  color: var(--mk-at-risk);
+}
+
+/* Below the one-screen canvas minimum, stack detail below the graph and let
+   the page grow. This keeps every operator control reachable instead of
+   clipping the fixed desktop columns. */
+@media (max-width: 1179px) {
+  html,
+  body {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .mk-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'main'
+      'sidecar'
+      'rail';
+    height: auto;
+    min-height: 100vh;
+    min-width: 0;
+    overflow: visible;
+    overflow-x: hidden;
+  }
+
+  .mk-shell [data-region='rail'] {
+    grid-area: rail;
+    width: auto;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .mk-shell [data-region='main'] {
+    grid-area: main;
+    min-height: 60vh;
+    overflow: visible;
+  }
+
+  /* Below 1180px main grows with its content, so the canvas must keep its own
+     height instead of taking what the header, toolbar, and dock leave over. */
+  .mk-shell [data-region='canvas'] {
+    flex: 0 0 auto;
+    min-height: 320px;
+    height: 50vh;
+  }
+
+  .mk-shell [data-region='sidecar'],
+  .mk-shell [data-region='sidecar'].is-wide,
+  .mk-shell [data-region='sidecar']:has(.mk-goal-review) {
+    grid-area: sidecar;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    border-top: 1px solid var(--mk-line);
+    border-left: 0;
+  }
+
+  .mk-scrim {
+    position: fixed;
+  }
+
+  .mk-shell [data-region='header'] {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .mk-goal-title {
+    flex: 1 1 100%;
+  }
+
+  .mk-goal-title h1 {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .mk-header-controls {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .mk-shell [data-region='sidecar-tab'] {
+    flex-wrap: wrap;
+  }
+
+  .mk-shell [data-region='toast'] {
+    position: fixed;
+    width: min(var(--mk-toast-width), calc(100vw - 2 * var(--mk-space-4)));
+  }
+}
+
+@media (min-width: 640px) and (max-width: 1179px) {
+  .mk-shell {
+    grid-template-columns: minmax(180px, 216px) minmax(0, 1fr);
+    grid-template-areas:
+      'rail main'
+      'sidecar sidecar';
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-dialog,
+  .mk-toast {
+    animation: none;
+  }
 }

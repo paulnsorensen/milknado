@@ -37,14 +37,24 @@ def session_name_for(project_root: Path) -> str:
 
 
 class TmuxAdapter:
-    def __init__(self, project_root: Path, socket_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        socket_path: Path | None = None,
+        config_path: Path | None = None,
+    ) -> None:
         self._session: str = session_name_for(project_root)
         # A private socket isolates tests from the user's real tmux server;
         # production uses the default server (socket_path=None).
         self._socket: Path | None = socket_path
+        # Tests pass /dev/null so the user's ~/.tmux.conf never loads;
+        # production leaves it None and tmux reads its usual config.
+        self._config: Path | None = config_path
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         cmd = ["tmux"]
+        if self._config is not None:
+            cmd += ["-f", str(self._config)]
         if self._socket is not None:
             cmd += ["-S", str(self._socket)]
         try:
@@ -70,7 +80,7 @@ class TmuxAdapter:
         """Create the project session if absent (``new-session -d`` auto-starts
         the server headlessly — no TTY required)."""
         if self._run(["has-session", "-t", f"={self._session}"]).returncode != 0:
-            result = self._run(["new-session", "-d", "-s", self._session])
+            result = self._run(["new-session", "-d", "-s", self._session, "/bin/sh"])
             if result.returncode != 0:
                 raise TmuxDispatchError(
                     f"tmux could not start session {self._session!r}: {result.stderr.strip()}"

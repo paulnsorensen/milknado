@@ -10,6 +10,7 @@ from milknado.domains.common import SessionAction, SessionContext, SessionInput,
 from milknado.domains.graph import MikadoGraph, admit_session_command
 from milknado.loop import QueueEmitter, RunManager
 from milknado.loop._events import Event, EventData
+from milknado.loop._process_registry import WorkerRegistry
 from milknado.loop._run_types import RunConfig
 from milknado.loop.manager import ManagedRun
 from milknado.loop.sessions import is_supported
@@ -18,6 +19,7 @@ from milknado.loop.sessions import is_supported
 class LoopSessionMixin:
     def __init__(self, agent: str = "", graph: MikadoGraph | None = None) -> None:
         self._manager: RunManager = RunManager()
+        self._worker_registry: WorkerRegistry = WorkerRegistry()
         self._queue: queue.Queue[Event[EventData]] = queue.Queue()
         self._emitter: QueueEmitter = QueueEmitter(self._queue)
         self._agent: str = agent
@@ -59,10 +61,10 @@ class LoopSessionMixin:
             context: SessionContext,
             actions: tuple[SessionAction, ...],
             invocation_id: str,
-            permission_ids: tuple[str, ...],
+            permissions: tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
         ) -> None:
             self._publish_session_capabilities(
-                run_id, context, actions, invocation_id, permission_ids
+                run_id, context, actions, invocation_id, *permissions
             )
 
         session.set_capability_sink(
@@ -92,6 +94,7 @@ class LoopSessionMixin:
         actions: tuple[str, ...],
         invocation_id: str,
         permission_ids: tuple[str, ...],
+        permission_commands: tuple[tuple[str, str], ...],
     ) -> None:
         del context
         if self._graph is None:
@@ -106,6 +109,7 @@ class LoopSessionMixin:
             self._owner_incarnation,
             actions,
             permission_ids,
+            permission_commands,
         )
 
     def _admit_session_command(self, run_id: str, command: SessionInput) -> SessionInput | None:

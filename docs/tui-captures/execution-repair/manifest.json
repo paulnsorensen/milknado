@@ -1,0 +1,606 @@
+{
+  "renderer": "agent-tty reference-dark",
+  "inspection": "All 60 images opened on 2026-09-22; synthetic data; no pixel edits.",
+  "captures": [
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-main-120x40.png",
+      "sha256": "b6de1a49541cc6982cd5af05169cd6a0f1e5d9dd10591f3817de1b5e3f661e38",
+      "bytes": 86683,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-main-120x40.png",
+      "sha256": "f4518e814a15afe3458bf3e9782220657a84b3002cae658dd2cbbc296351e1f7",
+      "bytes": 85377,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-main-80x24.png",
+      "sha256": "6e35fc34d62e126b4653ec9da810365cd5fc9cad197c5ed2573fa0362f786fef",
+      "bytes": 35544,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-main-80x24.png",
+      "sha256": "9b17a66705866572fadd63e9cf3cfba96bec4fdfeb0fbc9c47f2507c829e635a",
+      "bytes": 37281,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-help-120x40.png",
+      "sha256": "705049ec7eb2cd52bde180a111c53be48f19a3e709e587ca0edbf84d2d011fd3",
+      "bytes": 45959,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-help-120x40.png",
+      "sha256": "50ac54276b24c8c96653e2fda64c63ef63b3fc513125fdc8f2e04f7f4c4617be",
+      "bytes": 45763,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-help-80x24.png",
+      "sha256": "2a5746aef76fa4679e741034789beef02e2964ea58f6d65b534b40839845424f",
+      "bytes": 31697,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-help-80x24.png",
+      "sha256": "fe5516eb282df78065513df8a0ffeb16985f1631915a91e7b65800c0002ab948",
+      "bytes": 31728,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-search-120x40.png",
+      "sha256": "165ba23110c7df591417fe1634af0174ad4600087828023e37b8e8ba1ce7246d",
+      "bytes": 57072,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-search-120x40.png",
+      "sha256": "4d5d7c1676d72f1c61d71260c0524b37fa24dd49b9bf5f560f1acabe4e373dc4",
+      "bytes": 54010,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-search-80x24.png",
+      "sha256": "fe08999830ff1949d8e0b7d10d07f80687128ed8aab6fdec9871fd2179abe6d8",
+      "bytes": 21692,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-search-80x24.png",
+      "sha256": "82bbc86221e99ecab9ae31e7a07a946af09e894e591fb26e43e030b6f58bf458",
+      "bytes": 19904,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-empty-120x40.png",
+      "sha256": "25be763355b7c8884a13ff3c08f903760f1c965fb3ca5b51b3a677ebb8d41bc2",
+      "bytes": 38807,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-empty-120x40.png",
+      "sha256": "e4eea45a3e2b0b04ba348070344315651dfd3aff0f49d251e37efd5666fd593a",
+      "bytes": 35559,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-empty-80x24.png",
+      "sha256": "8a82cecd6578865c55686b78a334231c5e931baea62d708b9a1671fae0976d6f",
+      "bytes": 25856,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-empty-80x24.png",
+      "sha256": "23b6c7905e510dc6656cd6606e2becf758e00590965d258481d8b0c66a3bbb09",
+      "bytes": 23821,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-error-120x40.png",
+      "sha256": "e4a2cc1dfaa9d77066d336c2b4a3817f67336b4cd38309db86079bca62d410be",
+      "bytes": 93345,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-error-120x40.png",
+      "sha256": "04628ea26b59b006c01d065070c61a7d454a7e7954ddf4dd24138275e2ec5257",
+      "bytes": 92190,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-error-80x24.png",
+      "sha256": "9c3a05a95a810a32c7f67096c63471fb9c1a49acea92b39c5fb90e3c813b9df8",
+      "bytes": 38071,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-error-80x24.png",
+      "sha256": "3e43f40461f70865a2dff20f2eaa9578252ec91178598ebc5d404a0beaa173d5",
+      "bytes": 39485,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-confirmation-120x40.png",
+      "sha256": "66dbe23cd02844b98f17bbd1fed04a9b902cff4f1f9cf729f3bb5574901666fd",
+      "bytes": 72983,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-confirmation-120x40.png",
+      "sha256": "09a0b042a51453e60d7097d627296dbe7dcbb1a787658da98f3e1bbd6e44571f",
+      "bytes": 69118,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-confirmation-80x24.png",
+      "sha256": "98293b4c614bd5ad4086e736cbae68785a2373d5f31fc989d2140fce4a9ed916",
+      "bytes": 34056,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-confirmation-80x24.png",
+      "sha256": "61136e4c82f19d697a843a9c4bd893cd99c4a1c39800d1d00a9072b490ffccec",
+      "bytes": 31950,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-session-120x40.png",
+      "sha256": "6f6e2552a8ebf76081aefd1cc4c5af0959816081896f854c9deddc2123d5769c",
+      "bytes": 83713,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-session-120x40.png",
+      "sha256": "e4d4a1dd69b3760a11ddcee8337ec7b185a36317ccc7d2dd6d3186edc86ce88b",
+      "bytes": 82623,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-session-80x24.png",
+      "sha256": "91f3bd473563272d239da3a28b4f733531eadd6a6073bfbe508dbbd76a3a793c",
+      "bytes": 50242,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-session-80x24.png",
+      "sha256": "d83be7de1a0e638cbeb573b86acf5239c4f995b4c2c382fe4df0fe1b720c1d60",
+      "bytes": 52307,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-owner-unavailable-120x40.png",
+      "sha256": "53609034cc4359daf0e17facd6bac4c2d3cbe1fe11eb83d86c839e26dbec56ec",
+      "bytes": 80987,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-owner-unavailable-120x40.png",
+      "sha256": "49f8d007d42360cde9c33873387727b77b1289934c78439b018a19e501b28b41",
+      "bytes": 79088,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-owner-unavailable-80x24.png",
+      "sha256": "eaeeeadac2526a6063d1abf4a56507995612026ada3a1709cafc8338870922db",
+      "bytes": 35719,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-owner-unavailable-80x24.png",
+      "sha256": "92eabe60076042b3379e9e419e7b790b136035963dda4b7978f3585a834047ba",
+      "bytes": 36170,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-main-120x40.png",
+      "sha256": "3220330e3702d6fc67c16b2f79de3a62413c310496a03c3b404041cbd4f01652",
+      "bytes": 80342,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-main-120x40.png",
+      "sha256": "e6c535e6d7d2d2aa692490feb7230202b6ff272bc4f80c38ee71901a274080c0",
+      "bytes": 78283,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-main-80x24.png",
+      "sha256": "5aa094653431e243bd7836256c857d360a33bfe10341fbb2727b9bba5a0ad159",
+      "bytes": 35833,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-main-80x24.png",
+      "sha256": "61f7e9de10d4d0d062290956c3ac5b533c2ced0586aac015986d5cf29eaf1753",
+      "bytes": 34664,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-help-120x40.png",
+      "sha256": "3e5b192aab09e70ad47954e31c28760f4a6d3f8e793cfb7c31fed7983e8fa950",
+      "bytes": 36044,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-help-120x40.png",
+      "sha256": "4fc1234915d2ed52dedcd8567f7e471799dcf2543f30b7b774be83eab4c1d860",
+      "bytes": 36083,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-help-80x24.png",
+      "sha256": "112a4e926f6beae41518dace9309dfbb9109c9ae5c3b1ff8722466d8874f282d",
+      "bytes": 21863,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-help-80x24.png",
+      "sha256": "57b8fe8dad7ba5e75ab6675ef1e3423878009877e4225ad0b3fe9ebb64f6b561",
+      "bytes": 21764,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-search-120x40.png",
+      "sha256": "3f16162a7cb337d1d43db6ddcf33a2f8224d97f06dc0f47fe1606b4ac91f45f9",
+      "bytes": 51945,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-search-120x40.png",
+      "sha256": "6dbbd3173cc8c16eb97d1d50d6455c9cd5998417ec28057c5051d0d3f76488a1",
+      "bytes": 49307,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-search-80x24.png",
+      "sha256": "acf814dee1dd4aeea48f1ee47de171607c3ab1956455eef0de0c06c858e5cde9",
+      "bytes": 21863,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-search-80x24.png",
+      "sha256": "12df7a4493b6e498ba62c5bba4c1dc14fdf430c1a9d1ac981918eb4d0fa8443c",
+      "bytes": 20023,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-empty-120x40.png",
+      "sha256": "e22109c14b28d82243240c0dd227acc69ddc16b9d4b10e7c93aa0deef11100e8",
+      "bytes": 35673,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-empty-120x40.png",
+      "sha256": "6b1b0da679dc1214acaa619e85411f0ac8856a1724903b38223aaf4722ce50fd",
+      "bytes": 33223,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-empty-80x24.png",
+      "sha256": "3ba88f5f6431e0fe85818877bed3ae36c616190f96eaece8016c7dca15521cac",
+      "bytes": 25807,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-empty-80x24.png",
+      "sha256": "753be88edb994181466c3f068916134058c96765b65f78cbb98221d112757868",
+      "bytes": 24024,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-error-120x40.png",
+      "sha256": "556948a8533eeeeed6c7cce1414311f09e142e06a3970e945cbd7d14e5fb79b4",
+      "bytes": 87468,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-error-120x40.png",
+      "sha256": "f0b287d1d56c1086ecb39b2e676c7118d7b6025b4042e2340f978c8c703e5ab8",
+      "bytes": 85198,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-error-80x24.png",
+      "sha256": "2a96d17d3253534c6c1de8f0344008cfc74369245da178c2584b95312fe0c9d4",
+      "bytes": 38114,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-error-80x24.png",
+      "sha256": "44ff4c600bd33b2de8d9ae1887fd986e44f98801763077314bb9f3a434569ebb",
+      "bytes": 37182,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-empty-graph-120x40.png",
+      "sha256": "c11153a4f83693393378341d8f82bcdc95e3891b19df5e2234b6a9b01f570dfa",
+      "bytes": 31174,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-empty-graph-120x40.png",
+      "sha256": "9c3d47237e833500e3dcbd515ccb5bdb5a00e8301625fe6aa91d24117b36467f",
+      "bytes": 35719,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/run-empty-graph-80x24.png",
+      "sha256": "00f2acdc9ca9dfae16646be0b4d0b696828c2920b4993d14ee5dfbe4bafa584c",
+      "bytes": 17859,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/run-empty-graph-80x24.png",
+      "sha256": "77368dd496a545a4f788300bd65d0fc07a5ae64aeb62ceb415641fb3fa1b4a38",
+      "bytes": 24098,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-empty-graph-120x40.png",
+      "sha256": "9998c5ab56db7799d730cdc793f67bba113874739f3f59f1986f3db4096ff978",
+      "bytes": 28017,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-empty-graph-120x40.png",
+      "sha256": "242a5cfdc05c69375dd25a4049aea0d73207e06caa1e2978d1381771db21b6d8",
+      "bytes": 33300,
+      "pixels": [
+        1080,
+        640
+      ],
+      "terminal": "120x40"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/before/watch-empty-graph-80x24.png",
+      "sha256": "9737f7eeb00a4df8f7dc540566df0b9b9fa840458423b55005c23b07ff4a5176",
+      "bytes": 18066,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    },
+    {
+      "path": "docs/tui-captures/execution-repair/after/watch-empty-graph-80x24.png",
+      "sha256": "b624bfbd90114ad9d62f6d8123506eceade3e3f95010305c3b0f4ff79e8225d5",
+      "bytes": 24219,
+      "pixels": [
+        720,
+        384
+      ],
+      "terminal": "80x24"
+    }
+  ]
+}

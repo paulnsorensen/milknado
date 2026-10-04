@@ -1,0 +1,15 @@
+Pass 3 real worker run summary
+==============================
+
+Fixture: /tmp/milknado-pass3-real-final9
+Graph: goal 1 with task 2
+Worker: deterministic `omp` fixture at `/tmp/milknado-pass3-bin-final/omp`
+Launch environment: nested `MILKNADO_WORKER_CONTEXT`, `MILKNADO_INVOCATION_ID`, `MILKNADO_NODE_ID`, `MILKNADO_RUN_ID`, and `MILKNADO_PROJECT_ROOT` were removed from the launching shell.
+
+The worker process received the real graph prompt, produced session output, accepted the attached-watch `proof` steer, called the result sink, emitted `MILKNADO_NODE_COMPLETE`, and exited.
+
+Run: node-2-20260928T070051Z-0f8909e3
+Final status: done
+Graph status: 2/2 complete before archive
+Receipt statuses: queued → submitted → delivered
+Archive result: 2 nodes archived

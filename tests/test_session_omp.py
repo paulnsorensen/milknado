@@ -187,7 +187,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
                 "message": {
                     "role": "assistant",
                     "content": [
-                        {"type": "text", "text": "<promise>RALPH_PROMISE_COMPLETE</promise>"}
+                        {"type": "text", "text": "<promise>LOOP_PROMISE_COMPLETE</promise>"}
                     ],
                     "stopReason": "stop",
                 },
@@ -203,7 +203,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
                     {
                         "role": "assistant",
                         "content": [
-                            {"type": "text", "text": "<promise>RALPH_PROMISE_COMPLETE</promise>"}
+                            {"type": "text", "text": "<promise>LOOP_PROMISE_COMPLETE</promise>"}
                         ],
                     }
                 ],
@@ -212,7 +212,7 @@ def test_streamed_messages_tools_and_result_preserve_wire_ids() -> None:
     )
     assert finished.done is True
     assert finished.failed is False
-    assert finished.result_text == "<promise>RALPH_PROMISE_COMPLETE</promise>"
+    assert finished.result_text == "<promise>LOOP_PROMISE_COMPLETE</promise>"
     assert session.actions == ()
 
 
@@ -920,7 +920,8 @@ def test_prompt_result_without_agent_invocation_reports_complete() -> None:
     assert result.failed is False
 
 
-def test_non_terminal_turn_and_settled_event_are_read_only() -> None:
+@pytest.mark.parametrize("event_type", ("agent_settled", "session_settled"))
+def test_non_terminal_turn_and_settled_event_are_read_only(event_type: str) -> None:
     session = OmpSession(("omp",), Path("/repo"))
     _ = session.start("continue")
 
@@ -929,7 +930,7 @@ def test_non_terminal_turn_and_settled_event_are_read_only() -> None:
     assert running.done is False
     assert event(running, "status", "running").text == "OMP agent turn complete"
 
-    settled = session.receive(frame({"type": "agent_settled"}))
+    settled = session.receive(frame({"type": event_type}))
     assert settled.commands == ()
     assert settled.done is False
     assert event(settled, "status", "settled").text == "OMP session settled"

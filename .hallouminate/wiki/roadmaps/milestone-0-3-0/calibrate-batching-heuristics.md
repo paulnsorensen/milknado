@@ -11,7 +11,7 @@ prereqs: []
 
 `MEGA_BATCH_THRESHOLD = 5` is, by the wiki's own admission, an **uncalibrated
 heuristic** (`architecture/planning.md` §Mega-batch detection): "one batch = one
-ralph loop = one review unit", with an explicit invitation to "tune it in
+loop = one review unit", with an explicit invitation to "tune it in
 `change.py` if calibration data appears". Calibration data *does* appear —
 `record_batch_snapshot` (`planning.md` §Telemetry) appends a JSONL line per plan
 to `.milknado/calibration.jsonl` with change/batch/oversized counts, solver

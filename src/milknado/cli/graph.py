@@ -25,6 +25,7 @@ from milknado.cli._helpers import (
     load_or_default as _load_or_default,
 )
 from milknado.domains.graph import (
+    ControllerAuthorizationError,
     GoalReviewDecision,
     GoalReviewDecisionRequest,
     render_dot,
@@ -52,6 +53,7 @@ def review(
     config, plugins = _load_or_default(project_root)
     graph = _ensure_db(config, plugins)
     try:
+        graph.register_controller_master()
         record = graph.get_goal_review(review_id)
         if record is None:
             console.print(f"[red]Goal review {review_id} does not exist.[/red]")
@@ -71,7 +73,7 @@ def review(
             decided_by=identity,
         )
         console.print(f"Review {decided.review_id} {decided.decision.value} by {identity}.")
-    except (PermissionError, ValueError) as exc:
+    except (ControllerAuthorizationError, PermissionError, ValueError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from None
     finally:

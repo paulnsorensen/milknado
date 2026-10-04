@@ -25,7 +25,6 @@ from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
     OutputLineCallback,
-    _BoundedOutput,  # pyright: ignore[reportPrivateUsage]
     _extract_result_text_from_line,  # pyright: ignore[reportPrivateUsage]
     _kill_process_group,  # pyright: ignore[reportPrivateUsage]
     _pump_stream,  # pyright: ignore[reportPrivateUsage]
@@ -37,6 +36,7 @@ from milknado.loop._agent import (
     execute_agent,
 )
 from milknado.loop._events import OutputStream
+from milknado.loop._output import BoundedOutput
 from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
@@ -1573,7 +1573,7 @@ class TestBlockingInheritPath:
 
     When both ``log_dir`` and ``on_output_line`` are ``None``, the
     blocking path should inherit stdout/stderr from the parent (no PIPE,
-    no reader threads) so that ``ralph run | cat`` shows output.
+    no reader threads) so that ``loop run | cat`` shows output.
     """
 
     @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
@@ -1634,7 +1634,7 @@ class TestBlockingInheritPath:
 
     def test_inherit_path_shows_output(self, capfd: CaptureFixture[str]):
         """Real subprocess in inherit mode: child output reaches the parent's
-        stdout, verifying the ``ralph run | cat`` scenario works.
+        stdout, verifying the ``loop run | cat`` scenario works.
 
         Uses ``capfd`` (fd-level capture) rather than ``capsys`` because
         the inherit path writes to the raw file descriptor, bypassing
@@ -1910,7 +1910,7 @@ class TestBoundedReaderThreadJoins:
 
                 def tracking_start_pump(  # pyright: ignore[reportAny]
                     stream: io.StringIO,
-                    buffer: _BoundedOutput | None,
+                    buffer: BoundedOutput | None,
                     stream_name: OutputStream,
                     on_output_line: OutputLineCallback | None,
                 ):
@@ -2144,7 +2144,7 @@ class TestArgDeliveryStdin:
 
 class TestBoundedOutput:
     def test_drops_oldest_complete_lines_when_tail_exceeds_limit(self) -> None:
-        output = _BoundedOutput(limit=6)
+        output = BoundedOutput(limit=6)
         output.append("abc")
         output.append("def")
         output.append("ghi")
@@ -2152,10 +2152,29 @@ class TestBoundedOutput:
         assert list(output) == ["def", "ghi"]
 
     def test_single_oversized_line_keeps_only_tail(self) -> None:
-        output = _BoundedOutput(limit=4)
+        output = BoundedOutput(limit=4)
         output.append("abcdefgh")
 
         assert list(output) == ["efgh"]
+        assert output.text == "efgh"
+
+    def test_evicts_old_lines_after_truncating_oversized_line(self) -> None:
+        output = BoundedOutput(limit=4)
+        output.append("ab")
+        output.append("012345")
+
+        assert list(output) == ["2345"]
+        assert output.text == "2345"
+
+    def test_live_iterator_sees_lines_appended_during_iteration(self) -> None:
+        output = BoundedOutput(limit=10)
+        output.append("a")
+        output.append("b")
+        lines = iter(output)
+
+        assert next(lines) == "a"
+        output.append("c")
+        assert list(lines) == ["b", "c"]
 
 
 def test_lingering_group_that_exits_during_grace_is_not_sigkilled() -> None:
@@ -2195,3 +2214,50 @@ def test_lingering_group_escalates_and_ignores_sigkill_race() -> None:
         call(123, signal.SIGKILL),
     ]
     sleep.assert_called_once_with(0.1)
+
+
+class TestExecuteAgentEnv:
+    """``AgentRunSpec.env`` reaches the spawned child's environment."""
+
+    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
+    def test_spec_env_merged_into_child_environment(self, mock_popen: MagicMock) -> None:
+        result = execute_agent(
+            AgentRunSpec(
+                ["echo"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                env={"MILKNADO_NODE_ID": "42", "MILKNADO_RUN_ID": "run-42"},
+            )
+        )
+
+        assert result.returncode == 0
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        spawned_env = call_kwargs["env"]  # pyright: ignore[reportAny]
+        assert spawned_env["MILKNADO_NODE_ID"] == "42"
+        assert spawned_env["MILKNADO_RUN_ID"] == "run-42"
+
+    @patch(MOCK_SUBPROCESS, side_effect=ok_proc)
+    def test_wind_down_override_wins_over_spec_env(self, mock_popen: MagicMock) -> None:
+        """When a key exists in both ``spec.env`` and the wind-down hook's
+        overrides, the wind-down value wins — it must isolate the hook
+        config directory regardless of caller-supplied identity env."""
+        result = execute_agent(
+            AgentRunSpec(
+                ["claude", "-p"],
+                "prompt",
+                timeout=None,
+                log_dir=None,
+                iteration=1,
+                adapter=ClaudeAdapter(),
+                max_turns=5,
+                max_turns_grace=2,
+                env={"CLAUDE_CONFIG_DIR": "/should/not/win"},
+            )
+        )
+
+        assert result.returncode == 0
+        call_kwargs = mock_popen.call_args[1]  # pyright: ignore[reportAny]
+        spawned_env = call_kwargs["env"]  # pyright: ignore[reportAny]
+        assert spawned_env["CLAUDE_CONFIG_DIR"] != "/should/not/win"

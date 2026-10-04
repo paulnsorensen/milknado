@@ -6,6 +6,7 @@ from xml.etree import ElementTree
 
 import pytest
 from rich.console import RenderableType
+from rich.text import Text
 from textual.widgets import DataTable, Static
 
 from milknado.app.run import (
@@ -149,3 +150,51 @@ async def test_empty_run_list_explains_how_to_start_and_populates() -> None:
         await pilot.pause()
         assert not empty.has_class("visible")
         assert _table(app).get_row_index("run-3") == 0
+
+
+@pytest.mark.asyncio
+async def test_snapshot_refresh_ignores_unmounted_run_panel_children() -> None:
+    source = _Source(_snapshot((_run("run-1", 1, "desc"),)))
+    app = ExecutionSnapshotApp(source)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        panel = app.query_one("#run-panel", RunListPanel)
+        await panel.remove_children()
+        assert not panel.query("#totals")
+
+        source.emit(source.current)
+        await pilot.pause()
+        assert not panel.query("#totals")
+
+
+@pytest.mark.asyncio
+async def test_compact_footer_shows_readable_available_controls() -> None:
+    app = ExecutionSnapshotApp(_Source(_snapshot((_run("run-1", 1, "desc"),))))
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        svg = ElementTree.fromstring(app.export_screenshot())
+        rendered = " ".join(
+            node.text or "" for node in svg.iter("{http://www.w3.org/2000/svg}text")
+        ).replace("\xa0", " ")
+
+        assert "Enter Open" in rendered
+        assert "e Events" in rendered
+        assert "q Quit" in rendered
+        for hint in ("g Guidance", "c Cancel", "f Force", "r Resume"):
+            assert hint not in rendered
+
+
+@pytest.mark.asyncio
+async def test_compact_detail_summary_uses_two_lines() -> None:
+    app = ExecutionSnapshotApp(
+        _Source(_snapshot((_run("run-1", 1, "A long compact detail description"),)))
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.action_open_detail()
+        await pilot.pause()
+        renderable = app.query_one("#summary", Static).render()
+        summary = renderable.plain if isinstance(renderable, Text) else str(renderable)
+
+        assert len(summary.splitlines()) <= 2

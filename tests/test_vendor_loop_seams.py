@@ -146,7 +146,7 @@ class TestSeamRename:
             "get_run_stdout",
             "wait_for_next_completion",
             "verify_spec",
-            "generate_ralph_md",
+            "generate_loop_md",
         }
         missing = port_methods - set(dir(LoopAdapter))
         assert not missing, f"LoopAdapter missing LoopPort methods: {missing}"

@@ -1,15 +1,40 @@
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterable
+from typing import cast
 
+import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._run_persistence as _run_persistence
 import milknado.domains.graph._session_persistence as _session_persistence
-from milknado.domains.common import RunResult, SessionContext, SessionEvent, SessionView
+import milknado.domains.graph._worker_persistence as _worker_persistence
+from milknado.domains.common import (
+    HelperIdentity,
+    ObservationKey,
+    RunResult,
+    SessionContext,
+    SessionEvent,
+    SessionView,
+    WorkerIdentity,
+    WorkerOwner,
+)
 from milknado.domains.graph._analytics_facade import synchronized
 from milknado.domains.graph._command_facade import _CommandFacade
 from milknado.domains.graph._facade_base import SubFacade as _SubFacade
+from milknado.domains.graph._sqlite_rows import as_tuple, fetchone
+from milknado.domains.graph.goal_review import GoalReviewRecord
+
+
+class _GoalReviewFacade:
+    @property
+    def _conn(self) -> sqlite3.Connection:  # pragma: no cover
+        raise NotImplementedError
+
+    @synchronized
+    def pending_goal_reviews(self) -> tuple[GoalReviewRecord, ...]:
+        return _goal_review.pending_goal_reviews(self._conn)
 
 
 class _RunFacade(_SubFacade):
@@ -36,6 +61,44 @@ class _RunFacade(_SubFacade):
         _run_persistence.set_run_pid(self._conn, run_id, pid)
 
     @synchronized
+    def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
+        _worker_persistence.record_worker(self._conn, owner, worker)
+
+    @synchronized
+    def live_workers(
+        self, *, node_id: int | None = None, run_id: str | None = None
+    ) -> tuple[_worker_persistence.WorkerRecord, ...]:
+        return _worker_persistence.live_workers(self._conn, node_id=node_id, run_id=run_id)
+
+    @synchronized
+    def get_worker(self, invocation_id: str) -> _worker_persistence.WorkerRecord | None:
+        return _worker_persistence.get_worker(self._conn, invocation_id)
+
+    @synchronized
+    def record_helper(self, helper: HelperIdentity) -> None:
+        _worker_persistence.record_helper(self._conn, helper)
+
+    @synchronized
+    def begin_worker_observation(self, key: ObservationKey) -> None:
+        _worker_persistence.begin_observation(self._conn, key)
+
+    @synchronized
+    def commit_worker_observation(
+        self, key: ObservationKey, descendants: tuple[_worker_persistence.Descendant, ...]
+    ) -> None:
+        _worker_persistence.commit_observation(self._conn, key, descendants)
+
+    @synchronized
+    def ready_helper(self, helper: HelperIdentity, sequence: int) -> bool:
+        return _worker_persistence.ready_helper(self._conn, helper, sequence)
+
+    @synchronized
+    def end_worker(
+        self, invocation_id: str, snapshot_seq: int, helper_generation: int | None = None
+    ) -> None:
+        _worker_persistence.end_worker(self._conn, invocation_id, snapshot_seq, helper_generation)
+
+    @synchronized
     def get(self, run_id: str) -> _run_persistence.RunRecord | None:
         return _run_persistence.get_run(self._conn, run_id)
 
@@ -54,6 +117,14 @@ class _RunFacade(_SubFacade):
     @synchronized
     def recent(self, limit: int) -> list[_run_persistence.RunRecord]:
         return _run_persistence.recent_runs(self._conn, limit)
+
+    @synchronized
+    def totals(self) -> tuple[int, int, int]:
+        row = fetchone(self._conn, _run_persistence.RUN_TOTALS_SQL)
+        if row is None:
+            raise RuntimeError("run totals query returned no row")
+        values = as_tuple(row)
+        return cast(int, values[0]), cast(int, values[1]), cast(int, values[2])
 
     @synchronized
     def deposit_message(self, run_id: str, role: str, body: str, created_at: str) -> int:
@@ -122,4 +193,11 @@ class _GithubFacade(_SubFacade):
         _persistence.clear_github_bind_attempt(self._conn, goal_id)
 
 
-__all__ = ["_CommandFacade", "_FileFacade", "_GithubFacade", "_RunFacade", "_SessionFacade"]
+__all__ = [
+    "_CommandFacade",
+    "_FileFacade",
+    "_GithubFacade",
+    "_GoalReviewFacade",
+    "_RunFacade",
+    "_SessionFacade",
+]

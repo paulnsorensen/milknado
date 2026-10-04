@@ -24,15 +24,6 @@ Screen { layers: base overlay; }
     text-align: center;
 }
 Header, Footer { layer: base; }
-#open-hint {
-    display: none;
-    dock: right;
-    width: auto;
-    height: 1;
-    padding: 0 1;
-    background: $footer-background;
-}
-.compact.list #open-hint { display: block; }
 #detail #help { display: none; }
 .compact #workspace { display: block; }
 .compact #totals { display: block; }

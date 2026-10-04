@@ -22,23 +22,45 @@ function capabilities(overrides: Record<string, unknown> = {}) {
     graph_edits: { available: true, reason: null },
     review_decision: { available: true, reason: null },
     git: { available: true, reason: null },
+    host_owner: { available: false, reason: null },
     owner: { available: false },
     ...overrides,
   };
 }
 
-function seedSnapshot(): void {
+function seedSnapshot(
+  activeRuns: Array<{ run_id: string; node_id: number }> = [],
+): void {
   setSnapshot({
     goal: null,
     graph: {
       nodes: [
-        { id: 1, description: 'Root', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
-        { id: 2, description: 'Child', status: 'pending', parent_id: 1, kind: 'task', flavor: null },
+        {
+          id: 1,
+          description: 'Root',
+          status: 'pending',
+          parent_id: null,
+          kind: 'goal',
+          flavor: null,
+        },
+        {
+          id: 2,
+          description: 'Child',
+          status: 'pending',
+          parent_id: 1,
+          kind: 'task',
+          flavor: null,
+        },
       ],
       edges: [],
       root_ids: [1],
     },
     capabilities: capabilities(),
+    active_runs: activeRuns.map((run) => ({
+      ...run,
+      description: 'Fixture run',
+      status: 'running',
+    })),
   });
 }
 
@@ -52,10 +74,18 @@ describe('NodeActionButtons', () => {
 
   afterEach(cleanup);
 
-  it('renders nothing without a numeric selection', () => {
+  it('renders nothing without a selected node', () => {
     seedSnapshot();
     const { container } = render(<NodeActionButtons />);
     expect(container.firstChild).toBeNull();
+  });
+
+  it('renders actions for a selected run node', () => {
+    seedSnapshot([{ run_id: 'run-1', node_id: 2 }]);
+    setSelection('run-1');
+    render(<NodeActionButtons />);
+
+    expect(screen.getByRole('button', { name: 'Edit node' })).toBeVisible();
   });
 
   it('opens the edit dialog for the selected node', () => {
@@ -84,7 +114,10 @@ describe('EditNodeDialog', () => {
 
     screen.getByText('Save changes').click();
 
-    expect(patch).toHaveBeenCalledWith('/api/nodes/2', { description: 'Child', flavor: null });
+    expect(patch).toHaveBeenCalledWith('/api/nodes/2', {
+      description: 'Child',
+      flavor: null,
+    });
   });
 });
 
@@ -104,7 +137,9 @@ describe('MoveNodeDialog', () => {
 
     screen.getByText('Move node').click();
 
-    expect(post).toHaveBeenCalledWith('/api/nodes/2/move', { new_parent_id: null });
+    expect(post).toHaveBeenCalledWith('/api/nodes/2/move', {
+      new_parent_id: null,
+    });
   });
 });
 

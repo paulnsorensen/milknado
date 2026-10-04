@@ -9,9 +9,29 @@ import pytest
 
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.graph import MikadoGraph
-from tests.worker_fixtures import install_worker_stub
+from tests.worker_fixtures import install_agent_guard, install_worker_stub
 
 pytest_plugins = ("tests.rebalance_helpers",)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _block_real_agent_clis(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Generator[None, None, None]:
+    """Shadow every allowlisted agent CLI on PATH for the whole session.
+
+    Session scope keeps the guard in place after per-test monkeypatch teardown,
+    so a worker thread that outlives its test still cannot reach a real agent.
+    """
+    bindir = tmp_path_factory.mktemp("agent-guard-bin")
+    install_agent_guard(bindir)
+    original = os.environ.get("PATH")
+    os.environ["PATH"] = f"{bindir}{os.pathsep}{original or ''}"
+    yield
+    if original is None:
+        _ = os.environ.pop("PATH", None)
+    else:
+        os.environ["PATH"] = original
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +45,7 @@ def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
     """
     xdg = tmp_path_factory.mktemp("xdg_config")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path_factory.mktemp("xdg_state")))
 
 
 @pytest.fixture(autouse=True)
@@ -63,5 +84,5 @@ def mock_crg() -> MagicMock:
 
 
 @pytest.fixture()
-def mock_ralph() -> MagicMock:
+def mock_loop() -> MagicMock:
     return MagicMock(spec=LoopPort)

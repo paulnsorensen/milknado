@@ -7,18 +7,19 @@ import { Milknado } from '../../design-system';
 
 export function NoticeToasts(): ReactElement {
   const store = useSyncExternalStore(subscribe, getState);
-  const { Button } = Milknado;
+  const { Button, StatusGlyph } = Milknado;
 
   return (
-    <div className="mk-toasts">
+    <>
       {store.notices.map((notice) => (
-        <p key={notice.id} role="alert">
+        <p key={notice.id} role="alert" className="mk-toast">
+          <StatusGlyph state="at-risk" />
           <span>{notice.reason}</span>
-          <Button icon ariaLabel="Close notice" onClick={() => removeNotice(notice.id)}>
-            ×
+          <Button variant="ghost" className="mk-btn-sm" ariaLabel="Dismiss" onClick={() => removeNotice(notice.id)}>
+            Dismiss
           </Button>
         </p>
       ))}
-    </div>
+    </>
   );
 }

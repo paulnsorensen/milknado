@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from milknado.adapters.loop import _build_ralph_content  # pyright: ignore[reportPrivateUsage]
+from milknado.adapters.loop import _build_loop_content  # pyright: ignore[reportPrivateUsage]
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.dispatch import render_brief
 from milknado.domains.graph import MikadoGraph
@@ -125,7 +125,7 @@ def test_render_brief_omits_spec_section_when_absent(tmp_path: Path) -> None:
     assert "## Spec" not in brief
 
 
-def test_ralph_wraps_the_same_rendered_brief_with_flavor_prepend(tmp_path: Path) -> None:
+def test_loop_wraps_the_same_rendered_brief_with_flavor_prepend(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "g.db")
     try:
         goal = graph.add_node("ship the feature", spec=NodeSpec(kind=NodeKind.GOAL))
@@ -135,8 +135,8 @@ def test_ralph_wraps_the_same_rendered_brief_with_flavor_prepend(tmp_path: Path)
     finally:
         graph.close()
 
-    ralph_content = _build_ralph_content(brief, ())
-    assert brief in ralph_content
-    assert ralph_content.index("### Flavor rule:") < ralph_content.index("# Task: do the subtask")
-    assert "## Quality Gates" in ralph_content
-    assert "## Completion" in ralph_content
+    loop_content = _build_loop_content(brief, ())
+    assert brief in loop_content
+    assert loop_content.index("### Flavor rule:") < loop_content.index("# Task: do the subtask")
+    assert "## Quality Gates" in loop_content
+    assert "## Completion" in loop_content

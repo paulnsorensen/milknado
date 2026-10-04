@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-from collections import deque
 from typing import cast
 
 import pytest
 
 from milknado.domains.common import SessionView
-from milknado.domains.common.protocols import LoopPort, ProgressEvent
+from milknado.domains.common.protocols import LoopPort
 from milknado.domains.common.types import MikadoNode, NodeStatus
 from milknado.domains.execution import RunLoop
-from milknado.domains.execution.executor import (
-    CompletionResult,
-    Executor,
-    RebaseConflict,
-)
-from milknado.domains.execution.run_loop._completion import handle_completion
-from milknado.domains.execution.run_loop.input import InputState
-from milknado.domains.execution.run_loop.state import TerminalRunState
+from milknado.domains.execution._models import CompletionResult, RebaseConflict
+from milknado.domains.execution.executor import Executor
+from milknado.domains.execution.run_loop._completion import CompletionContext, handle_completion
 from milknado.domains.graph import MikadoGraph
 
 
@@ -38,7 +32,7 @@ class _FakeExecutor:
         self.failed_ids: list[int] = []
         self.fail_details: list[str | None] = []
         self.complete_result: CompletionResult = CompletionResult(
-            node_id=0, rebased=False, newly_ready=[]
+            node_id=0, rebased=True, newly_ready=[]
         )
 
     def complete(self, _node_id: int, _feature_branch: str) -> CompletionResult:
@@ -56,7 +50,7 @@ def _make_node(node_id: int, desc: str = "task") -> MikadoNode:
     return MikadoNode(id=node_id, description=desc, status=NodeStatus.RUNNING)
 
 
-class _FakeRalph:
+class _FakeLoopAdapter:
     def __init__(self) -> None:
         self.failure_detail: str | None = None
 
@@ -73,45 +67,28 @@ class _FakeRalph:
         return SessionView()
 
 
-class _FakeLoop:
-    _active: dict[str, int]
-    _progress_by_run: dict[str, ProgressEvent]
-    _input: InputState
-    _graph: MikadoGraph
-    _dispatched_at: dict[str, float]
-    _logs: deque[str]
-    _executor: Executor
-    _completion_durations: deque[float]
-    _ralph: LoopPort
-    _attempts: dict[int, int]
-    _strict: bool
-    _failure_triggered: bool
-    _stopped_nodes: set[int]
-    _stopped: int
-    _terminal_runs: deque[TerminalRunState]
-
-    def __init__(self, node_id: int, run_id: str, executor: _FakeExecutor) -> None:
-        graph = _FakeGraph()
-        graph.add(_make_node(node_id))
-        self._active = {run_id: node_id}
-        self._progress_by_run = {}
-        self._input = InputState()
-        self._graph = cast(MikadoGraph, cast(object, graph))
-        self._executor = cast(Executor, cast(object, executor))
-        self._completion_durations = deque()
-        self._dispatched_at = {}
-        self._logs = deque()
-        self._ralph = cast(LoopPort, cast(object, _FakeRalph()))
-        self._attempts = {}
-        self._strict = False
-        self._failure_triggered = False
-        self._stopped_nodes = set()
-        self._stopped = 0
-        self._terminal_runs = deque()
-
-
 def _make_loop(node_id: int, run_id: str, executor: _FakeExecutor) -> RunLoop:
-    return cast(RunLoop, cast(object, _FakeLoop(node_id, run_id, executor)))
+    graph = _FakeGraph()
+    graph.add(_make_node(node_id))
+    loop = RunLoop(
+        executor=cast(Executor, cast(object, executor)),
+        graph=cast(MikadoGraph, cast(object, graph)),
+        loop=cast(LoopPort, cast(object, _FakeLoopAdapter())),
+    )
+    loop._scheduler.admit_run(run_id, node_id, 0.0)  # pyright: ignore[reportPrivateUsage]
+    return loop
+
+
+def _context(loop: RunLoop) -> CompletionContext:
+    return CompletionContext(
+        loop._scheduler,  # pyright: ignore[reportPrivateUsage]
+        loop._graph,  # pyright: ignore[reportPrivateUsage]
+        loop._executor,  # pyright: ignore[reportPrivateUsage]
+        loop._loop,  # pyright: ignore[reportPrivateUsage]
+        loop._input,  # pyright: ignore[reportPrivateUsage]
+        loop._logs,  # pyright: ignore[reportPrivateUsage]
+        loop._strict,  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 class TestHandleCompletionSuccess:
@@ -119,7 +96,7 @@ class TestHandleCompletionSuccess:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        c, f, cs = handle_completion(loop, "run-1", "completed", "main")
+        c, f, cs = handle_completion(_context(loop), "run-1", "completed", "main")
 
         assert c == 1
         assert f == 0
@@ -129,26 +106,40 @@ class TestHandleCompletionSuccess:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        _ = handle_completion(loop, "run-1", "completed", "main")
+        _ = handle_completion(_context(loop), "run-1", "completed", "main")
 
-        assert "run-1" not in loop._active  # pyright: ignore[reportPrivateUsage]
+        assert loop._scheduler.view().active == ()  # pyright: ignore[reportPrivateUsage]
 
     def test_appends_duration_on_success(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        _ = handle_completion(loop, "run-1", "completed", "main")
+        _ = handle_completion(_context(loop), "run-1", "completed", "main")
 
-        assert len(loop._completion_durations) == 1  # pyright: ignore[reportPrivateUsage]
+        assert len(loop._scheduler.view().completion_durations) == 1  # pyright: ignore[reportPrivateUsage]
 
     def test_clears_overlay_when_run_is_active(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         loop._input.overlay_state = "run-1"  # pyright: ignore[reportPrivateUsage]
 
-        _ = handle_completion(loop, "run-1", "completed", "main")
+        _ = handle_completion(_context(loop), "run-1", "completed", "main")
 
         assert loop._input.overlay_state is None  # pyright: ignore[reportPrivateUsage]
+
+    def test_unrebased_terminal_result_is_not_success(self) -> None:
+        executor = _FakeExecutor()
+        executor.complete_result = CompletionResult(node_id=1, rebased=False, newly_ready=[])
+        loop = _make_loop(1, "run-1", executor)
+        loop._strict = True  # pyright: ignore[reportPrivateUsage]
+
+        completed, failed, conflicts = handle_completion(
+            _context(loop), "run-1", "completed", "main"
+        )
+
+        assert (completed, failed, conflicts) == (0, 1, [])
+        assert loop._scheduler.view().failure_triggered is True  # pyright: ignore[reportPrivateUsage]
+        assert executor.failed_ids == []
 
 
 class TestHandleCompletionFailure:
@@ -156,7 +147,7 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        c, f, cs = handle_completion(loop, "run-1", "failed", "main")
+        c, f, cs = handle_completion(_context(loop), "run-1", "failed", "main")
 
         assert c == 0
         assert f == 1
@@ -166,7 +157,7 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        _ = handle_completion(loop, "run-1", "failed", "main")
+        _ = handle_completion(_context(loop), "run-1", "failed", "main")
 
         assert 1 in exec_.failed_ids
 
@@ -175,18 +166,18 @@ class TestHandleCompletionFailure:
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = True  # pyright: ignore[reportPrivateUsage]
 
-        _ = handle_completion(loop, "run-1", "failed", "main")
+        _ = handle_completion(_context(loop), "run-1", "failed", "main")
 
-        assert loop._failure_triggered is True  # pyright: ignore[reportPrivateUsage]
+        assert loop._scheduler.view().failure_triggered is True  # pyright: ignore[reportPrivateUsage]
 
     def test_non_strict_does_not_set_failure_triggered(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = False  # pyright: ignore[reportPrivateUsage]
 
-        _ = handle_completion(loop, "run-1", "failed", "main")
+        _ = handle_completion(_context(loop), "run-1", "failed", "main")
 
-        assert loop._failure_triggered is False  # pyright: ignore[reportPrivateUsage]
+        assert loop._scheduler.view().failure_triggered is False  # pyright: ignore[reportPrivateUsage]
 
     def test_failure_log_includes_last_agent_output(
         self, caplog: pytest.LogCaptureFixture
@@ -194,12 +185,12 @@ class TestHandleCompletionFailure:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
         cast(
-            _FakeRalph,
-            cast(object, loop._ralph),  # pyright: ignore[reportPrivateUsage]
+            _FakeLoopAdapter,
+            cast(object, loop._loop),  # pyright: ignore[reportPrivateUsage]
         ).failure_detail = "Error: unknown flag: --mcp-config"
         caplog.set_level("WARNING", logger="milknado")
 
-        _ = handle_completion(loop, "run-1", "failed", "main")
+        _ = handle_completion(_context(loop), "run-1", "failed", "main")
 
         assert "unknown flag: --mcp-config" in caplog.text
         # The real failure detail is threaded into fail() so the runs row
@@ -209,10 +200,10 @@ class TestHandleCompletionFailure:
     def test_failure_log_bare_when_no_detail(self, caplog: pytest.LogCaptureFixture) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
-        cast(_FakeRalph, cast(object, loop._ralph)).failure_detail = None  # pyright: ignore[reportPrivateUsage]
+        cast(_FakeLoopAdapter, cast(object, loop._loop)).failure_detail = None  # pyright: ignore[reportPrivateUsage]
         caplog.set_level("WARNING", logger="milknado")
 
-        _ = handle_completion(loop, "run-1", "failed", "main")
+        _ = handle_completion(_context(loop), "run-1", "failed", "main")
 
         assert "node_failed node_id=1" in caplog.text
         assert "detail=" not in caplog.text
@@ -233,7 +224,7 @@ class TestHandleCompletionRebaseConflict:
         )
         loop = _make_loop(1, "run-1", exec_)
 
-        c, f, cs = handle_completion(loop, "run-1", "completed", "main")
+        c, f, cs = handle_completion(_context(loop), "run-1", "completed", "main")
 
         assert c == 0
         assert f == 1
@@ -251,14 +242,14 @@ class TestHandleCompletionRebaseConflict:
         loop = _make_loop(1, "run-1", exec_)
         loop._strict = True  # pyright: ignore[reportPrivateUsage]
 
-        _ = handle_completion(loop, "run-1", "completed", "main")
+        _ = handle_completion(_context(loop), "run-1", "completed", "main")
 
-        assert loop._failure_triggered is True  # pyright: ignore[reportPrivateUsage]
+        assert loop._scheduler.view().failure_triggered is True  # pyright: ignore[reportPrivateUsage]
 
     def test_no_conflict_does_not_append_to_conflicts(self) -> None:
         exec_ = _FakeExecutor()
         loop = _make_loop(1, "run-1", exec_)
 
-        _, _, cs = handle_completion(loop, "run-1", "completed", "main")
+        _, _, cs = handle_completion(_context(loop), "run-1", "completed", "main")
 
         assert cs == []

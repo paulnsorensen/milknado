@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import GitPort, RunFenceLostError, RunResult
+from milknado.domains.common.protocols import SlotLease
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -34,11 +35,7 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch._runstate import (
     tail as _tail,
 )
-from milknado.domains.dispatch.isolate import (
-    IsolateContext,
-    MergeBackResult,
-    merge_back_isolated,
-)
+from milknado.domains.dispatch.isolate import IsolateContext, merge_back_if_done
 from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.runner import (
     AsyncStartRef,
@@ -65,6 +62,7 @@ class AsyncRunRequest:
     default_cmd: str
     cwd: Path
     merge_ctx: IsolateContext | None = None
+    lease: SlotLease | None = None
 
 
 @dataclass(frozen=True)
@@ -176,32 +174,6 @@ def _run_in_tmux_window(
     )
 
 
-def _async_merge_back(
-    git: GitPort,
-    project_root: Path,
-    merge_ctx: IsolateContext | None,
-    terminal: str,
-) -> MergeBackResult | None:
-    """Rebase-merge an ISOLATE branch back after a clean worker exit.
-
-    Returns the ``MergeBackResult`` when a merge-back was requested, or None when
-    there was nothing to merge (THIS_BRANCH, merge_back=False, or a non-``done``
-    worker) so the run row's ``rebased`` stays None — matching the old shared-
-    checkout dispatch that never rebased. A preserved (un-torn-down) worktree is
-    both logged and carried on the result so the caller can persist it for poll.
-    """
-    if merge_ctx is None or terminal != "done":
-        return None
-    result = merge_back_isolated(git, project_root, merge_ctx)
-    if result.worktree_preserved is not None:
-        _logger.warning(
-            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
-            merge_ctx.worker_branch,
-            result.worktree_preserved,
-        )
-    return result
-
-
 def _async_worker(context: AsyncWorkerContext) -> None:
     request = context.request
     project_root = request.project_root
@@ -240,7 +212,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
-            merge = _async_merge_back(context.git, project_root, request.merge_ctx, terminal)
+            merge = merge_back_if_done(context.git, project_root, request.merge_ctx, terminal)
             if merge is not None and merge.rebased is False:
                 # ISOLATE merge_back requested but the branch did not land: the
                 # deliverable never reached the dispatch branch, so this is a real
@@ -320,6 +292,8 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                         encoding="utf-8",
                     )
     finally:
+        if request.lease is not None:
+            request.lease.release()
         if graph is not None:
             graph.close()
         # Clear the sentinel after terminal write so reused run dirs cannot carry stale cancel.
@@ -338,12 +312,12 @@ def start_headless_async(
     tmux: TmuxPort | None = None,
 ) -> AsyncStartRef:
     argv = tuple(resolve_worker_cmd(request.worker_cmd, request.default_cmd))
-    runs = _runs_dir(request.project_root)
-    log_path = runs / f"{request.run_id}.log"
-    log_path.touch()
     graph, _cfg = graph_sessions.open_graph(request.project_root)
     try:
         graph.register_controller_master()
+        runs = _runs_dir(request.project_root)
+        log_path = runs / f"{request.run_id}.log"
+        log_path.touch()
         graph.runs.start(
             request.run_id,
             request.node_id,

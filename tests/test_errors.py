@@ -5,9 +5,9 @@ from pathlib import Path
 from milknado.domains.common.errors import (
     CompletionTimeout,
     InvalidTransition,
+    LoopMarkdownWriteError,
     MegaBatchAborted,
     MilknadoError,
-    RalphMarkdownWriteError,
     RebaseAbortError,
     TransientDispatchError,
 )
@@ -39,18 +39,18 @@ class TestRebaseAbortError:
         assert isinstance(RebaseAbortError(Path("/wt")), MilknadoError)
 
 
-class TestRalphMarkdownWriteError:
+class TestLoopMarkdownWriteError:
     def test_message_includes_path(self) -> None:
-        err = RalphMarkdownWriteError(Path("/project/RALPH.md"))
-        assert "/project/RALPH.md" in str(err)
+        err = LoopMarkdownWriteError(Path("/project/LOOP.md"))
+        assert "/project/LOOP.md" in str(err)
 
     def test_stores_cause(self) -> None:
         cause = OSError("disk full")
-        err = RalphMarkdownWriteError(Path("/p"), cause=cause)
+        err = LoopMarkdownWriteError(Path("/p"), cause=cause)
         assert err.cause is cause
 
     def test_default_cause_is_none(self) -> None:
-        err = RalphMarkdownWriteError(Path("/p"))
+        err = LoopMarkdownWriteError(Path("/p"))
         assert err.cause is None
 
 

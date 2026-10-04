@@ -7,17 +7,16 @@ import subprocess
 import threading
 import time
 import uuid
-from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 from weakref import WeakKeyDictionary
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV
 from milknado.loop._agent import (
     AgentRunSpec,
     _atomic_write_counter,  # pyright: ignore[reportPrivateUsage]
+    _build_spawn_env,  # pyright: ignore[reportPrivateUsage]
     _setup_wind_down,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
@@ -35,24 +34,6 @@ MAX_STDERR_LINE_SIZE = CAPTURE_LIMIT
 _THREAD_JOIN_TIMEOUT = 1.0
 
 _PROCESS_GROUP_IDS: WeakKeyDictionary[subprocess.Popen[bytes], int] = WeakKeyDictionary()
-
-
-class BoundedTail:
-    def __init__(self) -> None:
-        self._lines: deque[str] = deque()
-        self._chars: int = 0
-
-    def append(self, line: str) -> None:
-        if len(line) > CAPTURE_LIMIT:
-            line = line[-CAPTURE_LIMIT:]
-        self._lines.append(line)
-        self._chars += len(line)
-        while self._chars > CAPTURE_LIMIT and len(self._lines) > 1:
-            self._chars -= len(self._lines.popleft())
-
-    @property
-    def text(self) -> str:
-        return "".join(self._lines)
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,13 +238,8 @@ def start_process(
     cwd: Path,
     env: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
-    spawn_env: dict[str, str] | None = None
-    if env or CONTROLLER_MASTER_ENV in os.environ:
-        spawn_env = os.environ.copy()
-        _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
-        if env:
-            spawn_env.update(env)
-            _ = spawn_env.pop(CONTROLLER_MASTER_ENV, None)
+    """Start a marked worker process without controller authority."""
+    spawn_env = _build_spawn_env(env)
     if os.name == "nt":
         proc = subprocess.Popen(
             protocol.command,

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.common.agent_argv import ALLOWED_WORKER_EXECUTABLES
 from milknado.domains.dispatch import validate_worker_argv
 
 _PASSTHROUGH = '#!/bin/sh\nexec "$@"\n'
@@ -45,3 +46,16 @@ def install_worker_stub(
         return f"{base} {suffix}" if suffix else base
 
     return _command
+
+
+GUARD_MESSAGE = "real agent CLI blocked in tests"
+_GUARD_SCRIPT = f'#!/bin/sh\necho "{GUARD_MESSAGE}: $0 $*" >&2\nexit 97\n'
+
+
+def install_agent_guard(bindir: Path) -> None:
+    """Write one fail-closed executable per allowlisted agent name into bindir."""
+    bindir.mkdir(parents=True, exist_ok=True)
+    for name in sorted(ALLOWED_WORKER_EXECUTABLES):
+        guard = bindir / name
+        _ = guard.write_text(_GUARD_SCRIPT, encoding="utf-8")
+        guard.chmod(0o755)

@@ -9,7 +9,7 @@ from rich.console import RenderableType
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.events import MouseScrollDown, MouseScrollUp, Resize
+from textual.events import Resize
 from textual.widgets import DataTable, Static, TabbedContent, TabPane
 from typing_extensions import override
 
@@ -106,6 +106,8 @@ class RunListPanel(Vertical):
         _ = self.call_after_refresh(self._resize_columns)
 
     def _resize_columns(self) -> None:
+        if not self.query("#runs"):
+            return
         table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
         if self._set_columns(table.scrollable_content_region.width):
             self._render_table()
@@ -180,13 +182,13 @@ class RunListPanel(Vertical):
         selected_node_id: int | None = None,
     ) -> None:
         self.query_one("#totals", Static).update(subtitle_text(snapshot))
-        self._has_graph = snapshot.graph is not None
+        self._has_graph = snapshot.graph is not None and bool(snapshot.graph.nodes)
         _ = self.set_class(self._has_graph, "graph")
         graph_tree = self.query_one("#graph-tree", GraphTree)
         graph_tree.display = self._has_graph
         table = cast(DataTable[RenderableType], self.query_one("#runs", DataTable))
         table.display = not self._has_graph
-        if snapshot.graph is not None:
+        if self._has_graph and snapshot.graph is not None:
             graph_tree.update_graph(snapshot.graph, selected_node_id)
         cursor_run_id = None
         if selected_run_id == self._selected_run_id and table.is_valid_row_index(table.cursor_row):
@@ -225,12 +227,6 @@ class RunDetailPanel(VerticalScroll):
             with TabPane("Details", id="details"):
                 yield DetailsPanel(id="details-panel")
 
-    def on_mouse_scroll_up(self, _event: MouseScrollUp) -> None:
-        cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
-
-    def on_mouse_scroll_down(self, _event: MouseScrollDown) -> None:
-        cast(_ExecutionAppLike, cast(object, self.app)).pause_auto_follow()
-
     def update(
         self,
         selected: RunSnapshot | None,
@@ -240,7 +236,7 @@ class RunDetailPanel(VerticalScroll):
         auto_follow: bool,
     ) -> None:
         app = cast(_ExecutionAppLike, cast(object, self.app))
-        self.query_one("#summary", Static).update(summary_text(selected))
+        self.query_one("#summary", Static).update(summary_text(selected, compact=app.compact))
         self.query_one("#output", VerticalScroll).border_title = output_border_title(
             auto_follow=auto_follow
         )

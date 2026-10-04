@@ -43,6 +43,22 @@ The bounded tail reads through the verified descriptor. An inode, size, and modi
 
 Watch mode removes guidance, cancel, and force-stop bindings. Quit exits only the observer process.[^7]
 
+### Refresh and navigation invariants
+
+Session controls preserve focused text and action choices while the selected run identity stays unchanged.
+A changed identity replaces those controls from the newly selected run's state.
+This prevents a draft from being submitted to another run.[^8]
+
+Footer hints derive keys and actions from effective bindings.
+Contextual availability filters the hints, and complete labels wrap into rows.
+Each hint supports mouse activation through the app action dispatcher.
+Inherited Textual signals refresh hints after binding and focus changes.
+Snapshot and selection refresh compares effective hint content, even when terminal width stays unchanged.[^9]
+
+An empty graph focuses the visible run selector rather than the hidden tree.
+Initial focus and Back use the same graph-presence rule.
+Compact Help includes Open and Back for selected graph-only nodes, without advertising unavailable mutation controls.[^10]
+
 [^1]: src/milknado/cli/run.py:97-115; src/milknado/cli/__init__.py:25,61-62
 [^2]: src/milknado/domains/graph/observer.py:73-79,107-121
 [^3]: src/milknado/domains/graph/observer.py:14-46,49-70,82-117; src/milknado/app/watch.py:48-68
@@ -50,3 +66,9 @@ Watch mode removes guidance, cancel, and force-stop bindings. Quit exits only th
 [^5]: src/milknado/app/watch.py:70-101; src/milknado/app/run_view.py:68-95
 [^6]: src/milknado/app/watch.py:28-34,103-146; tests/test_watch.py:81-105
 [^7]: src/milknado/app/run_source.py:1-12; src/milknado/app/run_view_app.py:26-73; src/milknado/app/run_tui.py:23-60; src/milknado/app/watch_tui.py:20-71
+
+[^8]: src/milknado/app/session_panels.py:107-123,131-188; tests/test_session_tui.py:336-379
+[^9]: src/milknado/app/run_overlays.py:28-130; src/milknado/app/run_view_app.py:277-298; tests/test_execution_tui.py:1076-1155
+[^10]: src/milknado/app/graph_navigation.py:52-58; src/milknado/app/session_navigation.py:193-204; src/milknado/app/run_view_app.py:149-162
+
+_Source: TUI Cure source, mounted regression tests, and opened native captures · Updated: 2026-09-21 · Supersedes: binding signals alone cover fixed-width selection changes · 2026-09-21_

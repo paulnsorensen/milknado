@@ -13,7 +13,7 @@ messaging, batching-heuristic calibration). Every goal here is sourced from a
 deferred item already recorded in the wiki, not net-new scope.
 
 A second track adopts what makes firstmate more usable, so milknado becomes
-the golden path over it — ralph trees plus firstmate's casual sub-agent feel
+the golden path over it — loop trees plus firstmate's casual sub-agent feel
 plus full higher-level roadmaps: tmux as a first-class run primitive
 (visibility), non-headless interactive steering built on it, and zero-token
 event-driven supervision replacing poll loops (built on the messaging
@@ -43,5 +43,5 @@ follows worker↔coordinator messaging.
 - [tmux-run-primitive](./tmux-run-primitive.md) — tmux as a first-class run primitive
 - [ultracode-install-ergonomics](./ultracode-install-ergonomics.md) — Make ultracode installable in one step
 - [worker-coordinator-messaging](./worker-coordinator-messaging.md) — Build worker↔coordinator messaging on run_messages
-- [zero-token-run-supervision](./zero-token-run-supervision.md) — Zero-token event-driven supervision of ralph runs
+- [zero-token-run-supervision](./zero-token-run-supervision.md) — Zero-token event-driven supervision of loop runs
 <!-- HALLOUMINATE:INDEX-END -->

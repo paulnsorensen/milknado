@@ -27,22 +27,25 @@ import tempfile
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import IO, Any, cast
 
-from milknado.domains.common.process import CONTROLLER_MASTER_ENV
+from milknado.domains.common import mark_worker_env
 from milknado.loop._events import OutputStream
 from milknado.loop._output import (
     IS_WINDOWS,
     SESSION_KWARGS,
     SUBPROCESS_TEXT_KWARGS,
+    BoundedOutput,
     ProcessResult,
     warn,
 )
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.adapters import CLIAdapter, select_adapter
 from milknado.loop.adapters._protocol import SoftWindDownAdapter
@@ -236,28 +239,6 @@ class _WindowsJob:
 
 
 @dataclass(slots=True)
-class _BoundedOutput:
-    limit: int = _OUTPUT_TAIL_CHARS
-    _lines: list[str] = field(default_factory=list)
-    _chars: int = 0
-
-    def append(self, line: str) -> None:
-        if len(line) > self.limit:
-            line = line[-self.limit :]
-        self._lines.append(line)
-        self._chars += len(line)
-        while self._chars > self.limit and len(self._lines) > 1:
-            self._chars -= len(self._lines.pop(0))
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._lines)
-
-    @property
-    def text(self) -> str:
-        return "".join(self._lines)
-
-
-@dataclass(slots=True)
 class _FileSink:
     """Serialize complete output to a file without retaining it in memory."""
 
@@ -276,7 +257,7 @@ class _FileSink:
 class _OutputCapture:
     """Bounded tail plus an optional file-backed complete-output sink."""
 
-    tail: _BoundedOutput | None = None
+    tail: BoundedOutput | None = None
     sink: _FileSink | None = None
     mirror: _FileSink | None = None
 
@@ -424,6 +405,7 @@ def _wait_for_process(
     deadline: float | None,
     force_stop_event: threading.Event | None,
     windows_job: _WindowsJob | None,
+    protected: WorkerHandle | None,
     correlation: str,
 ) -> tuple[int | None, bool, bool]:
     """Interruptibly reap a worker, returning (returncode, timed_out, force_stopped)."""
@@ -434,18 +416,21 @@ def _wait_for_process(
                 proc.pid,
                 correlation,
             )
-            _ensure_process_dead(proc, windows_job)
+            if protected is None:
+                _ensure_process_dead(proc, windows_job)
             return None, False, True
         remaining = max(deadline - time.monotonic(), 0) if deadline is not None else 0.1
         if deadline is not None and remaining == 0:
-            _ensure_process_dead(proc, windows_job)
+            if protected is None:
+                _ensure_process_dead(proc, windows_job)
             return None, True, False
         wait_for = min(remaining, 0.1)
         try:
             return proc.wait(timeout=wait_for), False, False
         except subprocess.TimeoutExpired as exc:
             if exc.timeout != wait_for:
-                _ensure_process_dead(proc, windows_job)
+                if protected is None:
+                    _ensure_process_dead(proc, windows_job)
                 return None, True, False
             continue
     return proc.returncode, False, False
@@ -564,6 +549,8 @@ class AgentRunSpec:
     on_tool_use: ToolUseCallback | None = None
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
+    env: dict[str, str] | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,6 +574,32 @@ class _ResolvedAgentRun:
     completion_signal: str | None = None
     force_stop_event: threading.Event | None = None
     cwd: Path | None = None
+    spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
+
+
+def _spawn_agent_process(
+    run: _ResolvedAgentRun, pipe_stdin: bool, pipe_stdout: bool, pipe_stderr: bool
+) -> tuple[subprocess.Popen[str], WorkerHandle | None]:
+    stdin = subprocess.PIPE if pipe_stdin else subprocess.DEVNULL
+    stdout = subprocess.PIPE if pipe_stdout else None
+    stderr = subprocess.PIPE if pipe_stderr else None
+    env = _build_spawn_env(run.env)
+    if run.spawn_worker is not None:
+        protected = run.spawn_worker(
+            SpawnOptions(tuple(run.cmd), run.cwd, env, True, stdin, stdout, stderr)
+        )
+        return cast(subprocess.Popen[str], protected.process), protected
+    proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
+        run.cmd,
+        stdin=stdin,
+        stdout=stdout,
+        stderr=stderr,
+        env=env,
+        cwd=run.cwd,
+        **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
+        **SESSION_KWARGS,
+    )
+    return proc, None
 
 
 def _readline_pump(
@@ -618,7 +631,7 @@ def _readline_pump(
 
 @dataclass(slots=True)
 class _StreamState:
-    stdout_lines: _BoundedOutput | None
+    stdout_lines: BoundedOutput | None
     output_capture: _OutputCapture | None = None
     completion_signal: str | None = None
     result_text: str | None = None
@@ -691,7 +704,7 @@ def _read_agent_stream(
         stdout_lines=(
             output_capture.tail
             if output_capture is not None
-            else (_BoundedOutput() if capture_stdout else None)
+            else (BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout else None)
         ),
         output_capture=output_capture,
         completion_signal=completion_signal,
@@ -773,26 +786,18 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
     windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stdout_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout_text else None,
         sink=None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stderr_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stderr_text else None,
         mirror=log_sink,
     )
 
+    protected: WorkerHandle | None = None
     try:
-        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
-            run.cmd,
-            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE if pipe_stderr else None,
-            env=_build_spawn_env(run.env),
-            cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
-            **SESSION_KWARGS,
-        )
+        proc, protected = _spawn_agent_process(run, pipe_stdin, True, pipe_stderr)
         try:
             windows_job = _WindowsJob.assign(proc)
         except Exception:
@@ -805,79 +810,87 @@ def _run_agent_streaming(run: _ResolvedAgentRun) -> AgentResult:
         raise
 
     try:
-        if proc.stdout is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
-        if pipe_stdin and proc.stdin is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
-        if pipe_stderr and proc.stderr is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-        if proc.stderr is not None:
-            stderr_thread = _start_pump_thread(
-                proc.stderr,
-                stderr_capture,
-                _STDERR,
-                run.on_output_line,
-                correlation,
-            )
-            pump_threads.append(stderr_thread)
-        if run.stdin_text is not None:
-            writer_thread = _start_writer_thread(proc, run.stdin_text)
-        stream = _read_agent_stream(
-            proc.stdout,
-            deadline,
-            run.on_activity,
-            run.on_output_line,
-            capture_stdout=capture_stdout_text,
-            output_capture=stdout_capture,
-            completion_signal=run.completion_signal,
-            adapter=run.adapter,
-            max_turns=run.max_turns,
-            on_tool_use=run.on_tool_use,
-            correlation=correlation,
-            force_stop_event=run.force_stop_event,
-            pump_threads=pump_threads,
-        )
-        if stream.timed_out or stream.turn_capped or stream.force_stopped:
-            _ensure_process_dead(proc, windows_job)
-        else:
-            _, reaped_timeout, reaped_force_stop = _wait_for_process(
-                proc,
-                deadline=deadline,
-                force_stop_event=run.force_stop_event,
-                windows_job=windows_job,
-                correlation=correlation,
-            )
-            if reaped_timeout or reaped_force_stop:
-                stream = _StreamResult(
-                    stdout_lines=stream.stdout_lines,
-                    result_text=stream.result_text,
-                    timed_out=reaped_timeout,
-                    force_stopped=reaped_force_stop,
-                    tool_use_count=stream.tool_use_count,
-                    turn_capped=stream.turn_capped,
-                    completion_detected=stream.completion_detected,
+        try:
+            if proc.stdout is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
+            if pipe_stdin and proc.stdin is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
+            if pipe_stderr and proc.stderr is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
+            if proc.stderr is not None:
+                stderr_thread = _start_pump_thread(
+                    proc.stderr,
+                    stderr_capture,
+                    _STDERR,
+                    run.on_output_line,
+                    correlation,
                 )
+                pump_threads.append(stderr_thread)
+            if run.stdin_text is not None:
+                writer_thread = _start_writer_thread(proc, run.stdin_text)
+            stream = _read_agent_stream(
+                proc.stdout,
+                deadline,
+                run.on_activity,
+                run.on_output_line,
+                capture_stdout=capture_stdout_text,
+                output_capture=stdout_capture,
+                completion_signal=run.completion_signal,
+                adapter=run.adapter,
+                max_turns=run.max_turns,
+                on_tool_use=run.on_tool_use,
+                correlation=correlation,
+                force_stop_event=run.force_stop_event,
+                pump_threads=pump_threads,
+            )
+            if stream.timed_out or stream.turn_capped or stream.force_stopped:
+                if protected is None:
+                    _ensure_process_dead(proc, windows_job)
+            else:
+                _, reaped_timeout, reaped_force_stop = _wait_for_process(
+                    proc,
+                    deadline=deadline,
+                    force_stop_event=run.force_stop_event,
+                    windows_job=windows_job,
+                    protected=protected,
+                    correlation=correlation,
+                )
+                if reaped_timeout or reaped_force_stop:
+                    stream = _StreamResult(
+                        stdout_lines=stream.stdout_lines,
+                        result_text=stream.result_text,
+                        timed_out=reaped_timeout,
+                        force_stopped=reaped_force_stop,
+                        tool_use_count=stream.tool_use_count,
+                        turn_capped=stream.turn_capped,
+                        completion_detected=stream.completion_detected,
+                    )
+        finally:
+            if protected is not None:
+                if not protected.cleanup((*pump_threads, writer_thread)):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            else:
+                _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
+        stdout = stdout_capture.text
+        stderr = stderr_capture.text
+        return AgentResult(
+            returncode=None if stream.timed_out or stream.force_stopped else proc.returncode,
+            elapsed=time.monotonic() - start,
+            log_file=log_sink.path if log_sink is not None else None,
+            result_text=stream.result_text,
+            timed_out=stream.timed_out,
+            force_stopped=stream.force_stopped,
+            captured_stdout=stdout if capture_stdout_text else None,
+            captured_stderr=stderr if capture_stderr_text else None,
+            tool_use_count=stream.tool_use_count,
+            turn_capped=stream.turn_capped,
+            completion_detected=stream.completion_detected,
+        )
     finally:
-        _cleanup_agent(proc, *pump_threads, writer_thread, windows_job=windows_job)
-
-    stdout = stdout_capture.text
-    stderr = stderr_capture.text
-    stdout_capture.close()
-    if log_sink is not None:
-        log_sink.close()
-    return AgentResult(
-        returncode=None if stream.timed_out or stream.force_stopped else proc.returncode,
-        elapsed=time.monotonic() - start,
-        log_file=log_sink.path if log_sink is not None else None,
-        result_text=stream.result_text,
-        timed_out=stream.timed_out,
-        force_stopped=stream.force_stopped,
-        captured_stdout=stdout if capture_stdout_text else None,
-        captured_stderr=stderr if capture_stderr_text else None,
-        tool_use_count=stream.tool_use_count,
-        turn_capped=stream.turn_capped,
-        completion_detected=stream.completion_detected,
-    )
+        stdout_capture.close()
+        stderr_capture.close()
+        if log_sink is not None:
+            log_sink.close()
 
 
 def _pump_stream(
@@ -1004,12 +1017,12 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
     windows_job: _WindowsJob | None = None
     log_sink = _new_output_sink(run.log_dir, run.iteration) if run.log_dir is not None else None
     stdout_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stdout_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stdout_text else None,
         sink=_new_output_sink(None, run.iteration) if needs_post_hoc_count else None,
         mirror=log_sink,
     )
     stderr_capture = _OutputCapture(
-        tail=_BoundedOutput() if capture_stderr_text else None,
+        tail=BoundedOutput(_OUTPUT_TAIL_CHARS) if capture_stderr_text else None,
         mirror=log_sink,
     )
     result_text: str | None = None
@@ -1031,17 +1044,9 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
             correlation=f"iteration={run.iteration}",
         )
 
+    protected: WorkerHandle | None = None
     try:
-        proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
-            run.cmd,
-            stdin=subprocess.PIPE if pipe_stdin else subprocess.DEVNULL,
-            stdout=subprocess.PIPE if pipe_stdout else None,
-            stderr=subprocess.PIPE if pipe_stderr else None,
-            env=_build_spawn_env(run.env),
-            cwd=run.cwd,
-            **SUBPROCESS_TEXT_KWARGS,  # pyright: ignore[reportArgumentType]
-            **SESSION_KWARGS,
-        )
+        proc, protected = _spawn_agent_process(run, pipe_stdin, pipe_stdout, pipe_stderr)
         try:
             windows_job = _WindowsJob.assign(proc)
         except Exception:
@@ -1054,66 +1059,67 @@ def _run_agent_blocking(run: _ResolvedAgentRun) -> AgentResult:
         raise
 
     try:
-        if pipe_stdin and proc.stdin is None:
-            raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
-        if pipe_stdout:
-            if proc.stdout is None:
-                raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
-            stdout_thread = _start_pump_thread(
-                proc.stdout, stdout_capture, _STDOUT, _on_output_line
+        try:
+            if pipe_stdin and proc.stdin is None:
+                raise RuntimeError("subprocess.Popen failed to create PIPE stdin")
+            if pipe_stdout:
+                if proc.stdout is None:
+                    raise RuntimeError("subprocess.Popen failed to create PIPE stdout")
+                stdout_thread = _start_pump_thread(
+                    proc.stdout, stdout_capture, _STDOUT, _on_output_line
+                )
+            if pipe_stderr:
+                if proc.stderr is None:
+                    raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
+                stderr_thread = _start_pump_thread(
+                    proc.stderr, stderr_capture, _STDERR, _on_output_line
+                )
+            if run.stdin_text is not None:
+                writer_thread = _start_writer_thread(proc, run.stdin_text)
+            deadline = time.monotonic() + run.timeout if run.timeout is not None else None
+            returncode, timed_out, force_stopped = _wait_for_process(
+                proc,
+                deadline=deadline,
+                force_stop_event=run.force_stop_event,
+                windows_job=windows_job,
+                protected=protected,
+                correlation=f"iteration={run.iteration}",
             )
-        if pipe_stderr:
-            if proc.stderr is None:
-                raise RuntimeError("subprocess.Popen failed to create PIPE stderr")
-            stderr_thread = _start_pump_thread(
-                proc.stderr, stderr_capture, _STDERR, _on_output_line
-            )
-        if run.stdin_text is not None:
-            writer_thread = _start_writer_thread(proc, run.stdin_text)
-
-        deadline = time.monotonic() + run.timeout if run.timeout is not None else None
-        returncode, timed_out, force_stopped = _wait_for_process(
-            proc,
-            deadline=deadline,
-            force_stop_event=run.force_stop_event,
-            windows_job=windows_job,
-            correlation=f"iteration={run.iteration}",
+        finally:
+            if protected is not None:
+                if not protected.cleanup((stdout_thread, stderr_thread, writer_thread)):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            else:
+                _cleanup_agent(
+                    proc, stdout_thread, stderr_thread, writer_thread, windows_job=windows_job
+                )
+        stdout = stdout_capture.text
+        stderr = stderr_capture.text
+        tool_use_count, turn_capped = _count_tool_uses_post_hoc(
+            adapter=run.adapter,
+            stdout_lines=stdout_capture.tail,
+            stdout_capture=stdout_capture,
+            max_turns=run.max_turns,
+            on_tool_use=run.on_tool_use,
+        )
+        return AgentResult(
+            returncode=None if timed_out or force_stopped else returncode,
+            elapsed=time.monotonic() - start,
+            log_file=log_sink.path if log_sink is not None else None,
+            result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
+            timed_out=timed_out,
+            force_stopped=force_stopped,
+            captured_stdout=stdout if capture_stdout_text else None,
+            captured_stderr=stderr if capture_stderr_text else None,
+            tool_use_count=tool_use_count,
+            turn_capped=turn_capped,
+            completion_detected=completion_detected,
         )
     finally:
-        _cleanup_agent(
-            proc,
-            stdout_thread,
-            stderr_thread,
-            writer_thread,
-            windows_job=windows_job,
-        )
-
-    stdout = stdout_capture.text
-    stderr = stderr_capture.text
-    tool_use_count, turn_capped = _count_tool_uses_post_hoc(
-        adapter=run.adapter,
-        stdout_lines=stdout_capture.tail,
-        stdout_capture=stdout_capture,
-        max_turns=run.max_turns,
-        on_tool_use=run.on_tool_use,
-    )
-    stdout_capture.close()
-    if log_sink is not None:
-        log_sink.close()
-
-    return AgentResult(
-        returncode=None if timed_out or force_stopped else returncode,
-        elapsed=time.monotonic() - start,
-        log_file=log_sink.path if log_sink is not None else None,
-        result_text=result_text or _extract_result_text_from_lines(stdout_capture.tail),
-        timed_out=timed_out,
-        force_stopped=force_stopped,
-        captured_stdout=stdout if capture_stdout_text else None,
-        captured_stderr=stderr if capture_stderr_text else None,
-        tool_use_count=tool_use_count,
-        turn_capped=turn_capped,
-        completion_detected=completion_detected,
-    )
+        stdout_capture.close()
+        stderr_capture.close()
+        if log_sink is not None:
+            log_sink.close()
 
 
 def _prepare_agent_run(
@@ -1150,36 +1156,12 @@ def _prepare_agent_run(
         cwd=spec.cwd,
         completion_signal=spec.completion_signal,
         force_stop_event=spec.force_stop_event,
+        spawn_worker=spec.spawn_worker,
     )
 
 
 def execute_agent(spec: AgentRunSpec) -> AgentResult:
-    """Run the agent subprocess, auto-selecting streaming or blocking mode.
-
-    ``spec.adapter`` (or :func:`select_adapter` when omitted) decides which
-    execution path runs: adapters whose ``supports_streaming`` flag is True
-    take the line-streaming path that drives ``on_activity`` callbacks; all
-    others take the blocking path with concurrent stdout/stderr drain.
-    ``adapter.build_command(spec.cmd)`` is applied before spawning, so the
-    CLI receives any flags the adapter requires (e.g. Claude's
-    ``--output-format stream-json --verbose`` or Codex's ``--json``).
-
-    When ``spec.max_turns`` is set, the streaming path counts adapter-reported
-    tool-use events and terminates the subprocess once the cap is reached.
-    The blocking path cannot preempt but records the post-hoc count.
-    ``spec.max_turns_grace`` enables a soft wind-down: if the adapter supports
-    it, a per-iteration tempdir is set up with a counter file and environment
-    variables pointing the agent at ``_wind_down_shim`` so it can warn the
-    agent when the cap is ``grace`` tool-uses away.
-
-    This is the single entry point the engine should use — callers don't need
-    to know which execution mode is selected.
-
-    ``spec.cwd`` is the working directory the spawned agent process runs in.
-    When ``None`` (the default), the child inherits the parent's cwd —
-    preserving behaviour for direct engine callers. Pass the worktree path so
-    a worker agent edits its own node's repo rather than the orchestrator's.
-    """
+    """Run one agent with its selected adapter and worker context."""
     adapter = spec.adapter if spec.adapter is not None else select_adapter(spec.cmd)
     cmd = adapter.build_command(spec.cmd)
     # Let the adapter decide where the prompt goes: stdin adapters return
@@ -1199,7 +1181,8 @@ def execute_agent(spec: AgentRunSpec) -> AgentResult:
         on_tool_use=spec.on_tool_use,
         counter_path=wind_down.counter_path if wind_down is not None else None,
     )
-    env = wind_down.env_overrides if wind_down is not None else None
+    wind_down_overrides = wind_down.env_overrides if wind_down is not None else None
+    env = {**(spec.env or {}), **(wind_down_overrides or {})} or None
 
     run = _prepare_agent_run(spec, adapter, inv.argv, inv.stdin_text, wrapped_on_tool_use, env)
 
@@ -1212,16 +1195,12 @@ def execute_agent(spec: AgentRunSpec) -> AgentResult:
             wind_down.cleanup()
 
 
-def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str] | None:
-    """Compose a spawn environment without the controller master secret."""
-    if not overrides and CONTROLLER_MASTER_ENV not in os.environ:
-        return None
+def _build_spawn_env(overrides: dict[str, str] | None) -> dict[str, str]:
+    """Compose a marked worker environment without controller authority."""
     merged = os.environ.copy()
-    _ = merged.pop(CONTROLLER_MASTER_ENV, None)
     if overrides:
         merged.update(overrides)
-        _ = merged.pop(CONTROLLER_MASTER_ENV, None)
-    return merged
+    return mark_worker_env(merged)
 
 
 def _setup_wind_down(
@@ -1339,7 +1318,7 @@ def _wrap_tool_use_with_counter(
 def _count_tool_uses_post_hoc(
     *,
     adapter: CLIAdapter | None,
-    stdout_lines: _BoundedOutput | None,
+    stdout_lines: BoundedOutput | None,
     stdout_capture: _OutputCapture | None = None,
     max_turns: int | None,
     on_tool_use: ToolUseCallback | None,

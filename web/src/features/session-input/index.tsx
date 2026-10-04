@@ -11,10 +11,13 @@ import {
   sessionPageNext,
   sessionPagePrevious,
 } from '../../shared/node-detail';
+import { PendingPermissionIndicator } from './PendingPermissionIndicator';
 import { PermissionActions } from './PermissionActions';
 import { SessionInputSection } from './SessionInputSection';
 
 export function register(): void {
+  registerSlot('header-control', () => <PendingPermissionIndicator />);
+  registerSlot('permission-status', () => <PendingPermissionIndicator />);
   registerSlot('sidecar-section', () => <SessionInputSection />);
   registerSlot('sidecar-action', () => <PermissionActions />);
 

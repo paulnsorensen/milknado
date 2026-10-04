@@ -6,7 +6,7 @@ them straight.
 ## Kind gates *whether*, flavor picks *which*
 
 Only `TASK` nodes are ever dispatched — `milknado_todo_claim`
-(`mcp/node.py:135-136`) and `_claim_ralph` (`app/ralph.py:71`) both raise on
+(`mcp/node.py:135-136`) and `_claim_loop` (`app/loop.py:71`) both raise on
 non-TASK. `GOAL` is claimed only as a coordinator fence (`goal_claims` row);
 `ROADMAP` is a pure container. `flavor` exists only on TASK nodes
 (`types.py:86-95`).
@@ -41,25 +41,25 @@ The resolved flavor profile also carries `worktree`: an explicit flavor value wi
 ## One brief pipeline
 
 `render_brief` is the single node-context renderer for native/MCP and subprocess
-ralph workers. Assembly order is `{brief_prepend}` → task/review/plate heading →
+loop workers. Assembly order is `{brief_prepend}` → task/review/plate heading →
 goal context → completed prerequisites → relevant files → nearest spec →
 flavor-specific instructions.
 
-The ralph adapter receives that rendered markdown and appends only ralph-loop
+The loop adapter receives that rendered markdown and appends only loop
 scaffolding: optional prior review findings, quality gates, follow-up protocol,
-and the completion sentinel. `RALPH.md` remains a plain markdown prompt body,
+and the completion sentinel. `LOOP.md` remains a plain markdown prompt body,
 which is the format the loop runner parses.
 
 `ExecutionConfig.brief_prepend` carries the resolved profile through both
 subprocess entry points: `RunLoop._dispatch_batch` and the detached
-`_ralph_node_runner`. The base execution config starts from
+`_loop_node_runner`. The base execution config starts from
 `worker_brief_prepend`; a flavor profile replaces it per node.
 
 ## Three prepend knobs — don't conflate
 
 | Knob | Feeds | Path |
 |---|---|---|
-| `[milknado.flavor.<name>] brief_prepend` (or `_path`) | worker brief header | native/MCP and subprocess ralph |
+| `[milknado.flavor.<name>] brief_prepend` (or `_path`) | worker brief header | native/MCP and subprocess loop |
 | `planning_prompt_prepend` (cfg) | goal-decomposition prompt (`cli/plan.py` via `planning/context.py`) | planning only |
 | flavor `## Instructions` block | brief tail | static, code-owned (`brief.py`), only `review`/`plate` customized |
 
@@ -68,6 +68,6 @@ subprocess entry points: `RunLoop._dispatch_batch` and the detached
 Subprocess-spawned CLI workers get only `milknado_track_follow_up` +
 `milknado_deposit_result` (`WORKER_ALLOWED_TOOLS`, `agent_argv.py`); the native
 plugin agent adds `milknado_node_verify`. Run-dispatch tools are
-coordinator-only — ralph carries a permanent prohibition against granting them
-to workers (`mcp/ralph.py:1-12`). See
-[Execution & Dispatch](./execution.md) for the single-shot vs ralph family table.
+coordinator-only — loop carries a permanent prohibition against granting them
+to workers (`mcp/loop.py:1-12`). See
+[Execution & Dispatch](./execution.md) for the single-shot vs loop family table.

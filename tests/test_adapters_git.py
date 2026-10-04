@@ -222,17 +222,17 @@ class TestRemoveWorktreeFailClosed:
         assert stale.exists()
 
     def test_ignored_scaffolding_does_not_block_removal(self, repo: Path) -> None:
-        """RALPH.md / .ralph-logs are git-ignored in real worktrees — they must
+        """LOOP.md / .loop-logs are git-ignored in real worktrees — they must
         not count as dirt (verified against git 2.53: plain `worktree remove`
         deletes ignored files without --force)."""
-        _ = (repo / ".gitignore").write_text("RALPH.md\n.ralph-logs/\n")
+        _ = (repo / ".gitignore").write_text("LOOP.md\n.loop-logs/\n")
         _ = _git(repo, "add", ".gitignore")
         _ = _git(repo, "commit", "-qm", "ignore scaffolding")
         wt = repo.parent / "wt-scaffold"
         _ = _git(repo, "worktree", "add", "-q", "-b", "wb-scaffold", str(wt))
-        _ = (wt / "RALPH.md").write_text("# scaffolding\n")
-        (wt / ".ralph-logs").mkdir()
-        _ = (wt / ".ralph-logs" / "run.log").write_text("log\n")
+        _ = (wt / "LOOP.md").write_text("# scaffolding\n")
+        (wt / ".loop-logs").mkdir()
+        _ = (wt / ".loop-logs" / "run.log").write_text("log\n")
         GitAdapter(repo).remove_worktree(wt, "feature")
         assert not wt.exists()
 

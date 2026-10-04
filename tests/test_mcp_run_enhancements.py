@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, TypedDict, cast
 
 import pytest
+from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter
 from milknado.domains.common import GitPort, MilknadoConfig, NodeKind, RunResult, WorktreeMode
@@ -24,7 +25,7 @@ from milknado.domains.dispatch import (
 )
 from milknado.domains.graph import MikadoGraph, RunRecord
 from milknado.mcp._core import RunDict
-from milknado.mcp.ralph import milknado_run_loop_poll, milknado_run_loop_start
+from milknado.mcp.loop import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.run import (
     milknado_deposit_result,
     milknado_run_cancel,
@@ -101,6 +102,10 @@ def _force_run_id(graph: MikadoGraph, node_id: int, run_id: str) -> None:
     """Seed a node's run_id directly; no production API sets it in isolation."""
     _ = graph._conn.execute("UPDATE nodes SET run_id = ? WHERE id = ?", (run_id, node_id))  # pyright: ignore[reportPrivateUsage]
     _ = graph._conn.commit()  # pyright: ignore[reportPrivateUsage]
+
+
+def _pid_not_alive(_pid: int) -> bool:
+    return False
 
 
 def _init_git(root: Path) -> None:
@@ -440,7 +445,7 @@ class TestProtectedDispatch:
         _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
-            milknado_todo_add, description="schema-ralph-start", kind="task", project_root=root
+            milknado_todo_add, description="schema-loop-start", kind="task", project_root=root
         )
         result = _call(
             milknado_run_loop_start,
@@ -460,7 +465,7 @@ class TestProtectedDispatch:
         _init_git(tmp_path)
         root = str(tmp_path)
         task = _call(
-            milknado_todo_add, description="schema-ralph-poll", kind="task", project_root=root
+            milknado_todo_add, description="schema-loop-poll", kind="task", project_root=root
         )
         started = _call(
             milknado_run_loop_start,
@@ -813,13 +818,15 @@ class TestDispatchLifecycleGuards:
 
 
 def test_stale_sweep_logs_and_skips_malformed_started_at(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
 
     class Graph:
         def __init__(self) -> None:
             self.runs: Graph = self
+            self.db_path: Path = tmp_path / "evidence.db"
 
         def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
@@ -835,7 +842,7 @@ def test_stale_sweep_logs_and_skips_malformed_started_at(
             pass
 
     with caplog.at_level(logging.WARNING):
-        assert fail_stale_running_runs(Graph(), 4) == []
+        assert fail_stale_running_runs(Graph(), 4, ProcessAdapter()) == []
     assert "malformed timestamp" in caplog.text
 
 
@@ -945,12 +952,13 @@ class TestRunCancel:
         import signal as sig_mod
 
         run_id = "node-1-20260101T000000Z-abcd"
-        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=9999)
+        _seed_run(tmp_path, run_id=run_id, node_id=1, status="running", pid=2_000_000_000)
         killed: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
         _ = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
-        assert killed == [(9999, sig_mod.SIGTERM)], "must send SIGTERM to process group"
+        assert killed == [(2_000_000_000, sig_mod.SIGTERM)], "must send SIGTERM to process group"
 
     def test_cancel_writes_failed_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1332,7 +1340,7 @@ class TestAsyncCancel:
 
 
 class TestPidCancelReconcile:
-    """The pid (detached-ralph) cancel branch. The cooked change routes its node
+    """The pid (detached-loop) cancel branch. The cooked change routes its node
     reconcile through the run_id-fenced `_reconcile_cancel` — the deliberate
     deviation from the spec's "keep the pid path unchanged". These lock both the
     positive reconcile and the fence that the deviation exists to preserve."""
@@ -1351,12 +1359,12 @@ class TestPidCancelReconcile:
         return node_id
 
     def _write_pid_state(self, tmp_path: Path, run_id: str, node_id: int) -> None:
-        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running", pid=9999)
+        _seed_run(tmp_path, run_id=run_id, node_id=node_id, status="running", pid=2_000_000_000)
 
     def test_pid_cancel_reconciles_node_to_failed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A detached-ralph run (has pid) cancels: SIGTERM the group, write the
+        """A detached-loop run (has pid) cancels: SIGTERM the group, write the
         terminal state, and reconcile the node to failed through the run_id fence.
         Previously only the async branch's reconcile had a real-node test."""
         import signal as sig_mod
@@ -1367,11 +1375,14 @@ class TestPidCancelReconcile:
 
         killed: list[tuple[int, int]] = []
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda pgid, sig: killed.append((pgid, sig)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
 
-        assert killed == [(9999, sig_mod.SIGTERM)], "pid branch must SIGTERM the process group"
+        assert killed == [(2_000_000_000, sig_mod.SIGTERM)], (
+            "pid branch must SIGTERM the process group"
+        )
         assert result["status"] == "failed"
         assert result["exit_code"] == -1
         graph2, _cfg2 = open_graph(tmp_path)
@@ -1403,6 +1414,7 @@ class TestPidCancelReconcile:
         self._write_pid_state(tmp_path, stale_run, node_id)
 
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", lambda *a: None)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
         _ = _call(milknado_run_cancel, run_id=stale_run, project_root=str(tmp_path))
@@ -1419,7 +1431,7 @@ class TestPidCancelReconcile:
     def test_pid_cancel_tolerates_already_gone_process(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A detached-ralph run whose process group is already gone (killpg raises
+        """A detached-loop run whose process group is already gone (killpg raises
         ProcessLookupError) must still finalize cleanly: write the terminal state
         and reconcile the node, not propagate the signal error."""
         run_id = "node-1-20260101T000000Z-cccc"
@@ -1430,6 +1442,7 @@ class TestPidCancelReconcile:
             raise ProcessLookupError("no such process")
 
         monkeypatch.setattr(os, "getpgid", lambda pid: pid)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+        monkeypatch.setattr("milknado.adapters.process.pid_alive", _pid_not_alive)
         monkeypatch.setattr(os, "killpg", gone)
 
         result = _call(milknado_run_cancel, run_id=run_id, project_root=str(tmp_path))
@@ -1525,8 +1538,10 @@ class TestCancelFinalizeAndRace:
             _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
         )
 
-        class Process:
-            def terminate_group(self, pid: int, timeout: float) -> bool:  # pyright: ignore[reportUnusedParameter]
+        class Process(ProcessAdapter):
+            @override
+            def terminate_group(self, pid: int, timeout: float) -> bool:
+                _ = (pid, timeout)
                 return False
 
         with pytest.raises(RuntimeError, match="did not exit after termination"):
@@ -1538,7 +1553,9 @@ class TestCancelFinalizeAndRace:
                 "node-3-20260101T000000Z-stuk",
             )
 
-    def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(self) -> None:
+    def test_pid_cancel_fails_loud_when_terminal_write_is_not_confirmed(
+        self, tmp_path: Path
+    ) -> None:
         from milknado.domains.dispatch.cancel import (
             _cancel_pid_run,  # pyright: ignore[reportPrivateUsage]
         )
@@ -1546,6 +1563,9 @@ class TestCancelFinalizeAndRace:
         class Graph:
             def __init__(self) -> None:
                 self.runs: Graph = self
+                self.db_path: Path = tmp_path / "evidence.db"
+                evidence_graph = MikadoGraph(self.db_path)
+                evidence_graph.close()
 
             def finish(self, _run_id: str, _result: object) -> None:
                 pass
@@ -1776,13 +1796,13 @@ class TestDepositResult:
     def test_run_loop_poll_falls_back_to_latest_iteration_log_for_executor_runs(
         self, tmp_path: Path
     ) -> None:
-        """Medium: executor-owned (in-process) ralph runs never write the
+        """Medium: executor-owned (in-process) loop runs never write the
         detached path's flat <run_id>.log — they write one file per
-        iteration under a `.ralph-logs` directory instead. Poll must fall
+        iteration under a `.loop-logs` directory instead. Poll must fall
         back to tailing the newest iteration file rather than silently
         returning an empty summary forever."""
         run_id = "node-1-20260101T000000Z-1234"
-        log_dir = tmp_path / "milknado-1-task" / ".ralph-logs"
+        log_dir = tmp_path / "milknado-1-task" / ".loop-logs"
         log_dir.mkdir(parents=True)
         _ = (log_dir / "0001_20260101T000000Z.log").write_text(
             "iteration 1 output", encoding="utf-8"
@@ -1808,7 +1828,7 @@ class TestDepositResult:
         """The directory fallback must stay inside the project root — a
         tampered runs.log_path pointing at a directory elsewhere on disk
         must not be tailed, mirroring the flat-file derivation's guard."""
-        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-ralph-logs"
+        outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-loop-logs"
         outside_dir.mkdir(exist_ok=True)
         _ = (outside_dir / "0001_x.log").write_text("SECRET-ITERATION-OUTPUT", encoding="utf-8")
         try:
@@ -1994,15 +2014,19 @@ def test_cancel_finalize_adopts_late_terminal_winner() -> None:
     assert final["status"] == "done"
 
 
-def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
+def test_stale_reconcile_rejects_lost_terminal_fence(tmp_path: Path) -> None:
     from datetime import UTC, datetime, timedelta
 
+    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import reconcile
     from milknado.domains.graph import RunFenceLostError
 
     class Graph:
         def __init__(self) -> None:
             self.runs: Graph = self
+            self.db_path: Path = tmp_path / "evidence.db"
+            evidence_graph = MikadoGraph(self.db_path)
+            evidence_graph.close()
 
         def for_node(self, _node_id: int) -> list[dict[str, object]]:
             return [
@@ -2018,7 +2042,7 @@ def test_stale_reconcile_rejects_lost_terminal_fence() -> None:
             raise RunFenceLostError("finish_run lost its running-row fence")
 
     with pytest.raises(RunFenceLostError, match="running-row fence"):
-        _ = reconcile.fail_stale_running_runs(Graph(), 1)
+        _ = reconcile.fail_stale_running_runs(Graph(), 1, ProcessAdapter())
 
 
 def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(

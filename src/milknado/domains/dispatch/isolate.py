@@ -9,18 +9,22 @@ preserve the worktree for inspection.
 
 from __future__ import annotations
 
-import fcntl
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from filelock import FileLock
+
 from milknado.domains.common import GitPort, MikadoNode, UnlandedWorkError, slugify
 from milknado.domains.common.errors import GitOperationError
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -82,18 +86,10 @@ def create_isolated_worktree(
 
 @contextmanager
 def _merge_back_lock(root: Path) -> Generator[None, None, None]:
-    """Serialize merge-backs across processes on a repo-scoped ``flock``.
-
-    Both the sync (``_maybe_merge_back``) and async (``_async_merge_back``) paths
-    funnel through ``merge_back_isolated``, so a single exclusive lock here is the
-    one choke point that stops two concurrent dispatches from rebase-merging onto
-    the same dispatch branch at once. Blocking acquire; the lock releases when the
-    file handle closes.
-    """
+    """Serialize merge-backs with a portable, process-scoped file lock."""
     lock_dir = root / ".milknado"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    with (lock_dir / "merge-back.lock").open("w") as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+    with FileLock(lock_dir / "merge-back.lock", timeout=-1):
         yield
 
 
@@ -106,7 +102,11 @@ def setup_isolated_worktree(
     worktree_pattern: str,
 ) -> IsolateContext:
     context = create_isolated_worktree(git, root, node.id, node.description, worktree_pattern)
-    graph.set_worktree(node.id, run_id, str(context.worktree_path), context.worker_branch)
+    try:
+        graph.set_worktree(node.id, run_id, str(context.worktree_path), context.worker_branch)
+    except Exception:
+        git.force_remove_worktree(context.worktree_path)
+        raise
     return context
 
 
@@ -134,3 +134,21 @@ def merge_back_isolated(git: GitPort, root: Path, ctx: IsolateContext) -> MergeB
         except (GitOperationError, UnlandedWorkError):
             return MergeBackResult(rebased=False, worktree_preserved=str(ctx.worktree_path))
     return MergeBackResult(rebased=True, worktree_preserved=None)
+
+
+def merge_back_if_done(
+    git: GitPort,
+    root: Path,
+    context: IsolateContext | None,
+    terminal: str,
+) -> MergeBackResult | None:
+    if context is None or terminal != "done":
+        return None
+    result = merge_back_isolated(git, root, context)
+    if result.worktree_preserved is not None:
+        _logger.warning(
+            "ISOLATE merge-back for branch %s did not tear down; preserved worktree %s",
+            context.worker_branch,
+            result.worktree_preserved,
+        )
+    return result

@@ -1,7 +1,13 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from '../../app/api';
-import { getDetailState, resetTab, setActiveTab, type DetailState } from '../../shared/node-detail';
+import { resetStore, setSelection } from '../../app/store';
+import {
+  getDetailState,
+  resetTab,
+  setActiveTab,
+  type DetailState,
+} from '../../shared/node-detail';
 import { resetChanges } from './changesState';
 import { ChangesSection } from './ChangesSection';
 
@@ -12,7 +18,14 @@ vi.mock('../../shared/node-detail', async (importOriginal) => ({
   subscribeDetail: vi.fn(() => () => {}),
 }));
 
-const emptyPage = { items: [], offset: 0, limit: 50, total: 0, has_more: false, state: 'loaded' as const };
+const emptyPage = {
+  items: [],
+  offset: 0,
+  limit: 50,
+  total: 0,
+  has_more: false,
+  state: 'loaded' as const,
+};
 
 function detailStateWithRun(runId: string | null): DetailState {
   return {
@@ -23,7 +36,14 @@ function detailStateWithRun(runId: string | null): DetailState {
       node_id: 7,
       request_generation: 1,
       detail: {
-        node: { id: 7, description: '', status: 'running', parent_id: null, kind: 'task', flavor: null },
+        node: {
+          id: 7,
+          description: '',
+          status: 'running',
+          parent_id: null,
+          kind: 'task',
+          flavor: null,
+        },
         description: '',
         parent: null,
         ancestors: emptyPage,
@@ -31,7 +51,19 @@ function detailStateWithRun(runId: string | null): DetailState {
         dependent_ids: emptyPage,
         owned_files: emptyPage,
         runs: runId
-          ? { ...emptyPage, items: [{ run_id: runId, node_id: 7, status: 'running', started_at: '', ended_at: null, error: null }] }
+          ? {
+              ...emptyPage,
+              items: [
+                {
+                  run_id: runId,
+                  node_id: 7,
+                  status: 'running',
+                  started_at: '',
+                  ended_at: null,
+                  error: null,
+                },
+              ],
+            }
           : emptyPage,
         sessions: emptyPage,
       },
@@ -41,22 +73,39 @@ function detailStateWithRun(runId: string | null): DetailState {
 
 describe('ChangesSection', () => {
   beforeEach(() => {
+    resetStore();
+    setSelection(7);
     resetTab();
     resetChanges();
-    vi.mocked(get).mockResolvedValue([{ path: 'a.py', status: 'modified', added: 1, removed: 0, old_path: null }]);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('diff text', { status: 200 })));
+    vi.mocked(get).mockResolvedValue([
+      {
+        path: 'a.py',
+        status: 'modified',
+        added: 1,
+        removed: 0,
+        old_path: null,
+      },
+    ]);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response('diff text', { status: 200 })),
+    );
   });
 
   afterEach(() => {
     cleanup();
+    resetStore();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
-  it('renders nothing outside the changes tab', () => {
+  it('keeps an inactive tabpanel hidden outside the changes tab', () => {
     vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
     const { container } = render(<ChangesSection />);
-    expect(container.children.length).toBe(0);
+    const panel = container.querySelector('[role="tabpanel"]') as HTMLElement;
+
+    expect(panel).not.toBeNull();
+    expect(panel.hidden).toBe(true);
   });
 
   it('lists changed files and shows the diff for the selected file', async () => {
@@ -79,6 +128,32 @@ describe('ChangesSection', () => {
 
     render(<ChangesSection />);
 
-    expect(await screen.findByText('No changed files yet.')).toBeTruthy();
+    expect(await screen.findByText('No changes')).toBeTruthy();
+  });
+
+  it('classifies each diff line kind by its unified-diff prefix', async () => {
+    vi.mocked(getDetailState).mockReturnValue(detailStateWithRun('run-1'));
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response('@@ -1,1 +1,1 @@\n+added\n-removed\ncontext', {
+            status: 200,
+          }),
+        ),
+    );
+    setActiveTab('changes');
+
+    render(<ChangesSection />);
+    (await screen.findByText('a.py')).click();
+
+    const diff = await screen.findByRole('region', { name: 'Unified diff' });
+    expect(diff.querySelector('.mk-dl-hunk')?.textContent).toContain(
+      '@@ -1,1 +1,1 @@',
+    );
+    expect(diff.querySelector('.mk-dl-add')?.textContent).toContain('+added');
+    expect(diff.querySelector('.mk-dl-del')?.textContent).toContain('-removed');
+    expect(diff.querySelector('.mk-dl-ctx')?.textContent).toContain('context');
   });
 });

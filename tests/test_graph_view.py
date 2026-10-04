@@ -5,10 +5,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pytest
-from textual.app import App, ComposeResult
-from typing_extensions import override
 
-from milknado.app.graph_panels import GraphTree
 from milknado.app.graph_view import (
     GraphTreeEntry,
     detail_navigation_text,
@@ -245,56 +242,3 @@ def test_detail_navigation_uses_aggregate_page_sets() -> None:
     assert node.id == 9
     assert "] next" in navigation
     assert ") next" in navigation
-
-
-class _TreeApp(App[None]):
-    snapshot: GraphSnapshot
-
-    def __init__(self, snapshot: GraphSnapshot) -> None:
-        super().__init__()
-        self.snapshot = snapshot
-
-    @override
-    def compose(self) -> ComposeResult:
-        yield GraphTree()
-
-    def on_mount(self) -> None:
-        self.query_one(GraphTree).update_graph(self.snapshot, 2)
-
-
-@pytest.mark.asyncio
-async def test_graph_tree_preserves_root_collapse_and_primary_identity() -> None:
-    root = MikadoNode(1, "root", kind=NodeKind.GOAL, created_at=_CREATED)
-    child = MikadoNode(2, "primary child", parent_id=1, created_at=_CREATED)
-    other_root = MikadoNode(3, "other root", kind=NodeKind.GOAL, created_at=_CREATED)
-    snapshot = GraphSnapshot(
-        (root, child, other_root),
-        (MikadoEdge(1, 2), MikadoEdge(3, 2)),
-        (1, 3),
-    )
-    app = _TreeApp(snapshot)
-    async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.pause()
-
-        tree = app.query_one(GraphTree)
-        primary = tree.root.children[0].children[0]
-        _ = tree.move_cursor(primary, animate=False)
-        assert tree.cursor_node is primary
-        assert primary.data is not None
-        assert primary.data.node_id == 2
-        assert primary.parent is tree.root.children[0]
-
-        _ = tree.root.collapse()
-        updated = GraphSnapshot(
-            (replace(root, description="updated root"), child, other_root),
-            snapshot.edges,
-            snapshot.root_ids,
-        )
-        tree.update_graph(updated, 2)
-        await pilot.pause()
-
-        assert not tree.root.is_expanded
-        updated_primary = tree.root.children[0].children[0]
-        assert updated_primary.data is not None
-        assert updated_primary.data.node_id == 2
-        assert updated_primary.parent is tree.root.children[0]

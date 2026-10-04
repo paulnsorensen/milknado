@@ -5,23 +5,30 @@ import subprocess
 import threading
 import time
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO
+from typing import IO, cast
 
 from milknado.domains.common import SessionContext, SessionEvent
 from milknado.loop._agent import (
     AgentResult,
     AgentRunSpec,
+    _build_spawn_env,  # pyright: ignore[reportPrivateUsage]
     _WindDownContext,  # pyright: ignore[reportPrivateUsage]
 )
+from milknado.loop._output import BoundedOutput
+from milknado.loop._process_contract import WorkerHandle
+from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._factory import create_protocol
+from milknado.loop.sessions._outcome import SessionOutcome
+from milknado.loop.sessions._outcome import publish_events as _publish_events
 from milknado.loop.sessions._process import (
+    CAPTURE_LIMIT,
     POLL_INTERVAL,
     READER_QUEUE_LIMIT,
-    BoundedTail,
     Line,
     cleanup_process,
     finish_process,
@@ -38,38 +45,19 @@ from milknado.loop.sessions._stream import StreamContext, consume, drain
 
 
 @dataclass(slots=True)
-class _SessionOutcome:
-    done: bool = False
-    failed: bool = False
-    interrupted: bool = False
-    result_text: str | None = None
-    session_id: str | None = None
-    tool_count: int = 0
-    capped: bool = False
-    timed_out: bool = False
-    force_stopped: bool = False
-    interrupt_requested: bool = False
-    tool_ids: set[str] = field(default_factory=set)
-    reader_failed: bool = False
-
-
-def _publish_events(channel: SessionChannel, events: tuple[SessionEvent, ...]) -> None:
-    _ = tuple(map(channel.publish, events))
-
-
-@dataclass(slots=True)
 class _SessionExecution:
     spec: AgentRunSpec
     channel: SessionChannel
     protocol: SessionProtocol
     process_invocation_id: str
     start_step: ProtocolStep
-    outcome: _SessionOutcome
+    outcome: SessionOutcome
     started_at: float
     lines: queue.Queue[Line]
     log_file: Path | None = None
     log_handle: IO[str] | None = None
     proc: subprocess.Popen[bytes] | None = None
+    protected: WorkerHandle | None = None
     stop: threading.Event = field(default_factory=threading.Event)
     threads: list[threading.Thread] = field(default_factory=list)
     eof_streams: set[str] = field(default_factory=set)
@@ -79,20 +67,33 @@ class _SessionExecution:
     def launch(self) -> None:
         self.wind_down = prepare_wind_down(self.spec)
         env = {
+            **(self.spec.env or {}),
             **(self.wind_down.env_overrides if self.wind_down is not None else {}),
             "MILKNADO_INVOCATION_ID": self.process_invocation_id,
         }
-        proc = start_process(
-            self.protocol,
-            self.spec.cwd or Path.cwd(),
-            env=env,
-        )
+        cwd = self.spec.cwd or Path.cwd()
+        if self.spec.spawn_worker is not None:
+            self.protected = self.spec.spawn_worker(
+                SpawnOptions(
+                    self.protocol.command,
+                    cwd,
+                    _build_spawn_env(env),
+                    False,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
+                    subprocess.PIPE,
+                    self.process_invocation_id,
+                )
+            )
+            proc = cast(subprocess.Popen[bytes], self.protected.process)
+        else:
+            proc = start_process(self.protocol, cwd, env=env)
         self.proc = proc
         self.threads = start_readers(proc, self.lines, self.stop, self.spec.iteration)
         self.stream_context = StreamContext(
             channel=self.channel,
-            stdout_tail=BoundedTail(),
-            stderr_tail=BoundedTail(),
+            stdout_tail=BoundedOutput(CAPTURE_LIMIT),
+            stderr_tail=BoundedOutput(CAPTURE_LIMIT),
             log_handle=self.log_handle,
             on_stdout=self.receive_line,
             on_output_line=self.spec.on_output_line,
@@ -106,8 +107,7 @@ class _SessionExecution:
         actions = tuple(self.protocol.actions)
         if step.session_id is not None:
             outcome.session_id = step.session_id
-        context = channel.view().context
-        if context is not None and step.done:
+        if (context := channel.view().context) is not None and step.done:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
         for event in step.events:
             if publish_events:
@@ -123,8 +123,7 @@ class _SessionExecution:
             outcome.result_text = step.result_text
         outcome.done, outcome.failed = outcome.done or step.done, outcome.failed or step.failed
         outcome.interrupted = outcome.interrupted or step.interrupted
-        context = channel.view().context
-        if context is not None:
+        if (context := channel.view().context) is not None:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
 
     def apply_step(self, step: ProtocolStep) -> None:
@@ -172,16 +171,15 @@ class _SessionExecution:
         assert context is not None
         assert self.proc is not None
         deadline = self.started_at + self.spec.timeout if self.spec.timeout is not None else None
-        force_stop = self.spec.force_stop_event
         while True:
-            if force_stop is not None and force_stop.is_set():
+            if self.spec.force_stop_event is not None and self.spec.force_stop_event.is_set():
                 self.outcome.force_stopped = True
                 break
             if deadline is not None and time.monotonic() >= deadline:
                 self.outcome.timed_out = True
                 break
             submitted = self.submit_inputs()
-            if self.proc.poll() is not None:
+            if self.proc.poll() is not None and self.protected is None:
                 terminate(self.proc)
             if self.outcome.done and not submitted and self.lines.empty():
                 time.sleep(POLL_INTERVAL)
@@ -208,16 +206,15 @@ class _SessionExecution:
             if self.spec.max_turns is not None and self.outcome.tool_count >= self.spec.max_turns:
                 self.outcome.capped = True
                 break
+        self._finish(context)
+
+    def _finish(self, context: StreamContext) -> None:
         assert self.proc is not None
-        finish_process(
-            self.proc,
-            graceful=not (
-                self.outcome.timed_out
-                or self.outcome.force_stopped
-                or not self.outcome.done
-                or self.outcome.capped
-            ),
-        )
+        if self.protected is not None:
+            if not self.protected.complete(graceful=self.outcome.graceful):
+                raise RuntimeError("worker cleanup remains unresolved")
+        else:
+            finish_process(self.proc, graceful=self.outcome.graceful)
         drain(self.lines, self.eof_streams, context)
 
     def result(self) -> AgentResult:
@@ -232,9 +229,6 @@ class _SessionExecution:
         elif returncode is None or returncode < 0:
             returncode = 0
         signal = self.spec.completion_signal
-        completion_detected = bool(
-            signal and has_promise_completion(self.outcome.result_text, signal)
-        )
         return AgentResult(
             returncode=returncode,
             timed_out=self.outcome.timed_out,
@@ -243,7 +237,9 @@ class _SessionExecution:
             session_id=self.outcome.session_id,
             result_text=self.outcome.result_text,
             captured_stdout=context.stdout_tail.text,
-            completion_detected=completion_detected,
+            completion_detected=bool(
+                signal and has_promise_completion(self.outcome.result_text, signal)
+            ),
             captured_stderr=context.stderr_tail.text,
             force_stopped=self.outcome.force_stopped,
             interrupted=self.outcome.interrupted and self.outcome.interrupt_requested,
@@ -252,12 +248,16 @@ class _SessionExecution:
         )
 
     def cleanup(self) -> None:
-        if self.proc is not None:
-            cleanup_process(self.proc, self.stop, tuple(self.threads))
-        if self.log_handle is not None:
-            self.log_handle.close()
-        if self.wind_down is not None:
-            self.wind_down.cleanup()
+        with ExitStack() as cleanup:
+            if self.wind_down is not None:
+                _ = cleanup.callback(self.wind_down.cleanup)
+            if self.log_handle is not None:
+                _ = cleanup.callback(self.log_handle.close)
+            if self.protected is not None:
+                if not self.protected.cleanup(tuple(self.threads), stop=self.stop):
+                    raise RuntimeError("worker cleanup remains unresolved")
+            elif self.proc is not None:
+                cleanup_process(self.proc, self.stop, tuple(self.threads))
 
 
 def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecution:
@@ -267,7 +267,6 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         raise ValueError(f"unsupported structured session command: {spec.cmd!r}")
     context = channel.view().context or SessionContext(family=Path(spec.cmd[0]).stem, cwd=str(cwd))
     process_invocation_id = uuid.uuid4().hex
-    started_at = time.monotonic()
     start_step = protocol.start(spec.prompt)
     channel.start(context, tuple(protocol.actions), invocation_id=process_invocation_id)
     execution = _SessionExecution(
@@ -276,8 +275,8 @@ def _new_execution(spec: AgentRunSpec, channel: SessionChannel) -> _SessionExecu
         protocol=protocol,
         process_invocation_id=process_invocation_id,
         start_step=start_step,
-        outcome=_SessionOutcome(),
-        started_at=started_at,
+        outcome=SessionOutcome(),
+        started_at=time.monotonic(),
         lines=queue.Queue(maxsize=READER_QUEUE_LIMIT),
     )
     execution.remember_step(start_step)

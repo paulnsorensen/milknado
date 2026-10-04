@@ -599,7 +599,7 @@ class TestGitFailureFailsClosed:
 
 class TestGateCapSizing:
     """The high-severity defect this guards: the per-gate cap was a 60s borrow
-    from DEFAULT_COMMAND_TIMEOUT (sized for short RALPH.md frontmatter snippets),
+    from DEFAULT_COMMAND_TIMEOUT (sized for short LOOP.md frontmatter snippets),
     but the gates are the repo's real quality suite — `uv run pytest` over the
     full test set runs for minutes. A 60s cap times out every honest completion,
     retries to budget, and fails loud. These tests encode WHY the cap is large:
@@ -645,8 +645,8 @@ class TestCreateRunAttachesVerifier:
         adapter = LoopAdapter()
         run = adapter.create_run(
             agent="claude",
-            ralph_dir=worktree,
-            ralph_file=worktree / "RALPH.md",
+            loop_dir=worktree,
+            loop_file=worktree / "LOOP.md",
             quality_gates=(Gate(command="true"),),
             base_oid=_BASE_OIDS[worktree],
         )
@@ -662,8 +662,8 @@ class TestCreateRunAttachesVerifier:
         adapter = LoopAdapter()
         run = adapter.create_run(
             agent="claude",
-            ralph_dir=worktree,
-            ralph_file=worktree / "RALPH.md",
+            loop_dir=worktree,
+            loop_file=worktree / "LOOP.md",
             quality_gates=None,
             base_oid=_BASE_OIDS[worktree],
         )

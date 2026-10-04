@@ -4,13 +4,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from milknado.adapters._loop_local_runs import (
+    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
+)
 from milknado.adapters.loop import (
     MAX_CONSECUTIVE_AGENT_FAILURES,
     MILKNADO_COMPLETION_SIGNAL,
     LoopAdapter,
-    _build_ralph_content,  # pyright: ignore[reportPrivateUsage]
+    _build_loop_content,  # pyright: ignore[reportPrivateUsage]
     _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
-    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
 )
 from milknado.domains.common import RunResult, SessionView
 from milknado.domains.common.config import Gate
@@ -51,8 +53,8 @@ class TestCreateRun:
 
         result = adapter.create_run(
             agent="claude",
-            ralph_dir=Path("/project"),
-            ralph_file=Path("/project/RALPH.md"),
+            loop_dir=Path("/project"),
+            loop_file=Path("/project/LOOP.md"),
             quality_gates=(Gate(command="uv run ruff check"),),
             commit_footer="Co-authored-by: Team <team@example.com>",
             timeout=12.5,
@@ -60,18 +62,19 @@ class TestCreateRun:
 
         mock_config_cls.assert_called_once_with(
             agent="claude",
-            ralph_dir=Path("/project"),
-            ralph_file=Path("/project/RALPH.md"),
+            loop_dir=Path("/project"),
+            loop_file=Path("/project/LOOP.md"),
             project_root=Path("/project"),
             completion_signal=MILKNADO_COMPLETION_SIGNAL,
             stop_on_completion_signal=True,
             completion_required=True,
             stop_on_error=True,
-            log_dir=Path("/project") / ".ralph-logs",
+            log_dir=Path("/project") / ".loop-logs",
             commit_footer="Co-authored-by: Team <team@example.com>",
             max_consecutive_failures=MAX_CONSECUTIVE_AGENT_FAILURES,
             max_iterations=None,
             timeout=12.5,
+            env=None,
         )
         mock_manager.create_run.assert_called_once_with(  # pyright: ignore[reportAny]
             mock_config,
@@ -91,8 +94,8 @@ class TestCreateRun:
 
         _ = adapter.create_run(
             agent="claude",
-            ralph_dir=Path("/project"),
-            ralph_file=Path("/project/RALPH.md"),
+            loop_dir=Path("/project"),
+            loop_file=Path("/project/LOOP.md"),
             quality_gates=(Gate(command="just check-llm"),),
             max_iterations=3,
             completion_probe=lambda: True,
@@ -417,10 +420,10 @@ class TestWaitForNextCompletion:
         assert success == "failed"
 
 
-class TestGenerateRalphMd:
+class TestGenerateLoopMd:
     def test_writes_file(self, adapter: LoopAdapter, tmp_path: Path) -> None:
-        output = tmp_path / "RALPH.md"
-        result = adapter.generate_ralph_md(
+        output = tmp_path / "LOOP.md"
+        result = adapter.generate_loop_md(
             brief="# Task: Extract interface\n\n## Goal context\n\n- refactor auth",
             quality_gates=(Gate(command="uv run pytest"),),
             output_path=output,
@@ -433,10 +436,10 @@ class TestGenerateRalphMd:
         assert "`uv run pytest`" in content
 
 
-class TestBuildRalphContent:
+class TestBuildLoopContent:
     def test_includes_shared_brief_and_loop_scaffolding(self) -> None:
         brief = "# Task: Do thing\n\n## Goal context\n\n- Ship it"
-        content = _build_ralph_content(brief, (Gate(command="gate1"), Gate(command="gate2")))
+        content = _build_loop_content(brief, (Gate(command="gate1"), Gate(command="gate2")))
         assert content.startswith(brief)
         assert "## Context" not in content
         assert "- `gate1`" in content
@@ -445,7 +448,7 @@ class TestBuildRalphContent:
     def test_findings_section_emitted_before_brief(self) -> None:
         findings = "[P1][correctness] off-by-one in retry loop\n\nevidence: x.py:42"
         brief = "# Task: Do thing"
-        content = _build_ralph_content(
+        content = _build_loop_content(
             brief,
             (Gate(command="gate1"),),
             prior_findings=findings,
@@ -456,39 +459,39 @@ class TestBuildRalphContent:
         assert content.index("## Prior review findings") < content.index(brief)
 
     def test_findings_section_omitted_by_default(self) -> None:
-        content = _build_ralph_content("# Task: Do thing", (Gate(command="gate1"),))
+        content = _build_loop_content("# Task: Do thing", (Gate(command="gate1"),))
         assert "Prior review findings" not in content
 
     def test_findings_without_round_omits_round_label(self) -> None:
-        content = _build_ralph_content(
+        content = _build_loop_content(
             "# Task: Do thing", (Gate(command="gate1"),), prior_findings="finding"
         )
         assert "## Prior review findings\n" in content
         assert "(round" not in content
 
     def test_blank_findings_omits_section(self) -> None:
-        content = _build_ralph_content(
+        content = _build_loop_content(
             "# Task: Do thing", (Gate(command="gate1"),), prior_findings="  "
         )
         assert "Prior review findings" not in content
 
     def test_includes_completion_promise_instruction(self) -> None:
-        content = _build_ralph_content("# Task: Do thing", (Gate(command="gate1"),))
+        content = _build_loop_content("# Task: Do thing", (Gate(command="gate1"),))
         assert "## Completion" in content
         assert f"<promise>{MILKNADO_COMPLETION_SIGNAL}</promise>" in content
 
     def test_none_gates_renders_no_gates_notice(self) -> None:
-        content = _build_ralph_content("# Task: Task", None)
+        content = _build_loop_content("# Task: Task", None)
         assert "no gates configured" in content
         assert "## Completion" in content
 
     def test_empty_gates_renders_skip_notice(self) -> None:
-        content = _build_ralph_content("# Task: Spec task", ())
+        content = _build_loop_content("# Task: Spec task", ())
         assert "explicitly skipped" in content
         assert "no gates configured" not in content
 
     def test_completion_block_ends_file(self) -> None:
-        content = _build_ralph_content("# Task: Batch node", (Gate(command="uv run pytest"),))
+        content = _build_loop_content("# Task: Batch node", (Gate(command="uv run pytest"),))
         completion_pos = content.rfind("## Completion")
         assert completion_pos != -1
         assert (
@@ -596,7 +599,7 @@ class TestVerifySpec:
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
-        with patch("milknado.adapters.loop.time") as mock_time:
+        with patch("milknado.adapters._loop_local_runs.time") as mock_time:
             # deadline = monotonic() + 120; the next reading is past it, so
             # remaining <= 0 trips before any blocking queue.get().
             mock_time.monotonic.side_effect = [0.0, 200.0]  # pyright: ignore[reportAny]
@@ -606,13 +609,13 @@ class TestVerifySpec:
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
     def test_queue_timeout_stops_and_joins_verifier(self) -> None:
-        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
+        from milknado.adapters._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         events = MagicMock()
         events.get.side_effect = queue.Empty  # pyright: ignore[reportAny]
 
-        result = _drain_verify_run(manager, "verify-empty", events)
+        result = drain_verify_run(manager, "verify-empty", events)
 
         manager.stop_and_join.assert_called_once_with("verify-empty", timeout=5.0)  # pyright: ignore[reportAny]
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
@@ -708,7 +711,7 @@ class TestDrainVerifyRunExceptionHandler:
     ) -> None:
         import logging
 
-        from milknado.adapters.loop import _drain_verify_run  # pyright: ignore[reportPrivateUsage]
+        from milknado.adapters._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         manager.stop_and_join.side_effect = RuntimeError("stop boom")  # pyright: ignore[reportAny]
@@ -716,7 +719,7 @@ class TestDrainVerifyRunExceptionHandler:
         events.get.side_effect = RuntimeError("drain boom")  # pyright: ignore[reportAny]
 
         with caplog.at_level(logging.ERROR):
-            result = _drain_verify_run(manager, "verify-failed", events)
+            result = drain_verify_run(manager, "verify-failed", events)
 
         assert result == VerifySpecResult(
             outcome="gaps", goal_delta="verification failed: drain boom"
@@ -825,8 +828,8 @@ class TestCreateRunWithProjectRoot:
 
         _ = adapter.create_run(
             agent="claude",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / "ralph.md",
+            loop_dir=tmp_path,
+            loop_file=tmp_path / "loop.md",
             quality_gates=(),
             project_root=tmp_path,
         )
@@ -848,8 +851,8 @@ class TestCreateRunWithProjectRoot:
 
         _ = adapter.create_run(
             agent="omp",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / "ralph.md",
+            loop_dir=tmp_path,
+            loop_file=tmp_path / "loop.md",
             quality_gates=(),
             project_root=tmp_path,
         )
@@ -869,8 +872,8 @@ class TestCreateRunWithProjectRoot:
 
         _ = adapter.create_run(
             agent="claude",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / "ralph.md",
+            loop_dir=tmp_path,
+            loop_file=tmp_path / "loop.md",
             quality_gates=(),
             project_root=tmp_path,  # .mcp.json does not exist
         )
@@ -879,7 +882,7 @@ class TestCreateRunWithProjectRoot:
         assert "--mcp-config" not in call_kwargs["agent"]
 
     @patch("milknado.adapters.loop.RunConfig")
-    def test_log_dir_routed_to_ralph_logs(
+    def test_log_dir_routed_to_loop_logs(
         self,
         mock_config_cls: MagicMock,
         adapter: LoopAdapter,
@@ -891,25 +894,25 @@ class TestCreateRunWithProjectRoot:
 
         _ = adapter.create_run(
             agent="claude",
-            ralph_dir=tmp_path,
-            ralph_file=tmp_path / "ralph.md",
+            loop_dir=tmp_path,
+            loop_file=tmp_path / "loop.md",
             quality_gates=(),
         )
 
         call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
-        assert call_kwargs["log_dir"] == tmp_path / ".ralph-logs"
+        assert call_kwargs["log_dir"] == tmp_path / ".loop-logs"
 
 
-class TestGenerateRalphMdWriteError:
+class TestGenerateLoopMdWriteError:
     def test_raises_on_write_failure(self, adapter: LoopAdapter, tmp_path: Path) -> None:
-        from milknado.domains.common.errors import RalphMarkdownWriteError
+        from milknado.domains.common.errors import LoopMarkdownWriteError
 
-        bad_path = tmp_path / "nonexistent_dir" / "RALPH.md"
+        bad_path = tmp_path / "nonexistent_dir" / "LOOP.md"
         # Make the parent non-writable to force OSError
         with patch("milknado.adapters.loop.Path.write_text") as mock_write:
             mock_write.side_effect = OSError("disk full")
-            with pytest.raises(RalphMarkdownWriteError) as exc_info:
-                _ = adapter.generate_ralph_md(
+            with pytest.raises(LoopMarkdownWriteError) as exc_info:
+                _ = adapter.generate_loop_md(
                     brief="# Task: Task",
                     quality_gates=(),
                     output_path=bad_path,
@@ -981,8 +984,8 @@ class TestWorkerFailureCap:
     ) -> None:
         _ = adapter.create_run(
             agent="claude",
-            ralph_dir=Path("/project"),
-            ralph_file=Path("/project/RALPH.md"),
+            loop_dir=Path("/project"),
+            loop_file=Path("/project/LOOP.md"),
             quality_gates=None,
         )
 

@@ -4,6 +4,7 @@
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { Milknado } from '../../design-system';
+import { Dialog } from '../../shared/dialog/Dialog';
 import { confirmPending, dismissConfirm, getPendingConfirm, subscribeConfirm } from './confirmState';
 
 export function ConfirmDialog(): ReactElement | null {
@@ -15,10 +16,20 @@ export function ConfirmDialog(): ReactElement | null {
   }
 
   return (
-    <div role="alertdialog" aria-label={pending.prompt} className="mk-confirm-dialog">
-      <p>{pending.prompt}</p>
-      <Button onClick={confirmPending}>Confirm</Button>
-      <Button onClick={dismissConfirm}>Dismiss</Button>
-    </div>
+    <Dialog
+      role="alertdialog"
+      title={pending.prompt}
+      onClose={dismissConfirm}
+      actions={
+        <>
+          <Button onClick={dismissConfirm}>{pending.dismissLabel}</Button>
+          <Button variant="primary" onClick={confirmPending}>
+            {pending.confirmLabel}
+          </Button>
+        </>
+      }
+    >
+      <p className="mk-dialog-body">{pending.body}</p>
+    </Dialog>
   );
 }

@@ -2,25 +2,26 @@
 // `app/wire.ts` does not type: the stream sends a raw ExecutionSnapshot
 // with no `capabilities`. `mergeSnapshot` restores the field from the
 // store's last-known value so `setSnapshot` always sees a full snapshot.
-import type { WireCapabilities, WireExecutionSnapshot } from '../../app/wire';
+import type { WireActiveRun, WireCapabilities, WireExecutionSnapshot, WireRunStatus } from '../../app/wire';
 
-export type WireRunStatus = 'running' | 'completed' | 'failed' | 'stopped';
+export type { WireActiveRun, WireRunStatus };
 
-export interface WireActiveRun {
+export interface WireTerminalRun {
   run_id: string;
   node_id: number;
   description: string;
-  status: WireRunStatus;
+  status: Exclude<WireRunStatus, 'running'>;
 }
-
 export interface RawStreamSnapshot extends Omit<WireExecutionSnapshot, 'capabilities'> {
   active_runs: WireActiveRun[];
+  terminal_runs?: WireTerminalRun[];
   event_lines: string[];
   capabilities?: WireCapabilities;
 }
 
 export interface StreamSnapshot extends WireExecutionSnapshot {
   active_runs: WireActiveRun[];
+  terminal_runs?: WireTerminalRun[];
   event_lines: string[];
 }
 
@@ -34,6 +35,7 @@ export const DEFAULT_CAPABILITIES: WireCapabilities = {
   graph_edits: EMPTY_CAPABILITY,
   review_decision: EMPTY_CAPABILITY,
   git: EMPTY_CAPABILITY,
+  host_owner: EMPTY_CAPABILITY,
   owner: { available: false },
 };
 

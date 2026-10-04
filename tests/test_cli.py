@@ -16,7 +16,7 @@ from milknado.cli.tools import (
     _write_gemini_worker_settings,  # pyright: ignore[reportPrivateUsage]
     _write_worker_hooks,  # pyright: ignore[reportPrivateUsage]
 )
-from milknado.domains.common import NodeKind, NodeSpec, default_config
+from milknado.domains.common import NodeKind, NodeSpec, TerminalRunOutcome, default_config
 from milknado.domains.common.agent_argv import WORKER_ALLOWED_TOOLS
 from milknado.domains.planning.planner import PlanResult
 
@@ -37,14 +37,14 @@ def _unique_run_factory() -> MagicMock:
     return mock
 
 
-def _configure_ralph_mocks(
-    ralph_cls: MagicMock,
+def _configure_loop_mocks(
+    loop_cls: MagicMock,
     project_dir: Path,
     *,
     unique: bool = False,
 ) -> None:
     if unique:
-        ralph_cls.return_value.create_run = _unique_run_factory()  # pyright: ignore[reportAny]
+        loop_cls.return_value.create_run = _unique_run_factory()  # pyright: ignore[reportAny]
     else:
 
         def _create_run(*_args: object, **kwargs: object) -> MagicMock:
@@ -52,17 +52,17 @@ def _configure_ralph_mocks(
             run.state.run_id = kwargs.get("run_id") or "run-1"  # pyright: ignore[reportAny]
             return run
 
-        ralph_cls.return_value.create_run.side_effect = _create_run  # pyright: ignore[reportAny]
-    ralph_cls.return_value.generate_ralph_md.return_value = project_dir / "RALPH.md"  # pyright: ignore[reportAny]
+        loop_cls.return_value.create_run.side_effect = _create_run  # pyright: ignore[reportAny]
+    loop_cls.return_value.generate_loop_md.return_value = project_dir / "LOOP.md"  # pyright: ignore[reportAny]
 
     def _wait_for_next_completion(
         active_run_ids: set[str],
         timeout: float | None = None,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, TerminalRunOutcome]:
         _ = timeout
-        return next(iter(active_run_ids)), "completed"
+        return next(iter(active_run_ids)), TerminalRunOutcome("completed")
 
-    ralph_cls.return_value.wait_for_next_completion.side_effect = _wait_for_next_completion  # pyright: ignore[reportAny]
+    loop_cls.return_value.wait_for_next_completion.side_effect = _wait_for_next_completion  # pyright: ignore[reportAny]
 
 
 def _disable_review_for_test(project_dir: Path) -> None:
@@ -78,13 +78,13 @@ def project_dir(tmp_path: Path) -> Path:
 @pytest.fixture()
 def mock_adapters():
     with (
-        patch("milknado.adapters.LoopAdapter") as ralph,
+        patch("milknado.adapters.LoopAdapter") as loop,
         patch("milknado.adapters.GitAdapter") as git,
         patch("milknado.adapters.CrgAdapter") as crg,
     ):
         crg.return_value.get_impact_radius.return_value = {}  # pyright: ignore[reportAny]
         git.return_value.branch_exists.return_value = False  # pyright: ignore[reportAny]
-        yield ralph, git, crg
+        yield loop, git, crg
 
 
 class TestInit:
@@ -288,7 +288,7 @@ class TestStatus:
 
     @patch("milknado.adapters.loop.LoopAdapter")
     def test_enriches_running_node_with_run_state(
-        self, mock_ralph_cls: MagicMock, project_dir: Path
+        self, mock_loop_cls: MagicMock, project_dir: Path
     ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
@@ -303,15 +303,15 @@ class TestStatus:
 
         fake_run = MagicMock()
         fake_run.status = "in_progress"
-        mock_ralph_cls.return_value.get_run.return_value = fake_run  # pyright: ignore[reportAny]
+        mock_loop_cls.return_value.get_run.return_value = fake_run  # pyright: ignore[reportAny]
 
         result = runner.invoke(app, ["status", str(project_dir)])
         assert result.exit_code == 0
-        mock_ralph_cls.return_value.get_run.assert_called_once_with("run-42")  # pyright: ignore[reportAny]
+        mock_loop_cls.return_value.get_run.assert_called_once_with("run-42")  # pyright: ignore[reportAny]
 
     @patch("milknado.adapters.loop.LoopAdapter")
     def test_run_state_enrichment_is_best_effort(
-        self, mock_ralph_cls: MagicMock, project_dir: Path
+        self, mock_loop_cls: MagicMock, project_dir: Path
     ) -> None:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
@@ -324,13 +324,13 @@ class TestStatus:
         graph.mark_running(worker.id, run_id="run-99")
         graph.close()
 
-        mock_ralph_cls.return_value.get_run.side_effect = RuntimeError("ralph down")  # pyright: ignore[reportAny]
+        mock_loop_cls.return_value.get_run.side_effect = RuntimeError("loop down")  # pyright: ignore[reportAny]
 
         result = runner.invoke(app, ["status", str(project_dir)])
         assert result.exit_code == 0
         assert "Worker" in result.output
         assert "Degraded status: 1 run state unavailable" in result.output
-        assert "run-99: RuntimeError: ralph down" in result.output
+        assert "run-99: RuntimeError: loop down" in result.output
 
 
 class TestAddNode:
@@ -1356,7 +1356,7 @@ class TestRunCommand:
     ) -> None:
         # The protected-branch guard now runs before the no-nodes check, so the
         # branch must resolve to a valid, non-protected name for this path.
-        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        _mock_loop_cls, mock_git_cls, _mock_crg_cls = mock_adapters
         mock_git_cls.return_value.current_branch.return_value = "feature-x"  # pyright: ignore[reportAny]
         _ = runner.invoke(app, ["init", str(project_dir)])
         result = runner.invoke(
@@ -1374,7 +1374,7 @@ class TestRunCommand:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        _mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        _mock_loop_cls, mock_git_cls, _mock_crg_cls = mock_adapters
         mock_git_cls.return_value.current_branch.return_value = "feature-x"  # pyright: ignore[reportAny]
         _ = runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
@@ -1397,10 +1397,11 @@ class TestRunCommand:
         project_dir: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        """Run ready nodes without requiring an exported controller secret."""
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         _ = runner.invoke(app, ["init", str(project_dir)])
         _disable_review_for_test(project_dir)
@@ -1410,15 +1411,7 @@ class TestRunCommand:
         _ = graph.add_node("leaf task", parent_id=root.id)
         graph.close()
         monkeypatch.delenv("MILKNADO_CONTROLLER_MASTER")
-        missing_master = runner.invoke(
-            app,
-            ["run", "--project-root", str(project_dir)],
-        )
-        assert missing_master.exit_code == 2
-        assert "MILKNADO_CONTROLLER_MASTER is required before dispatch" in missing_master.output
-        monkeypatch.setenv("MILKNADO_CONTROLLER_MASTER", "test-controller-master")
-
-        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+        _configure_loop_mocks(mock_loop_cls, project_dir)
 
         result = runner.invoke(
             app,
@@ -1428,6 +1421,34 @@ class TestRunCommand:
         assert "Starting execution loop" in result.output
         assert "All nodes complete. Root goal achieved." in result.output
 
+    def test_controller_storage_error_is_cli_failure(
+        self,
+        mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
+        project_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Report controller credential storage failures through the run CLI."""
+        from milknado.domains.common import default_config
+        from milknado.domains.graph import MikadoGraph
+
+        _mock_loop_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_git_cls.return_value.current_branch.return_value = "feature-x"  # pyright: ignore[reportAny]
+        _ = runner.invoke(app, ["init", str(project_dir)])
+        _disable_review_for_test(project_dir)
+        config = default_config(project_dir)
+        graph = MikadoGraph(config.db_path)
+        root = graph.add_node("root goal")
+        _ = graph.add_node("leaf task", parent_id=root.id)
+        graph.close()
+        monkeypatch.delenv("MILKNADO_CONTROLLER_MASTER", raising=False)
+        monkeypatch.setenv("XDG_STATE_HOME", "relative-state")
+        _configure_loop_mocks(_mock_loop_cls, project_dir)
+
+        result = runner.invoke(app, ["run", "--project-root", str(project_dir)])
+
+        assert result.exit_code == 2
+        assert "XDG_STATE_HOME must be an absolute path" in result.output
+
     def test_dispatches_multiple_parallel_leaves(
         self,
         mock_adapters: tuple[MagicMock, MagicMock, MagicMock],
@@ -1436,7 +1457,7 @@ class TestRunCommand:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         _ = runner.invoke(app, ["init", str(project_dir)])
         _disable_review_for_test(project_dir)
@@ -1447,7 +1468,7 @@ class TestRunCommand:
         _ = graph.add_node("leaf-b", parent_id=root.id)
         graph.close()
 
-        _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)
+        _configure_loop_mocks(mock_loop_cls, project_dir, unique=True)
 
         result = runner.invoke(
             app,
@@ -1464,7 +1485,7 @@ class TestRunCommand:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = (project_dir / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
         _ = runner.invoke(app, ["init", str(project_dir)])
         _disable_review_for_test(project_dir)
@@ -1477,7 +1498,7 @@ class TestRunCommand:
         graph.files.claim(b.id, ["shared.py"])
         graph.close()
 
-        _configure_ralph_mocks(mock_ralph_cls, project_dir, unique=True)
+        _configure_loop_mocks(mock_loop_cls, project_dir, unique=True)
 
         result = runner.invoke(
             app,
@@ -1576,7 +1597,7 @@ class TestRunCommand:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, mock_git_cls, _mock_crg_cls = mock_adapters
         mock_git_cls.return_value.current_branch.return_value = "main"  # pyright: ignore[reportAny]
         _ = runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
@@ -1593,8 +1614,8 @@ class TestRunCommand:
         assert result.exit_code == 2
         assert "Refusing to run on protected branch" in result.output
         # No executor/worktree constructed: the adapter class is never instantiated.
-        mock_ralph_cls.assert_not_called()
-        mock_ralph_cls.return_value.create_run.assert_not_called()  # pyright: ignore[reportAny]
+        mock_loop_cls.assert_not_called()
+        mock_loop_cls.return_value.create_run.assert_not_called()  # pyright: ignore[reportAny]
 
     def test_allow_protected_bypasses_guard_on_protected_branch(
         self,
@@ -1679,7 +1700,7 @@ class TestRunRunnabilityGate:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1687,7 +1708,7 @@ class TestRunRunnabilityGate:
         _ = graph.add_node("task", parent_id=root.id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.close()
 
-        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+        _configure_loop_mocks(mock_loop_cls, project_dir)
 
         result = runner.invoke(
             app,
@@ -1707,7 +1728,7 @@ class TestRunRunnabilityGate:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        _mock_ralph, mock_git, _mock_crg = mock_adapters
+        _mock_loop, mock_git, _mock_crg = mock_adapters
         mock_git.return_value.current_branch.return_value = "feature/tui"  # pyright: ignore[reportAny]
 
         _ = runner.invoke(app, ["init", str(project_dir)])
@@ -1757,7 +1778,7 @@ class TestRunRunnabilityGate:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1766,7 +1787,7 @@ class TestRunRunnabilityGate:
         _ = graph.add_node("leaf task", parent_id=root.id)
         graph.close()
 
-        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+        _configure_loop_mocks(mock_loop_cls, project_dir)
 
         result = runner.invoke(
             app,
@@ -1787,7 +1808,7 @@ class TestRunRunnabilityGate:
         from milknado.domains.common import default_config
         from milknado.domains.graph import MikadoGraph
 
-        mock_ralph_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
+        mock_loop_cls, _mock_git_cls, _mock_crg_cls = mock_adapters
         _ = runner.invoke(app, ["init", str(project_dir)])
         config = default_config(project_dir)
         graph = MikadoGraph(config.db_path)
@@ -1796,7 +1817,7 @@ class TestRunRunnabilityGate:
         _ = graph.add_node("task", parent_id=root.id, spec=NodeSpec(kind=NodeKind.TASK))
         graph.close()
 
-        _configure_ralph_mocks(mock_ralph_cls, project_dir)
+        _configure_loop_mocks(mock_loop_cls, project_dir)
 
         result = runner.invoke(
             app,
@@ -1928,7 +1949,7 @@ class TestPrintRunResult:
 
     def test_rebase_conflicts_rendered(self, capsys: pytest.CaptureFixture[str]) -> None:
         from milknado.cli.run import _print_run_result  # pyright: ignore[reportPrivateUsage]
-        from milknado.domains.execution.executor import RebaseConflict
+        from milknado.domains.execution._models import RebaseConflict
         from milknado.domains.execution.run_loop import RunLoopResult
 
         conflict = RebaseConflict(

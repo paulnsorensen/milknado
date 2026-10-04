@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 import typer
 from rich.console import Console
 
+from milknado.adapters import ProcessAdapter
 from milknado.cli._helpers import (
     DEFAULT_PROJECT_ROOT,
     typer_argument,
@@ -25,7 +26,7 @@ from milknado.cli._helpers import (
 from milknado.cli._helpers import (
     load_or_default as _load_or_default,
 )
-from milknado.domains.common import CONTROLLER_MASTER_ENV
+from milknado.domains.graph import ControllerAuthorizationError
 
 console = Console()
 
@@ -176,12 +177,22 @@ def run(  # noqa: PLR0913 - Typer requires one parameter per CLI option at this 
     port: RunPortOption = 8000,
     no_open: NoOpenOption = False,
 ) -> None:
-    """Execute ready leaf nodes as parallel ralph loops."""
+    """Execute ready leaf nodes as parallel loops."""
     _run(RunCommandOptions(project_root, strict, allow_protected, web, port, no_open))
 
 
 def _run(options: RunCommandOptions) -> None:
+    """Execute a run command after parsing its grouped options."""
+    from milknado.domains.common import WORKER_CONTEXT_ENV
+
+    if os.environ.get(WORKER_CONTEXT_ENV) == "1":
+        console.print(
+            "[red]milknado run cannot start inside a milknado worker "
+            + f"({WORKER_CONTEXT_ENV}=1)[/red]"
+        )
+        raise typer.Exit(code=2)
     project_root, strict, allow_protected, web, port, no_open = options
+    from milknado.app._shutdown import ShutdownSignal
     from milknado.app.run import (
         ProtectedBranchRefusal,
         build_execution_controller,
@@ -226,7 +237,7 @@ def _run(options: RunCommandOptions) -> None:
 
         interactive = _is_interactive_terminal()
         if not interactive:
-            _ = reconcile_orphaned_runs(graph)
+            _ = reconcile_orphaned_runs(graph, ProcessAdapter())
         controller = (
             build_execution_controller(graph, config, project_root) if interactive else None
         )
@@ -261,6 +272,8 @@ def _run(options: RunCommandOptions) -> None:
         _print_run_result(result)
         if result.strict_exit:
             raise typer.Exit(code=1)
+    except ShutdownSignal as shutdown:
+        raise typer.Exit(code=128 + shutdown.signum) from None
     except ProtectedBranchRefusal as refusal:
         if refusal.reason == "detached":
             console.print(
@@ -273,9 +286,7 @@ def _run(options: RunCommandOptions) -> None:
                 + "Pass --allow-protected to override.[/red]"
             )
         raise typer.Exit(code=2) from None
-    except RuntimeError as exc:
-        if "controller master" not in str(exc) and CONTROLLER_MASTER_ENV not in str(exc):
-            raise
+    except ControllerAuthorizationError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=2) from None
     finally:
