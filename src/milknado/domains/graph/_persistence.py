@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import milknado.domains.graph._execution_groups as _execution_groups
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
 import milknado.domains.graph.controller_capability as _controller_capability
@@ -226,6 +227,8 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "permission_commands_json TEXT NOT NULL DEFAULT '[]'",
     ),
     (25, _worker_persistence.CREATE_RUN_WORKERS),
+    (26, _execution_groups.CREATE_EXECUTION_GROUPS),
+    (27, _execution_groups.CREATE_EXECUTION_GROUP_TASKS),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

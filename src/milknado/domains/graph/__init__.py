@@ -1,5 +1,11 @@
 from milknado.domains.common.errors import RunFenceLostError
 from milknado.domains.graph._command_admission import admit_session_command
+from milknado.domains.graph._execution_groups import (
+    ExecutionGroup,
+    ExecutionGroupStore,
+    GroupWorkspace,
+    TaskOutcome,
+)
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._goal_review_scope import top_level_goal
 from milknado.domains.graph._run_persistence import RunRecord
@@ -73,6 +79,10 @@ from milknado.domains.graph.worker_evidence import (
 __all__ = [
     "admit_session_command",
     "ControllerAuthorizationError",
+    "ExecutionGroup",
+    "ExecutionGroupStore",
+    "GroupWorkspace",
+    "TaskOutcome",
     "ConcurrencyLimitReached",
     "HostCapacityFull",
     "connect_readonly",

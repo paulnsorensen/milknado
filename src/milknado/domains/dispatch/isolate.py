@@ -15,11 +15,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from filelock import FileLock
 
 from milknado.domains.common import GitPort, MikadoNode, UnlandedWorkError, slugify
 from milknado.domains.common.errors import GitOperationError
+from milknado.domains.graph import ExecutionGroup, ExecutionGroupStore, GroupWorkspace
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
@@ -43,6 +45,46 @@ class IsolateContext:
 class MergeBackResult:
     rebased: bool
     worktree_preserved: str | None
+
+
+@dataclass(frozen=True)
+class GroupWorktreeRequest:
+    graph_id: str
+    task_ids: tuple[int, ...]
+    provider_session_id: str
+    description: str
+    source_group_id: str | None = None
+
+
+def setup_group_worktree(
+    store: ExecutionGroupStore,
+    git: GitPort,
+    root: Path,
+    request: GroupWorktreeRequest,
+) -> ExecutionGroup:
+    """Create a distinct checkout and persist its group owner."""
+    if request.source_group_id is not None:
+        source = store.get(request.source_group_id)
+        if source is None:
+            raise ValueError("source execution group does not exist")
+        if git.current_branch() != source.branch_name:
+            raise ValueError("fork must start from the source group branch")
+    token = uuid4().hex[:12]
+    slug = slugify(request.description, max_length=30) or "group"
+    path = root.parent / f"{root.name}-group-{token}-{slug}"
+    branch = f"milknado/group-{token}-{slug}"
+    base_oid = git.resolve_ref(f"refs/heads/{git.current_branch()}")
+    _ = git.create_worktree(path, branch)
+    try:
+        if git.resolve_ref(branch) != base_oid:
+            raise GitOperationError("checkout changed while group worktree was being created")
+        workspace = GroupWorkspace(str(path), branch, request.provider_session_id)
+        if request.source_group_id is None:
+            return store.create(request.graph_id, request.task_ids, workspace)
+        return store.fork(request.source_group_id, request.task_ids, workspace)
+    except Exception:
+        discard_isolated_worktree(git, path, branch)
+        raise
 
 
 def _create_node_worktree(

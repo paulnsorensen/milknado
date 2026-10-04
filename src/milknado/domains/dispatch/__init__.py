@@ -25,10 +25,12 @@ from milknado.domains.dispatch.brief import (
 )
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.isolate import (
+    GroupWorktreeRequest,
     IsolateContext,
     MergeBackResult,
     create_isolated_worktree,
     discard_isolated_worktree,
+    setup_group_worktree,
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.lifecycle import (
@@ -71,6 +73,7 @@ __all__ = [
     "ReapRequest",
     "RunResult",
     "IsolateContext",
+    "GroupWorktreeRequest",
     "MergeBackResult",
     "SyncDispatchRequest",
     "Descendant",
@@ -106,6 +109,7 @@ __all__ = [
     "resolve_attach_target",
     "request_cancel",
     "setup_isolated_worktree",
+    "setup_group_worktree",
     "discard_isolated_worktree",
     "run_headless",
     "runs_dir",
