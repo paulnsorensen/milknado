@@ -10,6 +10,7 @@ from milknado.domains.common import GitPort, SessionInput
 from milknado.domains.dispatch import ProcessTerminationPort, cancel_run
 from milknado.domains.graph import MikadoGraph, OwnerCapabilities, admit_session_command
 from milknado.web.commands import (
+    CoordinatorPort,
     GitInspection,
     GraphEditCommands,
     OwnerCapabilitiesProvider,
@@ -38,6 +39,7 @@ class HostDependencies:
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
+    coordinator: CoordinatorPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +154,7 @@ def owner_commands(
         git=dependencies.git,
         host_owner=True,
         owner_capabilities=dependencies.owner_capabilities,
+        coordinator=dependencies.coordinator,
     )
 
 
@@ -190,4 +193,5 @@ def observer_commands(
         review_decision=dependencies.review_decision,
         git=dependencies.git,
         owner_capabilities=dependencies.owner_capabilities,
+        coordinator=dependencies.coordinator,
     )

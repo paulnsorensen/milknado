@@ -9,6 +9,7 @@ from typing import Protocol
 
 from milknado.adapters import ChangedFile
 from milknado.domains.common import SessionContext, SessionInput
+from milknado.domains.coordinator import CoordinatorCommand
 from milknado.domains.graph import (
     GoalReviewDecisionRequest,
     GoalReviewRecord,
@@ -49,6 +50,11 @@ class GitInspection(Protocol):
     def diff(self, context: SessionContext, path: str) -> str: ...
 
 
+class CoordinatorPort(Protocol):
+    def read_coordinator_snapshot(self, session_id: str, cursor: int) -> object: ...
+    def send_coordinator_command(self, session_id: str, command: CoordinatorCommand) -> object: ...
+
+
 @dataclass(frozen=True, slots=True)
 class WebCommands:
     session_input: SessionInputHandler | None = None
@@ -60,6 +66,7 @@ class WebCommands:
     git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
     host_owner: bool = False
+    coordinator: CoordinatorPort | None = None
 
 
 def _capability(value: object | None, reason: str) -> dict[str, object]:
@@ -80,6 +87,7 @@ def build_capabilities(commands: WebCommands) -> dict[str, object]:
             commands.review_decision, "Review decisions are unavailable."
         ),
         "git": _capability(commands.git, "Git inspection is unavailable."),
+        "coordinator": _capability(commands.coordinator, "Coordinator is unavailable."),
         "host_owner": {
             "available": commands.host_owner,
             "reason": None if commands.host_owner else "This web host is read-only.",
