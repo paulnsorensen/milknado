@@ -6,6 +6,7 @@ import queue
 import shlex
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, cast
 
@@ -35,7 +36,14 @@ from milknado.domains.common import (
 )
 from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
 from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
-from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+from milknado.loop import (
+    CompletionVerdict,
+    EventType,
+    QueueEmitter,
+    RunConfig,
+    RunManager,
+    RunStatus,
+)
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
@@ -129,9 +137,20 @@ class LoopAdapter(LoopSessionMixin):
         if completion_probe is not None:
             config.completion_probe = completion_probe
         if completion_probe is None:
-            config.completion_verifier = build_completion_verifier(
-                loop_dir, quality_gates, base_oid=base_oid
-            )
+            verifier = build_completion_verifier(loop_dir, quality_gates, base_oid=base_oid)
+            graph = self._graph
+            if graph is not None and run_id is not None:
+                graph_run_id = run_id
+
+                def verify() -> CompletionVerdict:
+                    verdict = verifier()
+                    verified_at = datetime.now(UTC).isoformat()
+                    graph.runs.record_verification(graph_run_id, verdict.ok, verified_at)
+                    return verdict
+
+                config.completion_verifier = verify
+            else:
+                config.completion_verifier = verifier
         if os.name != "nt" and self._graph is not None and run_id is None:
             raise RuntimeError("graph node run requires a graph run ID")
         run = self._manager.create_run(config, emitter=self._emitter, run_id=run_id)

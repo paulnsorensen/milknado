@@ -33,6 +33,7 @@ from milknado.domains.execution.completion import (
     _run_quality_gates,  # pyright: ignore[reportPrivateUsage]
     build_completion_verifier,
 )
+from milknado.domains.graph import MikadoGraph
 from milknado.loop import CompletionVerdict
 from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
@@ -655,6 +656,37 @@ class TestCreateRunAttachesVerifier:
         assert callable(verifier)
         assert isinstance(verifier(), CompletionVerdict)
         assert verifier().ok is True
+
+    def test_graph_run_persists_completion_verifier_receipt(
+        self, worktree: Path, tmp_path: Path
+    ) -> None:
+        _commit_change(worktree)
+        graph = MikadoGraph(tmp_path / "graph.db")
+        try:
+            node = graph.add_node("Verify")
+            adapter = LoopAdapter(graph=graph)
+            for run_id, gates, expected in (
+                ("rejected", None, "rejected"),
+                ("accepted", (Gate(command="true"),), "accepted"),
+            ):
+                graph.runs.start(run_id, node.id, "/l", "2026-01-01T00:00:00+00:00", 600)
+                run = adapter.create_run(
+                    agent="claude",
+                    loop_dir=worktree,
+                    loop_file=worktree / "LOOP.md",
+                    quality_gates=gates,
+                    base_oid=_BASE_OIDS[worktree],
+                    run_id=run_id,
+                )
+                verifier = run.config.completion_verifier
+                assert callable(verifier)
+                assert verifier().ok is (expected == "accepted")
+                receipt = graph.runs.get(run_id)
+                assert receipt is not None
+                assert receipt["verification_status"] == expected
+                assert receipt["verified_at"]
+        finally:
+            graph.close()
 
     def test_create_run_with_none_gates_verifier_fails_closed(self, worktree: Path) -> None:
         """When quality_gates=None, the attached verifier must fail-closed."""

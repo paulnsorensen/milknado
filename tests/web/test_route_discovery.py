@@ -25,6 +25,7 @@ def test_routes_are_discovered() -> None:
         "/api/runs/{run_id}/changes",
         "/api/runs/{run_id}/diff",
         "/api/scheduling/stop",
+        "/api/coordinators",
         "/api/coordinators/commands",
         "/api/coordinators/{session_id}/commands",
         "/api/coordinators/{session_id}/snapshot",

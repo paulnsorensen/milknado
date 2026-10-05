@@ -783,6 +783,44 @@ body {
   color: var(--mk-at-risk);
 }
 
+.mk-coordinator-cockpit {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-2);
+  max-height: 38vh;
+  padding: var(--mk-space-3);
+  overflow: auto;
+  border: 1px solid var(--mk-line);
+  border-radius: var(--mk-radius-md);
+  background: var(--mk-surface);
+  font: var(--mk-type-caption);
+  overflow-wrap: anywhere;
+}
+
+.mk-coordinator-cockpit form,
+.mk-coordinator-evidence,
+.mk-coordinator-evidence section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mk-space-1);
+}
+
+.mk-coordinator-cockpit input,
+.mk-coordinator-cockpit select {
+  width: 100%;
+}
+
+.mk-coordinator-actions {
+  display: flex;
+  gap: var(--mk-space-2);
+}
+
+.mk-coordinator-evidence section {
+  padding-top: var(--mk-space-2);
+  border-top: 1px solid var(--mk-line);
+}
+
 /* Below the one-screen canvas minimum, stack detail below the graph and let
    the page grow. This keeps every operator control reachable instead of
    clipping the fixed desktop columns. */

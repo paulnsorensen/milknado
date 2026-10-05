@@ -79,6 +79,8 @@ def _run_record(status: str = "running", error: str | None = None) -> RunRecord:
         "timeout_seconds": None,
         "detail": None,
         "rebased": None,
+        "verification_status": None,
+        "verified_at": None,
     }
 
 

@@ -8,42 +8,12 @@ from datetime import UTC, datetime
 from typing import TypedDict, cast
 
 from milknado.domains.common import RunFenceLostError, RunResult
+from milknado.domains.graph._run_models import RunRecord as RunRecord
+from milknado.domains.graph._run_models import RunRow
 from milknado.domains.graph._sqlite_rows import as_tuple as _as_tuple
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
 _logger = logging.getLogger(__name__)
-
-
-class _RunRow(TypedDict):
-    run_id: str
-    node_id: int
-    status: str
-    pid: int | None
-    log_path: str
-    started_at: str
-    ended_at: str | None
-    timed_out: int
-    exit_code: int | None
-    error: str | None
-    timeout_seconds: int | None
-    detail: str | None
-    rebased: int | None
-
-
-class RunRecord(TypedDict):
-    run_id: str
-    node_id: int
-    status: str
-    pid: int | None
-    log_path: str
-    started_at: str
-    ended_at: str | None
-    timed_out: bool
-    exit_code: int | None
-    error: str | None
-    timeout_seconds: int | None
-    detail: str | None
-    rebased: bool | None
 
 
 class NodeReviewRecord(TypedDict):
@@ -71,7 +41,7 @@ def run_row_to_dict(row: sqlite3.Row) -> RunRecord:
     `timed_out` / `rebased` are stored as INTEGER and re-hydrated to bool/None so
     a poll payload reads the same as the old JSON sidecar (which carried bools).
     """
-    raw = cast(_RunRow, cast(object, row))
+    raw = cast(RunRow, cast(object, row))
     rebased = raw["rebased"]
     return {
         "run_id": raw["run_id"],
@@ -87,6 +57,8 @@ def run_row_to_dict(row: sqlite3.Row) -> RunRecord:
         "timeout_seconds": raw["timeout_seconds"],
         "detail": raw["detail"],
         "rebased": bool(rebased) if rebased is not None else None,
+        "verification_status": raw["verification_status"],
+        "verified_at": raw["verified_at"],
     }
 
 
@@ -134,6 +106,19 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None
             result.status,
         )
         raise RunFenceLostError(f"finish_run lost its running-row fence for run {run_id}")
+
+
+def record_verification(
+    conn: sqlite3.Connection, run_id: str, accepted: bool, verified_at: str
+) -> None:
+    """Store the latest completion-verifier verdict under the running-run fence."""
+    cursor = conn.execute(
+        "UPDATE runs SET verification_status = ?, verified_at = ? WHERE run_id = ? AND status = ?",
+        ("accepted" if accepted else "rejected", verified_at, run_id, _RUN_STATUS_RUNNING),
+    )
+    conn.commit()
+    if cursor.rowcount == 0:
+        raise RunFenceLostError(f"verification lost its running-row fence for run {run_id}")
 
 
 def set_run_pid(conn: sqlite3.Connection, run_id: str, pid: int) -> None:

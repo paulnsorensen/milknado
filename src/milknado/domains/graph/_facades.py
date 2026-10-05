@@ -57,6 +57,10 @@ class _RunFacade(_SubFacade):
         _run_persistence.finish_run(self._conn, run_id, result)
 
     @synchronized
+    def record_verification(self, run_id: str, accepted: bool, verified_at: str) -> None:
+        _run_persistence.record_verification(self._conn, run_id, accepted, verified_at)
+
+    @synchronized
     def set_pid(self, run_id: str, pid: int) -> None:
         _run_persistence.set_run_pid(self._conn, run_id, pid)
 
@@ -168,7 +172,8 @@ class _SessionFacade(_SubFacade):
 class _FileFacade(_SubFacade):
     @synchronized
     def claim(self, node_id: int, files: list[str]) -> None:
-        _persistence.set_file_ownership(self._conn, node_id, files)
+        conn = self._conn
+        _persistence.set_file_ownership(conn, node_id, files, _in_transaction=conn.in_transaction)
 
     @synchronized
     def for_node(self, node_id: int) -> list[str]:

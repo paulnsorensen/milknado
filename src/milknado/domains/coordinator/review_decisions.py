@@ -3,11 +3,17 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from milknado.domains.coordinator.commands import record_control_once
-from milknado.domains.coordinator.control_models import DecideGoalReview
+from milknado.domains.coordinator.control_models import DecideGoalReview, RequestGoalReview
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import create_coordinator_tables
-from milknado.domains.graph import GoalReviewDecisionRequest, GoalReviewRecord, MikadoGraph
+from milknado.domains.coordinator.workflow import CoordinatorWorkflow
+from milknado.domains.graph import (
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    GoalReviewRequest,
+    MikadoGraph,
+)
 
 
 def decide_goal_review(
@@ -71,3 +77,21 @@ def decide_coordinator_review(
         command.decided_by.strip(),
     )
     return "accepted", review
+
+
+def request_coordinator_review(
+    workflow: CoordinatorWorkflow, session: CoordinatorSession, command: RequestGoalReview
+) -> GoalReviewRecord:
+    reviewer = command.reviewer.strip()
+    if not reviewer:
+        raise ValueError("reviewer identity is required")
+    request = GoalReviewRequest(
+        session.goal_id,
+        command.goal_revision,
+        command.evidence,
+        command.proposed_change,
+        command.affected_node_ids,
+        reviewer=reviewer,
+        operation_id=command.command_id,
+    )
+    return workflow.review_goal_change(session, request)

@@ -19,7 +19,8 @@ export function DefaultLayout(): ReactElement {
   const canvasSize = useRegionSize(canvasRef);
   const { MikadoGraph } = Milknado;
 
-  const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
+  const graph = state.coordinatorGraph ?? state.snapshot?.graph;
+  const nodes = graph ? toGraphNodes(graph) : [];
 
   return (
     <>

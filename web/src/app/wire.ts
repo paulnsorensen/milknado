@@ -81,6 +81,7 @@ export interface GraphNodeData {
   kind: 'goal' | 'subgoal' | 'task';
   state: WireNodeStatus;
   parent: string | number | null;
+  extra?: Array<string | number>;
 }
 
 function toDesignSystemKind(node: WireNode): 'goal' | 'subgoal' | 'task' {
@@ -91,11 +92,23 @@ function toDesignSystemKind(node: WireNode): 'goal' | 'subgoal' | 'task' {
 }
 
 export function toGraphNodes(graph: WireGraphSnapshot): GraphNodeData[] {
+  const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const extras = new Map<number, number[]>();
+  for (const edge of graph.edges) {
+    const dependent = nodesById.get(edge.parent_id);
+    const prerequisite = nodesById.get(edge.child_id);
+    if (!dependent || !prerequisite ||
+        dependent.parent_id === prerequisite.id || prerequisite.parent_id === dependent.id) {
+      continue;
+    }
+    extras.set(dependent.id, [...(extras.get(dependent.id) ?? []), prerequisite.id]);
+  }
   return graph.nodes.map((node) => ({
     id: node.id,
     title: node.description,
     kind: toDesignSystemKind(node),
     state: node.status,
     parent: node.parent_id,
+    extra: extras.get(node.id),
   }));
 }

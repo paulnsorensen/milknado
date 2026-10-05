@@ -31,7 +31,8 @@ from milknado.domains.graph import (
     SnapshotPage,
     SnapshotValue,
 )
-from milknado.domains.graph._run_persistence import NodeReviewRecord, RunRecord
+from milknado.domains.graph._run_models import RunRecord
+from milknado.domains.graph._run_persistence import NodeReviewRecord
 
 _CREATED = datetime(2026, 9, 12, tzinfo=UTC)
 
@@ -142,6 +143,8 @@ def _detail_fixture() -> tuple[MikadoNode, NodeDetailSnapshot]:
         "timeout_seconds": 30,
         "detail": "failed",
         "rebased": None,
+        "verification_status": None,
+        "verified_at": None,
     }
     review_record: NodeReviewRecord = {
         "node_id": 9,

@@ -21,7 +21,11 @@ from milknado.app.run_source import ExecutionSnapshotSource, NodeSnapshotRequest
 from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource
-from milknado.domains.graph import NodeDetailResponse
+from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.coordinator import ControlEvent
+from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.persistence import start_coordinator
+from milknado.domains.graph import MikadoGraph, NodeDetailResponse
 
 
 class FakeSource:
@@ -61,6 +65,36 @@ async def test_watch_app_refreshes_from_source_without_control_bindings() -> Non
         assert app.sub_title.endswith("2 available")
         actions = {active.binding.action for active in app.screen.active_bindings.values()}
         assert actions.isdisjoint({"focus_guidance", "cancel", "force"})
+
+
+def test_watch_source_reads_durable_coordinator_recovery(tmp_path: Path) -> None:
+    db_path = tmp_path / "graph.db"
+    graph = MikadoGraph(db_path)
+    try:
+        goal = graph.add_node("Goal", spec=NodeSpec(kind=NodeKind.GOAL))
+        session = start_coordinator(graph.group_connection, goal.id, "claude")
+        _ = append_control_event(
+            graph.group_connection, session.id, ControlEvent(kind="recovery", status="unknown")
+        )
+        status = WatchSnapshotSource(tmp_path, db_path).coordinator_status()
+        assert f"Goal {goal.id} · claude" in status
+        assert "recovery: unknown" in status
+    finally:
+        graph.close()
+
+
+@pytest.mark.asyncio
+async def test_watch_coordinator_status_shows_recovery_without_enabling_writes() -> None:
+    class CoordinatorSource(FakeSource):
+        def coordinator_status(self) -> str:
+            return "Goal 4 · claude · recovery: outcome unknown"
+
+    app = watch_tui.WatchApp(CoordinatorSource(snapshot()))
+    async with app.run_test(size=(120, 36)) as pilot:
+        await pilot.press("c")
+        overlay = app.screen.query_one("#help-overlay", Static)
+        assert "outcome unknown" in cast(Text, overlay.render()).plain
+        assert app.read_only
 
 
 def test_watch_controller_forwards_node_snapshot() -> None:

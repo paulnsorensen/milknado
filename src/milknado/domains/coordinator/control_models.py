@@ -23,6 +23,18 @@ class PlanGoal(
     command_id: str
 
 
+class DecidePlanProposal(
+    msgspec.Struct,
+    frozen=True,
+    tag="decide_plan_proposal",
+    tag_field="kind",
+    forbid_unknown_fields=True,
+):
+    command_id: str
+    proposal_id: str
+    decision: Literal["accepted", "rejected"]
+
+
 class CreateGroup(
     msgspec.Struct, frozen=True, tag="create_group", tag_field="kind", forbid_unknown_fields=True
 ):
@@ -138,6 +150,7 @@ class Recover(
 CoordinatorCommand = (
     StartGoal
     | PlanGoal
+    | DecidePlanProposal
     | CreateGroup
     | DispatchTask
     | AttemptCommand
