@@ -1,6 +1,6 @@
 // A minimal, dependency-free client store. Slot and feature code read a
 // snapshot with `getState()` and re-render on `subscribe(listener)`.
-import type { WireCapabilities, WireExecutionSnapshot } from './wire';
+import type { WireCapabilities, WireExecutionSnapshot, WireGraphSnapshot } from './wire';
 
 export type GraphFilter = "ready" | "running" | "blocked" | null;
 export type GraphLod = "card" | "pill" | "dot";
@@ -20,6 +20,7 @@ export interface Notice {
 
 export interface StoreState {
   snapshot: WireExecutionSnapshot | null;
+  coordinatorGraph: WireGraphSnapshot | null;
   capabilities: WireCapabilities | null;
   selection: string | number | null;
   activeSidecar: string | null;
@@ -32,6 +33,7 @@ type Listener = () => void;
 function initialState(): StoreState {
   return {
     snapshot: null,
+    coordinatorGraph: null,
     capabilities: null,
     selection: null,
     activeSidecar: null,
@@ -66,6 +68,11 @@ export function subscribe(listener: Listener): () => void {
 
 export function setSnapshot(snapshot: WireExecutionSnapshot): void {
   state = { ...state, snapshot, capabilities: snapshot.capabilities };
+  emit();
+}
+
+export function setCoordinatorGraph(graph: WireGraphSnapshot | null): void {
+  state = { ...state, coordinatorGraph: graph };
   emit();
 }
 

@@ -27,6 +27,18 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 `replan_with_delta` is just `launch` with a delta goal — resume is handled by the context
 builder detecting existing nodes, not by a separate code path.
 
+## Coordinator proposal review
+
+The browser coordinator stores a validated `PlanGoal` manifest as a pending proposal. It does not apply the proposal immediately. A person reviews changes, dependencies, and relationships before approval. Rejection leaves the graph unchanged.[^1]
+
+The coordinator captures the graph revision before it reads planning input. It rejects the proposal if the graph changes during planning. Approval marks the proposal `applying`. It then checks the revision under a graph-owned SQLite write transaction. That transaction covers batch graph writes. A stale proposal does not apply. An interrupted apply requires manual recovery.[^2]
+
+The ordinary CLI still calls `Planner.launch` and applies its validated manifest immediately. Do not use that path for browser coordinator approval.[^3]
+
+[^1]: src/milknado/domains/coordinator/planning_workflow.py:25-49; web/src/features/coordinator/CoordinatorCockpit.tsx:205-235
+[^2]: src/milknado/domains/coordinator/planning_workflow.py:36-49,59-88; src/milknado/domains/graph/_plan_transaction.py:9-21
+[^3]: src/milknado/domains/planning/planner.py:63-123; src/milknado/app/plan.py:248-257
+
 ## The manifest (`manifest.py`)
 
 `PlanChangeManifest` is the validated contract between agent and engine. Version string

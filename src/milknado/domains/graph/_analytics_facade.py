@@ -14,12 +14,12 @@ from contextlib import AbstractContextManager
 from functools import wraps
 from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar, cast
 
+from milknado.domains.graph._batch_plan_persistence import record_batch_plan
 from milknado.domains.graph._persistence import (
     BatchPlanRecord,
     get_latest_batch_plan,
     get_spec_hash,
     recent_completion_durations,
-    record_batch_plan,
     record_completion_duration,
     set_dispatched_at,
     set_spec_hash,

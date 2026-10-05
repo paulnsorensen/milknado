@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { useSyncExternalStore } from 'react';
 import { getActiveTab, subscribeTab } from '../../shared/node-detail';
+import { CoordinatorCockpit } from '../../features/coordinator/CoordinatorCockpit';
 import { getState, selectedNodeId, subscribe } from '../store';
 import { renderSlot } from './renderSlot';
 
@@ -20,6 +21,7 @@ export function SidecarHost(): ReactElement {
 
   return (
     <aside data-region="sidecar" aria-label="Detail" className={wide ? 'is-wide' : undefined}>
+      <CoordinatorCockpit />
       {renderSlot('sidecar')}
       {nodeSelected && (
         <div data-region="sidecar-action">{renderSlot('sidecar-action')}</div>

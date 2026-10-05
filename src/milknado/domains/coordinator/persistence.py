@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
-from milknado.domains.coordinator.model import CoordinatorSession, EntityLink, ProviderBinding
+from milknado.domains.coordinator.model import (
+    CoordinatorSession,
+    CoordinatorSessionSummary,
+    EntityLink,
+    ProviderBinding,
+)
 from milknado.domains.graph import GoalReviewSubjectError, top_level_goal
 
 _LINK_KINDS = frozenset(
@@ -92,6 +97,18 @@ def get_coordinator(conn: sqlite3.Connection, session_id: str) -> CoordinatorSes
         ).fetchone(),
     )
     return _session(row) if row is not None else None
+
+
+def list_coordinator_sessions(conn: sqlite3.Connection) -> tuple[CoordinatorSessionSummary, ...]:
+    rows = cast(
+        list[tuple[str, int, str, str, str]],
+        conn.execute(
+            "SELECT s.id, s.goal_id, s.provider, s.created_at, n.description "
+            + "FROM coordinator_sessions AS s JOIN nodes AS n ON n.id = s.goal_id "
+            + "ORDER BY s.created_at DESC, s.id DESC"
+        ).fetchall(),
+    )
+    return tuple(CoordinatorSessionSummary(*row) for row in rows)
 
 
 def _require_top_level_goal(conn: sqlite3.Connection, goal_id: int) -> None:

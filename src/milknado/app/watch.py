@@ -6,10 +6,11 @@ import os
 import sqlite3
 import stat
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Protocol, cast
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -125,6 +126,34 @@ class WatchSnapshotSource:
             request.page,
             request.limit,
             request.session_event_page,
+        )
+
+    def coordinator_status(self) -> str:
+        with closing(connect_readonly(self.db_path)) as conn:
+            exists = cast(
+                tuple[int] | None,
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    + "AND name = 'coordinator_sessions'"
+                ).fetchone(),
+            )
+            if exists is None:
+                return "No coordinator session is recorded."
+            rows = cast(
+                list[tuple[str, int, str, str, str | None]],
+                conn.execute(
+                    "SELECT c.id, c.goal_id, c.provider, n.status, "
+                    + "(SELECT status FROM coordinator_events WHERE session_id = c.id "
+                    + "AND kind = 'recovery' ORDER BY seq DESC LIMIT 1) "
+                    + "FROM coordinator_sessions AS c JOIN nodes AS n ON n.id = c.goal_id "
+                    + "ORDER BY c.created_at DESC LIMIT 10"
+                ).fetchall(),
+            )
+        if not rows:
+            return "No coordinator session is recorded."
+        return "\n".join(
+            f"Goal {goal_id} · {provider} · {status} · recovery: {recovery or 'not recorded'}"
+            for _, goal_id, provider, status, recovery in rows
         )
 
     def close(self) -> None:
@@ -247,6 +276,15 @@ class AttachedWatchSource:
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         return self.source.subscribe(listener)
+
+    def coordinator_status(self) -> str:
+        status = getattr(self.source, "coordinator_status", None)
+        if not callable(status):
+            return "Coordinator status is unavailable."
+        result = status()
+        if not isinstance(result, str):
+            raise TypeError("coordinator status must be text")
+        return result
 
     def close(self) -> None:
         close = getattr(self.source, "close", None)

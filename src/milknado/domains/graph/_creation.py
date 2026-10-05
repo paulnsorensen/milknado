@@ -117,7 +117,9 @@ def add_node(
     kind = cast(object, spec.kind)
     if not isinstance(kind, NodeKind):
         raise ValueError(f"invalid kind: {kind!r}")
-    _ = conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     try:
         validate_parent(conn, parent_id, kind)
         validate_prereqs(conn, spec.prereqs, parent_id)
@@ -140,9 +142,11 @@ def add_node(
             [(node_id, path) for path in files],
         )
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     _logger.debug("node %d created: %r", node_id, description[:80])
     row = fetchone(conn, "SELECT * FROM nodes WHERE id = ?", (node_id,))
     if row is None:
@@ -151,7 +155,9 @@ def add_node(
 
 
 def add_edge(conn: sqlite3.Connection, parent_id: int, child_id: int) -> MikadoEdge:
-    _ = conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     try:
         _ = _get_active_parent(conn, parent_id)
         if would_create_cycle(conn, parent_id, child_id):
@@ -161,9 +167,11 @@ def add_edge(conn: sqlite3.Connection, parent_id: int, child_id: int) -> MikadoE
             (parent_id, child_id),
         )
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     return MikadoEdge(parent_id=parent_id, child_id=child_id)
 
 
@@ -191,7 +199,9 @@ def set_batch_metadata(
 
 def set_parent_id(conn: sqlite3.Connection, node_id: int, parent_id: int | None) -> None:
     """Update parent_id without creating an edge (used by batching bridge)."""
-    _ = conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     try:
         if parent_id is not None:
             _ = _get_active_parent(conn, parent_id)
@@ -202,6 +212,8 @@ def set_parent_id(conn: sqlite3.Connection, node_id: int, parent_id: int | None)
         if cur.rowcount == 0:
             raise ValueError(f"Node {node_id} not found")
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise
-    conn.commit()
+    if owns_transaction:
+        conn.commit()

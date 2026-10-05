@@ -4,11 +4,15 @@ from pathlib import Path
 from typing import Protocol, cast
 
 import pytest
-from textual.widgets import Select
+from rich.text import Text
+from textual.widgets import Select, Static
 
 from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource, graph_command_admitter
 from milknado.app.watch_tui import WatchApp
-from milknado.domains.common import SessionContext
+from milknado.domains.common import NodeKind, NodeSpec, SessionContext
+from milknado.domains.coordinator import ControlEvent
+from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._session_persistence import view_session
 from tests.graph_helpers import graph_conn
@@ -40,6 +44,11 @@ def _owned_graph(db_path: Path) -> tuple[MikadoGraph, int]:
 async def test_attached_watch_selects_action_and_queues_durable_command(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"
     graph, _ = _owned_graph(db_path)
+    goal = graph.add_node("Coordinator", spec=NodeSpec(kind=NodeKind.GOAL))
+    session = start_coordinator(graph.group_connection, goal.id, "claude")
+    _ = append_control_event(
+        graph.group_connection, session.id, ControlEvent(kind="recovery", status="unknown")
+    )
     source = AttachedWatchSource(
         WatchSnapshotSource(tmp_path, db_path),
         graph_command_admitter(graph),
@@ -47,6 +56,10 @@ async def test_attached_watch_selects_action_and_queues_durable_command(tmp_path
     app = WatchApp(source, poll_interval=60.0, read_only=False)
     try:
         async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.press("c")
+            overlay = app.screen.query_one("#help-overlay", Static)
+            assert "recovery: unknown" in cast(Text, overlay.render()).plain
+            await pilot.press("escape")
             action = cast(Select[str], app.query_one("#session-action", Select))
             assert action.value == "follow_up"
             await pilot.press("i", *"send this", "enter")

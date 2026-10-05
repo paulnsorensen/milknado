@@ -24,6 +24,14 @@ def _cursor(request: Request) -> int:
     return int(raw)
 
 
+async def sessions_route(request: Request) -> Response:
+    context = cast(WebContext, request.app.state.web)  # pyright: ignore[reportAny]
+    port = context.commands.coordinator
+    if port is None:
+        return json_response({"error": "Coordinator is unavailable."}, status_code=409)
+    return json_response(await run_in_threadpool(port.list_coordinator_sessions))
+
+
 async def snapshot_route(request: Request) -> Response:
     try:
         context = cast(WebContext, request.app.state.web)  # pyright: ignore[reportAny]
@@ -104,6 +112,7 @@ async def _events(
 
 
 ROUTES = (
+    Route("/api/coordinators", sessions_route, methods=["GET"]),
     Route("/api/coordinators/commands", command_route, methods=["POST"]),
     Route("/api/coordinators/{session_id}/commands", command_route, methods=["POST"]),
     Route("/api/coordinators/{session_id}/snapshot", snapshot_route, methods=["GET"]),

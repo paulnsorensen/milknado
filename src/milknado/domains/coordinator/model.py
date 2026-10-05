@@ -14,6 +14,15 @@ class CoordinatorSession:
 
 
 @dataclass(frozen=True)
+class CoordinatorSessionSummary:
+    id: str
+    goal_id: int
+    provider: str
+    created_at: str
+    description: str
+
+
+@dataclass(frozen=True)
 class EntityLink:
     kind: str
     entity_id: str
