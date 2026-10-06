@@ -188,7 +188,9 @@ def claim_node(
     pid: int | None = None,
 ) -> bool:
     """Claim a task under SQLite's writer lock, with its dispatch PID fence."""
-    _ = conn.execute("BEGIN IMMEDIATE")
+    owns_transaction = not conn.in_transaction
+    if owns_transaction:
+        _ = conn.execute("BEGIN IMMEDIATE")
     try:
         node = fetchone(
             conn,
@@ -216,10 +218,12 @@ def claim_node(
             (run_id, now, pid, node_id),
         )
         changed = cast(int, conn.execute("SELECT changes()").fetchone()[0])
-        conn.commit()
+        if owns_transaction:
+            conn.commit()
         return changed == 1
     except Exception:
-        conn.rollback()
+        if owns_transaction:
+            conn.rollback()
         raise
 
 
@@ -281,11 +285,13 @@ def mark_terminal(
 
 def mark_blocked(conn: sqlite3.Connection, node_id: int, run_id: str) -> bool:
     """Fence a RUNNING node into BLOCKED without clearing its worktree pin."""
+    owns_transaction = not conn.in_transaction
     cur = conn.execute(
         "UPDATE nodes SET status = ?, completed_at = NULL "
         + "WHERE id = ? AND run_id = ? AND status = ? AND "
         + _NO_OPEN_WORKERS,
         (NodeStatus.BLOCKED.value, node_id, run_id, NodeStatus.RUNNING.value),
     )
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     return cur.rowcount == 1

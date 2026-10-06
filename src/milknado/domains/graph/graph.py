@@ -36,6 +36,7 @@ from milknado.domains.common import (
 )
 from milknado.domains.graph._analytics_facade import _AnalyticsFacade, synchronized
 from milknado.domains.graph._edge_facade import _EdgeFacade
+from milknado.domains.graph._execution_groups import ExecutionGroupStore
 from milknado.domains.graph._facades import (
     _CommandFacade,
     _FileFacade,
@@ -88,6 +89,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     commands: _CommandFacade
     files: _FileFacade
     github: _GithubFacade
+    groups: ExecutionGroupStore
 
     @property
     def db_path(self) -> Path:
@@ -96,6 +98,13 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     @property
     def synchronization_lock(self) -> AbstractContextManager[object]:
         return self._lock
+
+    @property
+    def group_connection(self) -> sqlite3.Connection:
+        return self._conn
+
+    def group_notifications(self) -> AbstractContextManager[None]:
+        return self._pipeline.defer_after()
 
     def __init__(
         self,
@@ -133,6 +142,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
         self.commands = _CommandFacade(self)
         self.files = _FileFacade(self)
         self.github = _GithubFacade(self)
+        self.groups = ExecutionGroupStore(self)
 
     @classmethod
     def open_snapshot(cls, db_path: Path) -> MikadoGraph:

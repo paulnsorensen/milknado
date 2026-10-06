@@ -10,7 +10,8 @@ after-only PluginHook adapts in via _PluginAsMiddleware.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Generator, Sequence
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -66,6 +67,38 @@ class StatusPipeline:
 
     def __init__(self, middleware: Sequence[StatusMiddleware]) -> None:
         self._middleware: tuple[StatusMiddleware, ...] = tuple(middleware)
+        self._after_queue: (
+            list[tuple[Callable[[int], MikadoNode | None], int, NodeStatus | None, NodeStatus]]
+            | None
+        ) = None
+
+    @contextmanager
+    def defer_after(self) -> Generator[None]:
+        if self._after_queue is not None:
+            raise RuntimeError("status notifications are already deferred")
+        self._after_queue = []
+        try:
+            yield
+        except BaseException:
+            self._after_queue = None
+            raise
+        else:
+            pending = self._after_queue
+            self._after_queue = None
+            for getter, node_id, old, new in pending:
+                self._notify_after(getter, node_id, old, new)
+
+    def _notify_after(
+        self,
+        node_getter: Callable[[int], MikadoNode | None],
+        node_id: int,
+        old: NodeStatus | None,
+        new: NodeStatus,
+    ) -> None:
+        node = node_getter(node_id)
+        if node is not None:
+            for mw in self._middleware:
+                self._safe(mw, mw.after_status_change, node, old, new)
 
     def run(
         self,
@@ -82,10 +115,10 @@ class StatusPipeline:
                     self._safe(mw, mw.before_status_change, node, old, new)
         ok = mutate()
         if ok and self._middleware:
-            node = node_getter(node_id)
-            if node is not None:
-                for mw in self._middleware:
-                    self._safe(mw, mw.after_status_change, node, old, new)
+            if self._after_queue is None:
+                self._notify_after(node_getter, node_id, old, new)
+            else:
+                self._after_queue.append((node_getter, node_id, old, new))
         return ok
 
     def _safe(self, mw: StatusMiddleware, hook_fn: Callable[..., None], *args: object) -> None:

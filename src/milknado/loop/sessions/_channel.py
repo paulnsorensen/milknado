@@ -15,7 +15,7 @@ from milknado.domains.common import (
     SessionInput,
     SessionView,
 )
-from milknado.loop.sessions._capabilities import CapabilitySink, refresh
+from milknado.loop.sessions._capabilities import CapabilitySink, CapabilityState, refresh, snapshot
 from milknado.loop.sessions._channel_indexes import (
     normalize_event,
     normalize_input,
@@ -100,21 +100,9 @@ class SessionChannel:
 
     def _capability_state(
         self, context: SessionContext | None, invocation_id: str = ""
-    ) -> tuple[
-        SessionContext | None,
-        tuple[SessionAction, ...],
-        str,
-        tuple[tuple[str, ...], tuple[tuple[str, str], ...]],
-    ]:
-        return (
-            context,
-            self._actions,
-            invocation_id or self._invocation_id,
-            (
-                tuple(event.event_id for event in self._permissions.values()),
-                tuple((event.event_id, event.text) for event in self._permissions.values()),
-            ),
-        )
+    ) -> CapabilityState:
+        permissions = tuple(self._permissions.values())
+        return snapshot(context, self._actions, invocation_id or self._invocation_id, permissions)
 
     def view(self) -> SessionView:
         with self._lock:
@@ -125,6 +113,16 @@ class SessionChannel:
                 active=self._active,
                 permissions=tuple(self._permissions.values()),
             )
+
+    def capture_incarnation(self) -> int | None:
+        with self._lock:
+            return self._epoch if self._active and not self._closed else None
+
+    def submit_for_incarnation(self, incarnation: int, command: SessionInput) -> bool | None:
+        with self._lock:
+            if not self._active or self._closed or self._epoch != incarnation:
+                return None
+            return self.submit(command)
 
     def submit(self, command: SessionInput) -> bool:
         with self._lock:

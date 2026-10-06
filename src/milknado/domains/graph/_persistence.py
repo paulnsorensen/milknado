@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
+import milknado.domains.graph._group_schema as _group_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
 import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
@@ -226,6 +227,11 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "permission_commands_json TEXT NOT NULL DEFAULT '[]'",
     ),
     (25, _worker_persistence.CREATE_RUN_WORKERS),
+    (26, _group_schema.CREATE_EXECUTION_GROUPS),
+    (27, _group_schema.CREATE_EXECUTION_GROUP_TASKS),
+    (28, _group_schema.ADD_ATTEMPT_ID),
+    (29, _group_schema.CREATE_GRAPH_ALTERNATIVES),
+    (30, _group_schema.CREATE_GROUP_CLAIM_TRIGGER),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
