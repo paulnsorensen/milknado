@@ -22,11 +22,15 @@ from milknado.domains.coordinator.control_models import (
     StartGoal,
     StartTurn,
 )
-from milknado.domains.coordinator.control_services import TurnRuntimeHooks, TurnRuntimeRequest
+from milknado.domains.coordinator.control_services import (
+    TurnPreflightError,
+    TurnRuntimeHooks,
+    TurnRuntimeRequest,
+)
 from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import ExecutionGroup, MikadoGraph, TaskAttempt
 from milknado.loop._agent import AgentResult
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop.sessions import (
@@ -307,3 +311,143 @@ def test_native_turn_spawn_owns_and_reaps_worker(
         )
     )
     graph.close()
+
+
+def _adapter(
+    root: Path, graph: MikadoGraph | None = None, execution_agent: str = "codex exec"
+) -> NativeCoordinatorTurns:
+    return NativeCoordinatorTurns(
+        root,
+        MilknadoConfig(
+            project_root=root,
+            db_path=root / "graph.db",
+            agent_family="codex",
+            execution_agent=execution_agent,
+        ),
+        graph,
+    )
+
+
+def _request(
+    provider: str = "codex",
+    group: ExecutionGroup | None = None,
+    attempt: TaskAttempt | None = None,
+) -> TurnRuntimeRequest:
+    hooks = TurnRuntimeHooks("turn", lambda _identity: None, lambda _event: None)
+    return TurnRuntimeRequest(provider, "Work", group, None, hooks, attempt)
+
+
+def _spawn_options(root: Path) -> SpawnOptions:
+    return SpawnOptions(
+        (sys.executable, "-c", "pass"),
+        root,
+        None,
+        False,
+        subprocess.DEVNULL,
+        subprocess.PIPE,
+        subprocess.PIPE,
+    )
+
+
+def _group(root: Path) -> ExecutionGroup:
+    return ExecutionGroup("group", "graph", str(root), "branch", None)
+
+
+def test_cancel_reports_false_for_unknown_turn(tmp_path: Path) -> None:
+    assert _adapter(tmp_path).cancel("missing") is False
+
+
+@pytest.mark.parametrize(
+    ("provider", "execution_agent", "message"),
+    [
+        ("gemini", "codex exec", "unsupported native provider"),
+        ("codex", "claude -p", "native provider command does not match provider"),
+    ],
+)
+def test_run_rejects_unsupported_or_mismatched_provider(
+    tmp_path: Path, provider: str, execution_agent: str, message: str
+) -> None:
+    with pytest.raises(TurnPreflightError, match=message):
+        _ = _adapter(tmp_path, execution_agent=execution_agent).run(_request(provider))
+
+
+def test_run_rejects_missing_project_root(tmp_path: Path) -> None:
+    with pytest.raises(TurnPreflightError, match="coordinator project root is unavailable"):
+        _ = _adapter(tmp_path / "missing").run(_request())
+
+
+def test_run_rejects_group_whose_worktree_does_not_match_branch(tmp_path: Path) -> None:
+    with pytest.raises(TurnPreflightError, match="worktree does not match its branch"):
+        _ = _adapter(tmp_path).run(_request(group=_group(tmp_path / "worktree")))
+
+
+def test_group_turn_requires_command_owner_graph(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "milknado.adapters.coordinator_turns.ExistingWorktreeRecovery.restore", _restore
+    )
+    with pytest.raises(TurnPreflightError, match="command owner is unavailable"):
+        _ = _adapter(tmp_path).run(_request(group=_group(tmp_path)))
+
+
+def test_group_turn_requires_known_attempt_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "milknado.adapters.coordinator_turns.ExistingWorktreeRecovery.restore", _restore
+    )
+    graph = MikadoGraph(tmp_path / "graph.db")
+    attempt = TaskAttempt("group", 1, "run", "attempt")
+    for candidate in (None, attempt):
+        with pytest.raises(TurnPreflightError, match="execution group run is unavailable"):
+            _ = _adapter(tmp_path, graph).run(_request(group=_group(tmp_path), attempt=candidate))
+    graph.close()
+
+
+def test_attempt_spawn_requires_graph_and_current_writer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    attempt = TaskAttempt("group", 1, "run", "attempt")
+
+    def spawn(request: RuntimeRequest) -> RuntimeResult:
+        assert request.spec.spawn_worker is not None
+        _ = request.spec.spawn_worker(_spawn_options(tmp_path))
+        return RuntimeResult(AgentResult(0))
+
+    monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", spawn)
+    with pytest.raises(TurnPreflightError, match="command owner is unavailable"):
+        _ = _adapter(tmp_path).run(_request(attempt=attempt))
+    with pytest.raises(TurnPreflightError, match="writer changed before launch"):
+        _ = _adapter(tmp_path, graph).run(_request(attempt=attempt))
+    graph.close()
+
+
+def test_provider_session_registration_rejects_inactive_channel_and_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter = _adapter(tmp_path)
+    outcomes: list[str] = []
+
+    def register(request: RuntimeRequest) -> RuntimeResult:
+        on_session = request.spec.on_session_id
+        assert on_session is not None
+        with pytest.raises(RuntimeError, match="no active channel"):
+            on_session("thread")
+        request.channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("interrupt",))
+        on_session("thread")
+        with pytest.raises(ValueError, match="already active"):
+            on_session("thread")
+        outcomes.append("rejected")
+        request.channel.close()
+        return RuntimeResult(AgentResult(0, session_id="thread"))
+
+    monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", register)
+    _ = adapter.run(_request())
+    assert outcomes == ["rejected"]
+    assert adapter.runtime_session("thread") is None
+
+
+def _restore(_recovery: object, _group: ExecutionGroup) -> bool:
+    return True

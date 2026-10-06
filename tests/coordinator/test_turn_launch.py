@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from threading import Thread
 from typing import cast
@@ -9,7 +10,7 @@ import pytest
 from typing_extensions import override
 
 from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
-from milknado.domains.common import MilknadoConfig
+from milknado.domains.common import MilknadoConfig, SessionEvent
 from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 from milknado.domains.coordinator.control_models import (
     AttemptCommand,
@@ -396,4 +397,142 @@ def test_runtime_exception_keeps_launch_fenced_until_worker_is_verified(tmp_path
         assert conn.execute(
             "SELECT state FROM coordinator_turn_launches WHERE command_id = 'failed'"
         ).fetchone() == ("submitted",)
+    graph.close()
+
+
+class ScriptedRuntime:
+    def __init__(self, script: Callable[[TurnRuntimeRequest], RuntimeResult]) -> None:
+        self.script: Callable[[TurnRuntimeRequest], RuntimeResult] = script
+
+    def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+        return self.script(request)
+
+
+def _scripted(
+    tmp_path: Path, script: Callable[[TurnRuntimeRequest], RuntimeResult]
+) -> tuple[MikadoGraph, CoordinatorControl, str]:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(
+        graph, tmp_path, CoordinatorServices(turn_runtime=ScriptedRuntime(script))
+    )
+    receipt = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    return graph, control, cast(str, cast(dict[str, object], receipt.result)["id"])
+
+
+def _confirmed(request: TurnRuntimeRequest) -> RuntimeResult:
+    request.hooks.identity("provider")
+    return RuntimeResult(AgentResult(0, session_id="provider", terminal_confirmed=True))
+
+
+def test_turn_with_blank_prompt_is_rejected_before_launch(tmp_path: Path) -> None:
+    graph, control, session_id = _scripted(tmp_path, _confirmed)
+    receipt = control.send_coordinator_command(session_id, StartTurn("blank", "   "))
+    assert (receipt.status, receipt.result) == ("rejected", "turn prompt must not be empty")
+    assert control.read_coordinator_snapshot(session_id, 0).provider_turns == ()
+    graph.close()
+
+
+def test_turn_for_unknown_session_raises_key_error(tmp_path: Path) -> None:
+    graph, control, _ = _scripted(tmp_path, _confirmed)
+    with pytest.raises(KeyError, match="missing"):
+        _ = control.send_coordinator_command("missing", StartTurn("turn", "Work"))
+    graph.close()
+
+
+def test_turn_without_runtime_is_unavailable(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path, CoordinatorServices())
+    started = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, cast(dict[str, object], started.result)["id"])
+    receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
+    assert (receipt.status, receipt.result) == ("unavailable", "Turn runtime is not connected.")
+    graph.close()
+
+
+def test_turn_provider_must_match_existing_binding(tmp_path: Path) -> None:
+    graph, control, session_id = _scripted(tmp_path, _confirmed)
+    assert control.send_coordinator_command(session_id, StartTurn("first", "Work")).status == (
+        "accepted"
+    )
+    receipt = control.send_coordinator_command(
+        session_id, StartTurn("second", "Work", provider="claude")
+    )
+    assert (receipt.status, receipt.result) == (
+        "rejected",
+        "turn provider conflicts with existing binding",
+    )
+    graph.close()
+
+
+def test_empty_provider_identity_is_unavailable_and_binds_nothing(tmp_path: Path) -> None:
+    def blank_identity(request: TurnRuntimeRequest) -> RuntimeResult:
+        request.hooks.identity("")
+        return RuntimeResult(None)
+
+    graph, control, session_id = _scripted(tmp_path, blank_identity)
+    receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
+    assert (receipt.status, receipt.result) == (
+        "unavailable",
+        "provider did not confirm session identity",
+    )
+    assert control.read_coordinator_snapshot(session_id, 0).provider_bindings == ()
+    graph.close()
+
+
+def test_permission_event_before_identity_is_unavailable(tmp_path: Path) -> None:
+    def early_permission(request: TurnRuntimeRequest) -> RuntimeResult:
+        request.hooks.event(SessionEvent(kind="permission", text="Approve", event_id="ask"))
+        return RuntimeResult(None)
+
+    graph, control, session_id = _scripted(tmp_path, early_permission)
+    receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
+    assert (receipt.status, receipt.result) == (
+        "unavailable",
+        "permission event has no confirmed provider identity",
+    )
+    graph.close()
+
+
+def test_turn_without_run_result_is_unavailable(tmp_path: Path) -> None:
+    graph, control, session_id = _scripted(tmp_path, lambda _request: RuntimeResult(None))
+    receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
+    assert (receipt.status, receipt.result) == (
+        "unavailable",
+        "Provider did not confirm a session identity.",
+    )
+    graph.close()
+
+
+def test_resumed_turn_must_keep_bound_session(tmp_path: Path) -> None:
+    def switching(request: TurnRuntimeRequest) -> RuntimeResult:
+        if request.identity is None:
+            return _confirmed(request)
+        return RuntimeResult(AgentResult(0, session_id="other", terminal_confirmed=True))
+
+    graph, control, session_id = _scripted(tmp_path, switching)
+    assert control.send_coordinator_command(session_id, StartTurn("first", "Work")).status == (
+        "accepted"
+    )
+    receipt = control.send_coordinator_command(session_id, StartTurn("second", "Work"))
+    assert (receipt.status, receipt.result) == (
+        "unavailable",
+        "Provider resumed a different session.",
+    )
+    graph.close()
+
+
+def test_resumed_turn_cannot_confirm_a_different_identity(tmp_path: Path) -> None:
+    def switching(request: TurnRuntimeRequest) -> RuntimeResult:
+        if request.identity is None:
+            return _confirmed(request)
+        request.hooks.identity("other")
+        return RuntimeResult(None)
+
+    graph, control, session_id = _scripted(tmp_path, switching)
+    _ = control.send_coordinator_command(session_id, StartTurn("first", "Work"))
+    receipt = control.send_coordinator_command(session_id, StartTurn("second", "Work"))
+    assert (receipt.status, receipt.result) == (
+        "unavailable",
+        "provider resumed a different session",
+    )
     graph.close()

@@ -218,3 +218,59 @@ def test_worker_recovery_selects_exact_runtime_turn_with_group_association(
         assert matching is not None and matching.ended_at is not None
         assert unrelated is not None and unrelated.ended_at is None
     graph.close()
+
+
+def _graph_with_worker(tmp_path: Path, supervisor: tuple[int, float]) -> MikadoGraph:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("Worker")
+    graph.runs.start("graph-run", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    graph.runs.record_worker(
+        WorkerOwner("turn", supervisor[0], supervisor[1], "graph-run", node.id),
+        WorkerIdentity("worker", 2345, 2345, 1.0),
+    )
+    return graph
+
+
+def _termination_result(monkeypatch: pytest.MonkeyPatch, survived: bool) -> None:
+    def terminate(identity: WorkerIdentity, descendants: object, deadline: float) -> bool:
+        del identity, descendants, deadline
+        return survived
+
+    monkeypatch.setattr(
+        "milknado.adapters.coordinator_worker_recovery.terminate_verified", terminate
+    )
+
+
+def test_worker_recovery_refuses_worker_owned_by_another_supervisor(tmp_path: Path) -> None:
+    graph = _graph_with_worker(tmp_path, (888888, 2.0))
+    assert not CoordinatorWorkerRecovery(graph.db_path).terminated("turn", 999999, 1.0)
+    with WorkerEvidenceStore(graph.db_path) as store:
+        worker = store.get("worker")
+        assert worker is not None and worker.ended_at is None
+    graph.close()
+
+
+def test_worker_recovery_keeps_fence_when_worker_survives_termination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _graph_with_worker(tmp_path, (999999, 1.0))
+    _termination_result(monkeypatch, True)
+    assert not CoordinatorWorkerRecovery(graph.db_path).terminated("turn", 999999, 1.0)
+    with WorkerEvidenceStore(graph.db_path) as store:
+        worker = store.get("worker")
+        assert worker is not None and worker.ended_at is None
+    graph.close()
+
+
+def test_worker_recovery_keeps_fence_when_evidence_cannot_be_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = _graph_with_worker(tmp_path, (999999, 1.0))
+
+    def refuse(*_args: object) -> None:
+        raise RuntimeError("stale snapshot")
+
+    _termination_result(monkeypatch, False)
+    monkeypatch.setattr(WorkerEvidenceStore, "end", refuse)
+    assert not CoordinatorWorkerRecovery(graph.db_path).terminated("turn", 999999, 1.0)
+    graph.close()
