@@ -138,6 +138,16 @@ def live_workers(
     return tuple(_record(row) for row in rows)
 
 
+def live_runtime_workers(conn: sqlite3.Connection, turn_id: str) -> tuple[WorkerRecord, ...]:
+    rows = fetchall(
+        conn,
+        "SELECT * FROM run_workers WHERE ended_at IS NULL AND runtime_run_id = ? "
+        + "ORDER BY started_at, invocation_id",
+        (turn_id,),
+    )
+    return tuple(_record(row) for row in rows)
+
+
 def get_worker(conn: sqlite3.Connection, invocation_id: str) -> WorkerRecord | None:
     row = fetchone(conn, "SELECT * FROM run_workers WHERE invocation_id = ?", (invocation_id,))
     return None if row is None else _record(row)

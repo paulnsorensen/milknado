@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.coordinator.commands import (
     DispatchHandoff,
     create_dispatch_table,
@@ -111,7 +112,8 @@ class CoordinatorWorkflow:  # noqa: V102
                 raise ValueError("task belongs to a different execution group")
             group = existing
         link_entity(self._conn, session.id, "execution_group", group.id)
-        link_entity(self._conn, session.id, "provider_session", group.provider_session_id)
+        if group.provider_session_id is not None:
+            link_entity(self._conn, session.id, "provider_session", group.provider_session_id)
         self._event_once(
             session,
             ControlEvent(
@@ -143,11 +145,11 @@ class CoordinatorWorkflow:  # noqa: V102
                 (attempt.attempt_id, session.id, group_id, node_id, run_id),
             )
         state = self._owned_attempt(session, attempt)
-        link_entity(self._conn, session.id, "run", run_id)
+        link_entity(self._conn, session.id, "run", attempt.attempt_id)
         self._event_once(
             session,
             ControlEvent(
-                kind="run_transition", entity_kind="run", entity_id=run_id, status="claimed"
+                "run_transition", entity_kind="run", entity_id=attempt.attempt_id, status="claimed"
             ),
         )
         return DispatchHandoff(attempt, state)
@@ -162,6 +164,20 @@ class CoordinatorWorkflow:  # noqa: V102
         if state not in {"awaiting_launch", "launched"}:
             raise ValueError("dispatch is not awaiting launch")
         self._graph.groups.launch_reserved_task(handoff.attempt)
+        run = self._graph.runs.get(handoff.attempt.attempt_id)
+        group = self._graph.groups.get(handoff.attempt.group_id)
+        if group is None:
+            raise ValueError("execution group disappeared during launch")
+        if run is None:
+            self._graph.runs.start(
+                handoff.attempt.attempt_id,
+                handoff.attempt.node_id,
+                group.worktree_path,
+                datetime.now(UTC).isoformat(),
+                None,
+            )
+        elif run["node_id"] != handoff.attempt.node_id or run["status"] != "running":
+            raise ValueError("group run identity conflicts with launched writer")
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_dispatches SET state = 'launched' WHERE attempt_id = ?",
@@ -172,7 +188,7 @@ class CoordinatorWorkflow:  # noqa: V102
             ControlEvent(
                 kind="run_transition",
                 entity_kind="run",
-                entity_id=handoff.attempt.run_id,
+                entity_id=handoff.attempt.attempt_id,
                 status="running",
             ),
         )
@@ -199,7 +215,7 @@ class CoordinatorWorkflow:  # noqa: V102
             ControlEvent(
                 kind="run_transition",
                 entity_kind="run",
-                entity_id=handoff.attempt.run_id,
+                entity_id=handoff.attempt.attempt_id,
                 status="launch_failed",
             ),
         )
@@ -219,6 +235,14 @@ class CoordinatorWorkflow:  # noqa: V102
             self._graph.groups.finish_task(attempt, TaskOutcome(*expected))
         elif result != expected:
             raise ValueError("worker result conflicts with recorded task result")
+        run = self._graph.runs.get(attempt.attempt_id)
+        if run is not None and run["status"] == "running":
+            self._graph.runs.finish(
+                attempt.attempt_id,
+                RunResult(
+                    status, None, False, datetime.now(UTC).isoformat(), detail=outcome.detail
+                ),
+            )
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_dispatches SET state = 'finished' WHERE attempt_id = ?",
@@ -227,7 +251,7 @@ class CoordinatorWorkflow:  # noqa: V102
         self._event_once(
             session,
             ControlEvent(
-                kind="run_transition", entity_kind="run", entity_id=attempt.run_id, status=status
+                "run_transition", entity_kind="run", entity_id=attempt.attempt_id, status=status
             ),
         )
 

@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.common import SessionInput
+from milknado.domains.common import SessionEvent, SessionInput
 from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     AttemptCommand,
@@ -15,6 +15,8 @@ from milknado.domains.coordinator.control_models import (
     RuntimeAction,
     StartGoal,
 )
+from milknado.domains.coordinator.turns import record_turn_event
+from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.graph import MikadoGraph
 
 
@@ -67,14 +69,20 @@ def test_snapshot_orders_events_and_links_group_run(tmp_path: Path) -> None:
         session_id, DispatchTask("dispatch-1", group_id, task.id, "run-1")
     )
     assert run.status == "accepted"
-    graph.runs.start("run-1", task.id, "/l", "2026-01-01T00:00:00+00:00", 600)
-    graph.runs.record_verification("run-1", True, "2026-01-01T00:00:05+00:00")
+    attempt = cast(dict[str, object], _result(run)["attempt"])
+    attempt_id = cast(str, attempt["attempt_id"])
+    launched = control.send_coordinator_command(
+        session_id, AttemptCommand("launch-1", group_id, task.id, "run-1", attempt_id)
+    )
+    assert launched.status == "accepted"
+    graph.runs.record_verification(attempt_id, True, "2026-01-01T00:00:05+00:00")
     snapshot = control.read_coordinator_snapshot(session_id, 0)
     assert [event.seq for event in snapshot.events] == sorted(
         event.seq for event in snapshot.events
     )
     assert {link.kind for link in snapshot.links} >= {"execution_group", "run", "provider_session"}
     assert snapshot.groups[0].id == group_id
+    assert snapshot.runs[0]["run_id"] == attempt_id
     assert snapshot.runs[0]["verification_status"] == "accepted"
     assert snapshot.runs[0]["verified_at"] == "2026-01-01T00:00:05+00:00"
     assert snapshot.cursor == snapshot.events[-1].seq
@@ -133,6 +141,43 @@ def test_attempt_lifecycle_through_commands(tmp_path: Path) -> None:
         if event.kind == "run_transition"
     ]
     assert transitions == ["claimed", "running", "done"]
+    snapshot = control.read_coordinator_snapshot(session_id, 0)
+    assert {run["run_id"] for run in snapshot.runs} == {attempt_id}
+    assert ("run", attempt_id) in {(link.kind, link.entity_id) for link in snapshot.links}
+    assert [event.entity_id for event in snapshot.events if event.kind == "run_transition"] == [
+        attempt_id
+    ] * 3
+    graph.close()
+
+
+def test_permission_events_keep_request_and_provider_turn_identity(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    workflow = CoordinatorWorkflow(graph, graph.group_connection)
+    session = workflow.start_goal("Deliver", "codex")
+    request = SessionEvent(
+        kind="permission", text="Approve", event_id="1/shared", state="requested"
+    )
+    record_turn_event(graph.group_connection, session.id, "turn-a", request, "provider-a")
+    first = control.read_coordinator_snapshot(session.id, 0)
+    record_turn_event(graph.group_connection, session.id, "turn-b", request, "provider-b")
+    delta = control.read_coordinator_snapshot(session.id, first.cursor)
+    permissions = [
+        event
+        for event in control.read_coordinator_snapshot(session.id, 0).events
+        if event.kind == "permission"
+    ]
+    assert [
+        (event.entity_id, event.turn_id, event.provider_session_id) for event in permissions
+    ] == [
+        ("1/shared", "turn-a", "provider-a"),
+        ("1/shared", "turn-b", "provider-b"),
+    ]
+    assert [
+        (event.turn_id, event.provider_session_id)
+        for event in delta.events
+        if event.kind == "permission"
+    ] == [("turn-b", "provider-b")]
     graph.close()
 
 

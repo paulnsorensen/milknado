@@ -74,18 +74,40 @@ def _host_dependencies(
         ReviewDecisionPort | None,
     ],
 ) -> HostDependencies:
-    from milknado.adapters import ProcessAdapter
+    from milknado.adapters import (
+        DeferredProviderRecovery,
+        ExistingWorktreeRecovery,
+        ProcessAdapter,
+    )
+    from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
+    from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecovery
     from milknado.app.plan import build_planner
-    from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
+    from milknado.domains.coordinator import (
+        CoordinatorControl,
+        CoordinatorServices,
+        RecoveryRuntime,
+    )
 
     git = _ProjectGitInspection(project_root)
     owner, review_decision = ports
+    turn_runtime = NativeCoordinatorTurns(project_root, config, graph)
     coordinator = CoordinatorControl(
         graph,
         project_root,
         CoordinatorServices(
             planner=build_planner(graph, project_root, config),
+            recovery_runtime=RecoveryRuntime(
+                graph.groups,
+                project_root,
+                DeferredProviderRecovery(),
+                ExistingWorktreeRecovery(project_root),
+                CoordinatorWorkerRecovery(config.db_path),
+            ),
             review_decision=review_decision,
+            turn_runtime=turn_runtime,
+            turn_owner=turn_runtime.owner,
+            turn_cancel=turn_runtime.cancel,
+            runtime_session=turn_runtime.runtime_session,
         ),
     )
 

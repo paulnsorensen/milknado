@@ -57,6 +57,8 @@ def create_coordinator_tables(conn: sqlite3.Connection) -> None:
                 entity_id TEXT NOT NULL,
                 tool_name TEXT NOT NULL,
                 status TEXT NOT NULL,
+                turn_id TEXT NOT NULL DEFAULT '',
+                provider_session_id TEXT NOT NULL DEFAULT '',
                 duration_ms INTEGER,
                 created_at TEXT NOT NULL,
                 expires_at TEXT

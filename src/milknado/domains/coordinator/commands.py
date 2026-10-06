@@ -125,8 +125,6 @@ def submit_coordinator_action(  # noqa: V103
 ) -> CoordinatorActionReceipt:
     if not command.command_id:
         raise ValueError("command identity must not be empty")
-    if runtime_session.identity.family != session.provider:
-        raise ValueError("provider does not match coordinator session")
     _create_action_table(conn)
     identity = runtime_session.identity.session_id
     linked = cast(
@@ -137,7 +135,15 @@ def submit_coordinator_action(  # noqa: V103
             (session.id, identity),
         ).fetchone(),
     )
-    if linked is None:
+    bound = cast(
+        tuple[int] | None,
+        conn.execute(
+            "SELECT 1 FROM coordinator_provider_bindings WHERE coordinator_id = ? "
+            + "AND provider_family = ? AND provider_session_id = ?",
+            (session.id, runtime_session.identity.family, identity),
+        ).fetchone(),
+    )
+    if linked is None or bound is None:
         raise ValueError("provider session is not owned by coordinator")
     fingerprint = hashlib.sha256(msgspec.json.encode(command.input)).hexdigest()
     with conn:

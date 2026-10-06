@@ -1,5 +1,6 @@
 # pyright: basic
 import asyncio
+import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -11,7 +12,7 @@ from starlette.testclient import TestClient
 from milknado.cli.web import _host_dependencies
 from milknado.domains.batching import BatchPlan
 from milknado.domains.common import CONTROLLER_MASTER_ENV, MilknadoConfig, SessionInput
-from milknado.domains.coordinator import CoordinatorControl
+from milknado.domains.coordinator import CoordinatorControl, ProviderBinding
 from milknado.domains.coordinator.control_models import (
     DecideGoalReview,
     PlanGoal,
@@ -21,6 +22,12 @@ from milknado.domains.coordinator.control_models import (
     StartGoal,
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
+from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
+from milknado.domains.coordinator.recovery import (
+    ProviderIdentity,
+    ProviderTurn,
+    record_provider_turn,
+)
 from milknado.domains.graph import GoalReviewDecision, MikadoGraph
 from milknado.domains.planning import PlanChangeManifest, Planner, PlanProposal, PlanResult
 from milknado.web import LaunchToken, WebCommands, create_app
@@ -267,7 +274,7 @@ def test_live_stream_projects_review_transition(
     graph.close()
 
 
-def test_production_host_connects_planner_without_provider_transport(
+def test_production_host_connects_planner_and_deferred_recovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class PlannerStub:
@@ -286,7 +293,20 @@ def test_production_host_connects_planner_without_provider_transport(
     start = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
     session_id = cast(str, cast(dict[str, object], start.result)["id"])
     assert control.send_coordinator_command(session_id, PlanGoal("plan")).status == "accepted"
-    assert control.send_coordinator_command(session_id, Recover("recover")).status == "unavailable"
+    identity = ProviderIdentity("codex", "thread-1")
+    with sqlite3.connect(graph.db_path) as conn:
+        link_entity(conn, session_id, "provider_session", identity.session_id)
+        bind_provider_session(
+            conn,
+            session_id,
+            ProviderBinding("coordinator", session_id, "codex", identity.session_id),
+        )
+        record_provider_turn(conn, session_id, ProviderTurn(identity, "turn-1", "submitted"))
+    recovered = control.send_coordinator_command(session_id, Recover("recover"))
+    assert recovered.status == "accepted"
+    result = cast(dict[str, object], recovered.result)
+    assert cast(list[dict[str, object]], result["receipts"])[0]["outcome"] == "unavailable"
+    assert cast(list[dict[str, object]], result["unknown_turns"])[0]["turn_id"] == "turn-1"
     assert (
         control.send_coordinator_command(
             session_id, RuntimeAction("action", "provider-1", SessionInput(action="interrupt"))

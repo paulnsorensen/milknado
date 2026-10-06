@@ -4,7 +4,12 @@ from milknado.domains.coordinator.control_models import (
     CoordinatorCommandReceipt,
     StartGoal,
 )
-from milknado.domains.coordinator.control_services import CoordinatorServices, ReviewDecisionPort
+from milknado.domains.coordinator.control_services import (
+    CoordinatorServices,
+    ReviewDecisionPort,
+    TurnPreflightError,
+    TurnRuntimeRequest,
+)
 from milknado.domains.coordinator.model import (
     ControlEvent,
     ControlRecord,
@@ -13,6 +18,11 @@ from milknado.domains.coordinator.model import (
     ProviderBinding,
 )
 from milknado.domains.coordinator.projection import CoordinatorSnapshot
+from milknado.domains.coordinator.recovery import (
+    ProviderIdentity,
+    RecoveryOutcome,
+    RecoveryRuntime,
+)
 
 __all__ = [
     "CoordinatorCommand",
@@ -25,6 +35,11 @@ __all__ = [
     "CoordinatorSession",
     "EntityLink",
     "ProviderBinding",
+    "ProviderIdentity",
+    "RecoveryOutcome",
+    "RecoveryRuntime",
     "ReviewDecisionPort",
     "StartGoal",
+    "TurnPreflightError",
+    "TurnRuntimeRequest",
 ]

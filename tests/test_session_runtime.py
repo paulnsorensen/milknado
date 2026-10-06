@@ -39,7 +39,7 @@ _SCRIPTS = {
 for raw in sys.stdin:
     if json.loads(raw).get("type") == "user":
         emit({"type": "system", "subtype": "ready", "session_id": "drain"})
-        print("stderr message", file=sys.stderr, flush=True)
+        print("invalid option: --bad", file=sys.stderr, flush=True)
         emit({
             "type": "result",
             "subtype": "success",
@@ -268,12 +268,10 @@ def test_run_session_drains_stdout_and_stderr(tmp_path: Path) -> None:
     stderr_lines = [text for text, stream in output_lines if stream == "stderr"]
     assert result.returncode == 0
     assert result.result_text == "drained"
-    assert '"subtype": "ready"' in (result.captured_stdout or "")
-    assert "stderr message" in (result.captured_stderr or "")
-    assert len(stdout_lines) == 2
-    assert all(line.startswith('{"type":') for line in stdout_lines)
-    assert all('"session_id": "drain"' in line for line in stdout_lines)
-    assert stderr_lines == ["stderr message\n"]
+    assert result.captured_stdout == "provider stdout frame\n" * 2
+    assert result.captured_stderr == "provider invalid option\n"
+    assert stdout_lines == ["provider stdout frame\n"] * 2
+    assert stderr_lines == ["provider invalid option\n"]
     assert any(event.text == "Claude ready" for event in events)
     assert any(event.state == "stopped" for event in events)
 

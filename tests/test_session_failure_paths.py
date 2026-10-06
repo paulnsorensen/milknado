@@ -52,7 +52,7 @@ for raw in sys.stdin:
     "diagnostic": """
 for raw in sys.stdin:
     if json.loads(raw).get("type") == "user":
-        print("raw diagnostic: policy fallback", file=sys.stderr, flush=True)
+        print("authentication failed: token=PRIVATE_SAMPLE", file=sys.stderr, flush=True)
         emit({"type": "result", "subtype": "success", "result": "logged result"})
 """,
     "spoof": """
@@ -216,7 +216,7 @@ def test_reader_failure_is_visible_and_cleans_up_worker(
     _assert_dead(_wait_for_pid(pid_path))
 
 
-def test_configured_log_retains_raw_diagnostic_output(tmp_path: Path) -> None:
+def test_configured_log_filters_native_diagnostics(tmp_path: Path) -> None:
     worker = _worker(tmp_path, "diagnostic")
     log_dir = tmp_path / "logs"
     result = run_session(
@@ -225,12 +225,15 @@ def test_configured_log_retains_raw_diagnostic_output(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0
-    assert result.captured_stderr == "raw diagnostic: policy fallback\n"
+    assert result.captured_stderr == "provider authentication failed\n"
+    assert result.result_text == "logged result"
     assert result.log_file is not None
     assert result.log_file.parent == log_dir
     assert result.log_file.name.startswith("0007_")
     log_text = result.log_file.read_text(encoding="utf-8")
-    assert "raw diagnostic: policy fallback\n" in log_text
+    assert "provider authentication failed\n" in log_text
+    assert "PRIVATE_SAMPLE" not in log_text
+    assert "logged result" not in log_text
 
 
 def test_raw_stdout_cannot_claim_structured_completion(tmp_path: Path) -> None:

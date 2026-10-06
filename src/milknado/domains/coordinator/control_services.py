@@ -4,10 +4,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from milknado.domains.common import SessionEvent, WorkerOwner
 from milknado.domains.coordinator.recovery import RecoveryRuntime
-from milknado.domains.graph import GoalReviewDecisionRequest, GoalReviewRecord
+from milknado.domains.graph import (
+    ExecutionGroup,
+    GoalReviewDecisionRequest,
+    GoalReviewRecord,
+    TaskAttempt,
+)
 from milknado.domains.planning import Planner
-from milknado.loop.sessions import RuntimeSession
+from milknado.loop.sessions import ProviderSessionIdentity, RuntimeResult, RuntimeSession
 
 
 class ReviewDecisionPort(Protocol):
@@ -16,9 +22,37 @@ class ReviewDecisionPort(Protocol):
     ) -> GoalReviewRecord: ...
 
 
+class TurnPreflightError(ValueError):
+    """The provider turn failed before a worker started."""
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRuntimeHooks:
+    turn_id: str
+    identity: Callable[[str], None]
+    event: Callable[[SessionEvent], None]
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRuntimeRequest:
+    provider: str
+    prompt: str
+    group: ExecutionGroup | None
+    identity: ProviderSessionIdentity | None
+    hooks: TurnRuntimeHooks
+    attempt: TaskAttempt | None = None
+
+
+class TurnRuntimePort(Protocol):
+    def run(self, request: TurnRuntimeRequest) -> RuntimeResult: ...
+
+
 @dataclass(frozen=True, slots=True)
 class CoordinatorServices:
     planner: Planner | None = None
     runtime_session: Callable[[str], RuntimeSession | None] | None = None
     recovery_runtime: RecoveryRuntime | None = None
     review_decision: ReviewDecisionPort | None = None
+    turn_runtime: TurnRuntimePort | None = None
+    turn_owner: Callable[[str], WorkerOwner] | None = None
+    turn_cancel: Callable[[str], bool] | None = None

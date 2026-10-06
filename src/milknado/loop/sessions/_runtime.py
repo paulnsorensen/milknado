@@ -23,8 +23,7 @@ from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._promise import has_promise_completion
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._factory import create_protocol
-from milknado.loop.sessions._outcome import SessionOutcome
-from milknado.loop.sessions._outcome import publish_events as _publish_events
+from milknado.loop.sessions._outcome import SessionOutcome, publish_events
 from milknado.loop.sessions._process import (
     CAPTURE_LIMIT,
     POLL_INTERVAL,
@@ -98,15 +97,15 @@ class _SessionExecution:
             on_stdout=self.receive_line,
             on_output_line=self.spec.on_output_line,
             on_reader_error=self.mark_reader_error,
+            sanitize=Path(self.protocol.command[0]).stem.lower() in {"claude", "codex"},
         )
         write_commands(proc, self.start_step.commands)
-        _publish_events(self.channel, self.start_step.after_write_events)
+        publish_events(self.channel, self.start_step.after_write_events)
 
     def remember_step(self, step: ProtocolStep, *, publish_events: bool = True) -> None:
         channel, outcome, wind_down = self.channel, self.outcome, self.wind_down
         actions = tuple(self.protocol.actions)
-        if step.session_id is not None:
-            outcome.session_id = step.session_id
+        outcome.remember_session(step.session_id, self.spec.on_session_id)
         if (context := channel.view().context) is not None and step.done:
             channel.start(context, actions, invocation_id=self.process_invocation_id)
         for event in step.events:
@@ -130,7 +129,7 @@ class _SessionExecution:
         assert self.proc is not None
         self.remember_step(step)
         write_commands(self.proc, step.commands)
-        _publish_events(self.channel, step.after_write_events)
+        publish_events(self.channel, step.after_write_events)
 
     def receive_line(self, text: str) -> None:
         self.apply_step(self.protocol.receive(text.encode("utf-8")))
@@ -151,11 +150,11 @@ class _SessionExecution:
             try:
                 self.outcome.done = False
                 step = self.protocol.submit(command)
-                _publish_events(self.channel, step.events)
+                publish_events(self.channel, step.events)
                 write_commands(self.proc, step.commands)
                 if command.action in {"approve", "deny"} and step.after_write_events:
                     self.channel.confirm(command, "delivered")
-                _publish_events(self.channel, step.after_write_events)
+                publish_events(self.channel, step.after_write_events)
                 self.remember_step(step, publish_events=False)
             except ValueError:
                 self.outcome.done = was_done
@@ -245,6 +244,7 @@ class _SessionExecution:
             interrupted=self.outcome.interrupted and self.outcome.interrupt_requested,
             tool_use_count=self.outcome.tool_count,
             turn_capped=self.outcome.capped,
+            terminal_confirmed=self.outcome.terminal_confirmed and returncode == 0,
         )
 
     def cleanup(self) -> None:

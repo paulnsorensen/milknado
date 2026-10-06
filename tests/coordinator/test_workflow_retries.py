@@ -7,14 +7,18 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import SessionContext, SessionInput
-from milknado.domains.coordinator import ControlEvent, EntityLink
+from milknado.domains.coordinator import ControlEvent, EntityLink, ProviderBinding
 from milknado.domains.coordinator.commands import (
     CoordinatorAction,
     record_control_once,
     submit_coordinator_action,
 )
 from milknado.domains.coordinator.journal import append_control_event, control_history
-from milknado.domains.coordinator.persistence import link_entity, links_for_session
+from milknado.domains.coordinator.persistence import (
+    bind_provider_session,
+    link_entity,
+    links_for_session,
+)
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
@@ -28,6 +32,9 @@ def test_action_retry_repairs_history_without_resubmission(
     with closing(sqlite3.connect(graph.db_path)) as conn:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Goal", "codex")
+        bind_provider_session(
+            conn, session.id, ProviderBinding("coordinator", session.id, "codex", "provider")
+        )
         link_entity(conn, session.id, "provider_session", "provider")
         channel = SessionChannel()
         channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("steer",))
@@ -130,7 +137,9 @@ def test_dispatch_retry_repairs_link_and_launch_history(
         assert reserved is not None
         handoff = workflow.dispatch_task(session, group.id, task.id, "run")
         assert handoff.attempt == reserved
-        assert links_for_session(conn, session.id).count(EntityLink("run", "run")) == 1
+        assert (
+            links_for_session(conn, session.id).count(EntityLink("run", reserved.attempt_id)) == 1
+        )
 
         original_event = append_control_event
         failed = False

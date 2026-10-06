@@ -246,6 +246,20 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "ON DELETE CASCADE, manifest_json TEXT NOT NULL, context_path TEXT NOT NULL, "
         + "graph_revision INTEGER NOT NULL, status TEXT NOT NULL)",
     ),
+    (
+        41,
+        "CREATE TABLE IF NOT EXISTS coordinator_turn_launches ("
+        + "command_id TEXT PRIMARY KEY, coordinator_id TEXT NOT NULL, "
+        + "scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL, state TEXT NOT NULL)",
+    ),
+    (
+        42,
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinator_turn_active "
+        + "ON coordinator_turn_launches(coordinator_id, scope_kind, scope_id) "
+        + "WHERE state = 'submitted'",
+    ),
+    (43, "ALTER TABLE coordinator_turn_launches ADD COLUMN supervisor_pid INTEGER"),
+    (44, "ALTER TABLE coordinator_turn_launches ADD COLUMN supervisor_start_token REAL"),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

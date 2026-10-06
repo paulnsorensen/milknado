@@ -110,6 +110,7 @@ class ClaudeState:
     _controls: dict[str, str]
     _assistant_text: dict[str, str]
     _blocks: dict[int, Block]
+    _tool_names: dict[str, str]
     _assistant_id: str | None
     _active: bool
     _interrupt_requested: bool
@@ -125,6 +126,7 @@ class ClaudeState:
         self._controls = {}
         self._assistant_text = {}
         self._blocks = {}
+        self._tool_names = {}
         self._assistant_id = None
         self._active = False
         self._interrupt_requested = False

@@ -4,8 +4,10 @@ from milknado.domains.common.agent_argv import (
     build_planning_subprocess,
     build_resume_command,
     capture_session_id,
+    resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+    validate_worker_argv,
 )
 from milknado.domains.common.config import (
     LoadedConfig,
@@ -99,6 +101,8 @@ __all__ = [
     "SessionView",
     "normalize_session_event",
     "resolve_planning_agent_command",
+    "resolve_execution_agent_command",
+    "validate_worker_argv",
     "ArchiveIneligible",
     "BUILTIN_FLAVORS",
     "Gate",

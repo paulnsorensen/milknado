@@ -109,8 +109,22 @@ def test_resume_uses_thread_resume_and_preserves_identity(tmp_path: Path) -> Non
             }
         )
     )
-    assert started.session_id == "session-old"
+    assert started.session_id == "thread-old"
     assert mapping(wire(started.commands[0])["params"])["threadId"] == "thread-old"
+
+
+def test_resume_rejects_different_thread_before_starting_turn(tmp_path: Path) -> None:
+    session = CodexSession(("codex", "resume", "thread-old"), tmp_path)
+    initialized = session.start("continue")
+    initialize = wire(initialized.commands[0])
+    thread_step = session.receive(frame({"id": initialize["id"], "result": {}}))
+    thread = wire(thread_step.commands[1])
+
+    mismatched = session.receive(
+        frame({"id": thread["id"], "result": {"thread": {"id": "thread-other"}}})
+    )
+    assert mismatched.done and mismatched.failed
+    assert mismatched.commands == ()
 
 
 def test_policy_translation_keeps_sandbox_and_approval_constraints(tmp_path: Path) -> None:
@@ -226,7 +240,7 @@ def test_turn_error_is_visible_and_terminal_only_without_retry(
     assert error.event_id == "turn-1"
     assert step.done is done
     assert step.failed is failed
-    assert step.session_id == "session-1"
+    assert step.session_id == "thread-1"
     if not will_retry:
         with pytest.raises(ValueError, match="not accepting input"):
             _ = session.submit(SessionInput(action="steer", text="late input"))
@@ -294,7 +308,7 @@ def test_terminal_tool_and_message_notifications_decode_to_observable_events(
             }
         )
     )
-    assert last_event(tool, "tool", "streaming").text == "pwd"
+    assert last_event(tool, "tool", "streaming").text == "commandExecution"
 
     terminal = session.receive(
         frame(
@@ -306,7 +320,7 @@ def test_terminal_tool_and_message_notifications_decode_to_observable_events(
     )
     terminal_event = last_event(terminal, "tool", "streaming")
     assert terminal_event.event_id == "item-1"
-    assert terminal_event.text == "y\n"
+    assert terminal_event.text == ""
     assert terminal_event.delta is True
 
     message = session.receive(
@@ -502,7 +516,7 @@ def test_approval_resolution_publishes_approval_or_cancellation(
             state=state,
         ),
     )
-    assert resolved.session_id == "session-1"
+    assert resolved.session_id == "thread-1"
     cleared = session.receive(frame({"method": "serverRequest/resolved", "params": {}}))
     assert cleared.events == ()
 
@@ -662,7 +676,7 @@ def test_real_codex_delta_frames_preserve_reasoning_and_tool_output(
     assert streamed.events == (
         SessionEvent(
             kind=kind,
-            text="visible",
+            text="visible" if kind == "assistant" else "",
             event_id="item-1",
             state="streaming",
             delta=True,
@@ -685,7 +699,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
     assert streamed.events == (
         SessionEvent(
             kind="tool",
-            text="still running",
+            text="",
             event_id="mcp-1",
             state="streaming",
             delta=True,
@@ -698,7 +712,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
     (
         (
             {"id": "command-1", "type": "commandExecution", "command": "git status"},
-            "git status",
+            "commandExecution",
         ),
         (
             {
@@ -707,7 +721,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
                 "command": "git status",
                 "aggregatedOutput": " M file.py",
             },
-            " M file.py",
+            "commandExecution",
         ),
         ({"id": "mcp-1", "type": "mcpToolCall", "name": "search"}, "search"),
         (
@@ -716,7 +730,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
                 "type": "fileChange",
                 "changes": {"src/a.py": {}, "src/b.py": {}},
             },
-            "src/a.py, src/b.py",
+            "fileChange",
         ),
         (
             {
@@ -725,7 +739,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
                 "name": "lookup",
                 "output": "42",
             },
-            "42",
+            "lookup",
         ),
         ({"id": "dynamic-1", "type": "dynamicToolCall", "name": "lookup"}, "lookup"),
         (
@@ -734,7 +748,7 @@ def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
         ),
         (
             {"id": "subagent-1", "type": "subAgentActivity"},
-            '{"id": "subagent-1", "type": "subAgentActivity"}',
+            "subAgentActivity",
         ),
     ),
 )

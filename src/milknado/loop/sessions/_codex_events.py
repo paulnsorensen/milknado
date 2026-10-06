@@ -110,9 +110,11 @@ class CodexEventMixin(CodexState, metaclass=ABCMeta):
         if pending.stage == "thread":
             thread = object_value(result.get("thread"))
             self._thread_id = text_value(thread.get("id"))
-            self._session_id = text_value(thread.get("sessionId")) or self._thread_id
             if not self._thread_id:
                 return self._failure("Codex thread response omitted thread.id")
+            if self._policy.resume_id and self._thread_id != self._policy.resume_id:
+                return self._failure("Codex resumed a different thread")
+            self._session_id = self._thread_id
             step = self._start_turn(self._prompt)
             return ProtocolStep(
                 commands=step.commands,
@@ -167,9 +169,7 @@ class CodexEventMixin(CodexState, metaclass=ABCMeta):
         if method == "thread/started":
             thread = object_value(params.get("thread"))
             self._thread_id = text_value(thread.get("id")) or self._thread_id
-            self._session_id = (
-                text_value(thread.get("sessionId")) or self._session_id or self._thread_id
-            )
+            self._session_id = self._thread_id or self._session_id
             return ProtocolStep(session_id=self._session_id or None)
         if method == "serverRequest/resolved":
             return self._approval_resolved(params)

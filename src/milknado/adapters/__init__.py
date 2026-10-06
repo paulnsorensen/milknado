@@ -4,6 +4,7 @@ from milknado.adapters.git import GitAdapter
 from milknado.adapters.host_slots import FlockSlotPool
 from milknado.adapters.loop import LoopAdapter
 from milknado.adapters.process import ProcessAdapter
+from milknado.adapters.recovery import DeferredProviderRecovery, ExistingWorktreeRecovery
 from milknado.adapters.tmux import TmuxAdapter, TmuxDispatchError
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "GitAdapter",
     "LoopAdapter",
     "ProcessAdapter",
+    "DeferredProviderRecovery",
+    "ExistingWorktreeRecovery",
     "TmuxAdapter",
     "TmuxDispatchError",
 ]

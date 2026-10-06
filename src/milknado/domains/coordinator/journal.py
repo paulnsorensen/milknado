@@ -62,7 +62,9 @@ def _utc(now: datetime | None) -> datetime:
     return timestamp.astimezone(UTC)
 
 
-def _record(row: tuple[int, str, str, str, str, str, str, int | None, str]) -> ControlRecord:
+def _record(
+    row: tuple[int, str, str, str, str, str, str, str, str, int | None, str],
+) -> ControlRecord:
     return ControlRecord(
         seq=row[0],
         kind=str(row[1]),
@@ -71,8 +73,10 @@ def _record(row: tuple[int, str, str, str, str, str, str, int | None, str]) -> C
         entity_id=str(row[4]),
         tool_name=str(row[5]),
         status=str(row[6]),
-        duration_ms=row[7],
-        created_at=str(row[8]),
+        turn_id=str(row[7]),
+        provider_session_id=str(row[8]),
+        duration_ms=row[9],
+        created_at=str(row[10]),
     )
 
 
@@ -109,7 +113,8 @@ def append_control_event(  # noqa
         cursor = conn.execute(
             "INSERT INTO coordinator_events "
             + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, "
-            + "duration_ms, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "turn_id, provider_session_id, duration_ms, created_at, expires_at) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 event.kind,
@@ -118,6 +123,8 @@ def append_control_event(  # noqa
                 _redact(event.entity_id),
                 _redact(event.tool_name),
                 _redact(event.status),
+                _redact(event.turn_id),
+                _redact(event.provider_session_id),
                 event.duration_ms,
                 timestamp.isoformat(),
                 expires_at,
@@ -137,9 +144,10 @@ def control_history(  # noqa
             (timestamp,),
         )
     rows = cast(
-        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        list[tuple[int, str, str, str, str, str, str, str, str, int | None, str]],
         conn.execute(
-            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, "
+            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, "
+            + "turn_id, provider_session_id, duration_ms, "
             + "created_at FROM coordinator_events WHERE session_id = ? ORDER BY seq",
             (session_id,),
         ).fetchall(),
@@ -152,9 +160,10 @@ def snapshot_control_history(
 ) -> tuple[ControlRecord, ...]:
     timestamp = _utc(now).isoformat()
     rows = cast(
-        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        list[tuple[int, str, str, str, str, str, str, str, str, int | None, str]],
         conn.execute(
-            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, "
+            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, "
+            + "turn_id, provider_session_id, duration_ms, "
             + "created_at FROM coordinator_events WHERE session_id = ? "
             + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
             (session_id, timestamp),

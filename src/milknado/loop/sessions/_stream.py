@@ -10,7 +10,7 @@ from milknado.domains.common import SessionEvent
 from milknado.loop._events import OutputStream
 from milknado.loop._output import BoundedOutput
 from milknado.loop.sessions._channel import SessionChannel
-from milknado.loop.sessions._process import POLL_INTERVAL, TERMINATE_GRACE, Line
+from milknado.loop.sessions._process import CAPTURE_LIMIT, POLL_INTERVAL, TERMINATE_GRACE, Line
 
 
 @dataclass(slots=True)
@@ -22,6 +22,19 @@ class StreamContext:
     on_stdout: Callable[[str], None]
     on_output_line: Callable[[str, OutputStream], None] | None
     on_reader_error: Callable[[str], None]
+    sanitize: bool = False
+    logged_chars: int = 0
+
+
+def _safe_stderr(text: str) -> str:
+    lower = text[:CAPTURE_LIMIT].lower()
+    if "authentication" in lower or "unauthorized" in lower:
+        return "provider authentication failed\n"
+    if "invalid option" in lower or "unknown option" in lower:
+        return "provider invalid option\n"
+    if "permission denied" in lower:
+        return "provider permission denied\n"
+    return "provider stderr frame\n"
 
 
 def consume(item: Line, context: StreamContext) -> None:
@@ -31,25 +44,35 @@ def consume(item: Line, context: StreamContext) -> None:
         context.stderr_tail.append(item.text + "\n")
         context.on_reader_error(item.text)
         return
+    diagnostic = item.text
+    if context.sanitize:
+        if item.stream == "stderr":
+            diagnostic = _safe_stderr(item.text)
+        else:
+            diagnostic = "provider stdout frame\n"
     tail = context.stdout_tail if item.stream == "stdout" else context.stderr_tail
-    tail.append(item.text)
+    tail.append(diagnostic)
     if context.log_handle is not None:
-        _ = context.log_handle.write(item.text)
-        _ = context.log_handle.flush()
+        remaining = CAPTURE_LIMIT - context.logged_chars if context.sanitize else len(diagnostic)
+        if remaining > 0:
+            written = diagnostic[:remaining]
+            _ = context.log_handle.write(written)
+            _ = context.log_handle.flush()
+            context.logged_chars += len(written)
     if item.stream == "stderr":
         if context.on_output_line is not None:
-            context.on_output_line(item.text, "stderr")
+            context.on_output_line(diagnostic, "stderr")
         context.channel.publish(
             SessionEvent(
                 kind="error",
-                text=item.text.rstrip("\r\n"),
+                text=diagnostic.rstrip("\r\n"),
                 event_id="stderr",
                 delta=True,
             )
         )
         return
     if context.on_output_line is not None:
-        context.on_output_line(item.text, "stdout")
+        context.on_output_line(diagnostic, "stdout")
     context.on_stdout(item.text)
 
 

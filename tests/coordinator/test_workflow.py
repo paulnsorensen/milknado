@@ -18,10 +18,15 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
 )
-from milknado.domains.coordinator import EntityLink
+from milknado.domains.coordinator import EntityLink, ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
 from milknado.domains.coordinator.journal import control_history
-from milknado.domains.coordinator.persistence import link_entity, links_for_session
+from milknado.domains.coordinator.persistence import (
+    bind_provider_session,
+    link_entity,
+    links_for_session,
+)
+from milknado.domains.coordinator.turns import TurnLaunch, bind_confirmed_identity
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
@@ -30,6 +35,7 @@ from milknado.domains.graph import (
     GoalReviewRequest,
     GroupWorkspace,
     MikadoGraph,
+    bind_execution_group_provider,
 )
 from milknado.domains.planning import Planner, PlanningPorts, PlanningProcessResult
 from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
@@ -60,7 +66,7 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
             ("planning_decision", "plan-1"),
             ("execution_group", group.id),
             ("provider_session", "provider-a"),
-            ("run", "run-a"),
+            ("run", handoff.attempt.attempt_id),
         ]
         assert [event.kind for event in control_history(conn, session.id)] == [
             "planning_decision",
@@ -130,6 +136,9 @@ def test_approval_action_is_queued_once_with_durable_receipt(tmp_path: Path) -> 
     with closing(sqlite3.connect(graph.db_path)) as conn:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
+        bind_provider_session(
+            conn, session.id, ProviderBinding("coordinator", session.id, "codex", "provider-1")
+        )
         link_entity(conn, session.id, "provider_session", "provider-1")
         channel = SessionChannel()
         channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("approve",))
@@ -223,6 +232,9 @@ def test_action_rejects_same_family_foreign_session(tmp_path: Path) -> None:
         workflow = CoordinatorWorkflow(graph, conn)
         owner = workflow.start_goal("Owner", "codex")
         foreign = workflow.start_goal("Foreign", "codex")
+        bind_provider_session(
+            conn, owner.id, ProviderBinding("coordinator", owner.id, "codex", "provider-owner")
+        )
         link_entity(conn, owner.id, "provider_session", "provider-owner")
         channel = SessionChannel()
         channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("steer",))
@@ -301,6 +313,63 @@ def test_group_retry_repairs_link_after_persistence_failure(
         assert (
             links_for_session(conn, session.id).count(EntityLink("execution_group", group.id)) == 1
         )
+    graph.close()
+
+
+def test_empty_provider_identity_does_not_persist_group(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        with pytest.raises(ValueError, match="provider"):
+            _ = workflow.create_group(
+                session, "main", (task.id,), GroupWorkspace("/tmp/empty", "empty", "")
+            )
+        assert graph.groups.for_task(task.id) is None
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/empty", "empty", None)
+        )
+        assert group.provider_session_id is None
+        assert graph.groups.tasks(group.id) == (task.id,)
+    graph.close()
+
+
+def test_group_provider_binding_rejects_rebind_without_mutation(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/bound", "bound", None)
+        )
+        with conn:
+            bind_execution_group_provider(conn, group.id, "provider-one")
+        with pytest.raises(ValueError, match="changed"):
+            with conn:
+                bind_execution_group_provider(conn, group.id, "provider-two")
+        rebound = graph.groups.get(group.id)
+        assert rebound is not None and rebound.provider_session_id == "provider-one"
+    graph.close()
+
+
+def test_group_binding_rolls_back_on_cross_scope_identity(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/scope", "scope", None)
+        )
+        coordinator = TurnLaunch("codex", None, None, "coordinator", session.id, None)
+        bind_confirmed_identity(conn, session.id, coordinator, "provider-one")
+        launch = TurnLaunch("codex", group, None, "execution_group", group.id, None)
+        with pytest.raises(ValueError, match="another scope"):
+            bind_confirmed_identity(conn, session.id, launch, "provider-one")
+        unchanged = graph.groups.get(group.id)
+        assert unchanged is not None and unchanged.provider_session_id is None
     graph.close()
 
 

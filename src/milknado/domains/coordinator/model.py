@@ -43,6 +43,8 @@ class ControlEvent(msgspec.Struct, frozen=True):
     entity_id: str = ""
     tool_name: str = ""
     status: str = ""
+    turn_id: str = ""
+    provider_session_id: str = ""
     duration_ms: int | None = None
     tool_arguments: str = ""  # noqa: V107 - accepted but never persisted
     tool_result: str = ""  # noqa: V107 - accepted but never persisted
@@ -58,5 +60,7 @@ class ControlRecord:
     entity_id: str
     tool_name: str
     status: str
+    turn_id: str
+    provider_session_id: str
     duration_ms: int | None
     created_at: str

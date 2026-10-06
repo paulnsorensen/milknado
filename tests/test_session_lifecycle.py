@@ -174,7 +174,9 @@ def test_process_group_cleanup_kills_descendants(tmp_path: Path, mode: str) -> N
         force_stop_event=force_stop,
         on_output_line=(
             lambda line, _stream: (
-                force_stop.set() if force_stop is not None and "working" in line else None
+                force_stop.set()
+                if force_stop is not None and "provider stdout frame" in line
+                else None
             )
         ),
     )
@@ -256,8 +258,8 @@ def test_stderr_output_callback_can_stop_runtime(tmp_path: Path) -> None:
 
     _assert_dead(_wait_for_pid(marker))
     assert result.force_stopped is True
-    assert output_lines == [("stderr cancellation\n", "stderr")]
-    assert result.captured_stderr == "stderr cancellation\n"
+    assert output_lines == [("provider stderr frame\n", "stderr")]
+    assert result.captured_stderr == "provider stderr frame\n"
 
 
 @pytest.mark.parametrize("mode", ("oversize-stdout", "oversize-stderr"))
@@ -312,6 +314,28 @@ def test_structured_session_hard_cap_stops_at_the_tool_boundary(tmp_path: Path) 
     assert result.returncode == 0
     assert result.turn_capped is True
     assert result.tool_use_count == 1
+
+
+def test_capped_resume_does_not_confirm_turn(tmp_path: Path) -> None:
+    from milknado.loop.sessions import (
+        ProviderSessionIdentity,
+        RuntimeRecoveryRequest,
+        RuntimeRequest,
+        start_or_resume,
+    )
+
+    worker = _worker(tmp_path)
+    identity = ProviderSessionIdentity("claude", "sid")
+    spec = _spec(worker, tmp_path, _Scenario("tool-cap", tmp_path / "unused", max_turns=1))
+    result = start_or_resume(
+        RuntimeRequest(spec, SessionChannel(), RuntimeRecoveryRequest(identity, tmp_path))
+    )
+    assert result.run is not None
+    assert result.run.returncode == 0
+    assert result.run.turn_capped is True
+    assert result.recovery is not None
+    assert result.recovery.outcome == "resumed"
+    assert result.recovery.turn_confirmed is False
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")

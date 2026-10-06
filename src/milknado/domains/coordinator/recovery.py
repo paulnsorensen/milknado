@@ -6,23 +6,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from milknado.domains.coordinator.journal import append_control_event
-from milknado.domains.coordinator.model import (
-    ControlEvent,
-    CoordinatorSession,
-    ProviderBinding,
-)
+from milknado.domains.coordinator.model import CoordinatorSession, ProviderBinding
 from milknado.domains.coordinator.persistence import (
     get_coordinator,
-    link_entity,
     links_for_session,
     provider_bindings_for_session,
+)
+from milknado.domains.coordinator.recovery_receipts import (
+    record_recovery_receipt as _record_receipt,
 )
 from milknado.domains.graph import ExecutionGroup, ExecutionGroupStore
 
 RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
 TurnStatus = Literal["submitted", "confirmed", "unknown"]
-_OUTCOMES = frozenset({"reattached", "resumed", "unknown_turn", "unavailable", "unsupported"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +48,7 @@ class UnknownTurn:
 class RecoveryReceipt:
     entity_kind: str
     entity_id: str
-    identity: ProviderIdentity
+    identity: ProviderIdentity | None
     worktree_path: Path
     outcome: RecoveryOutcome
 
@@ -72,12 +68,19 @@ class WorktreeRecoveryPort(Protocol):
     def restore(self, group: ExecutionGroup) -> bool: ...
 
 
+class WorkerTerminationPort(Protocol):
+    def terminated(
+        self, turn_id: str, supervisor_pid: int, supervisor_start_token: float
+    ) -> bool: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RecoveryRuntime:
     groups: ExecutionGroupStore
     root: Path
     provider: ProviderRecoveryPort
     worktrees: WorktreeRecoveryPort
+    workers: WorkerTerminationPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,11 +201,7 @@ def _resolve_sessions(
     links: set[tuple[str, str]],
     runtime: RecoveryRuntime,
 ) -> tuple[_ResolvedSession, ...]:
-    expected = {
-        (kind, entity_id)
-        for kind, entity_id in links
-        if kind in {"provider_session", "execution_group"}
-    }
+    expected = {(kind, entity_id) for kind, entity_id in links if kind == "provider_session"}
     resolved: list[_ResolvedSession] = []
     for binding in bindings:
         identity = ProviderIdentity(binding.family, binding.provider_session_id)
@@ -229,24 +228,10 @@ def _resolve_sessions(
     return tuple(resolved)
 
 
-def _record_receipt(
+def record_turn_recovery(
     conn: sqlite3.Connection, session_id: str, receipt: RecoveryReceipt
 ) -> RecoveryReceipt:
-    if receipt.outcome not in _OUTCOMES:
-        raise ValueError(f"invalid recovery outcome: {receipt.outcome}")
-    seq = append_control_event(
-        conn,
-        session_id,
-        ControlEvent(
-            kind="recovery",
-            text="provider recovery result",
-            entity_kind=receipt.entity_kind,
-            entity_id=receipt.entity_id,
-            status=receipt.outcome,
-        ),
-    )
-    link_entity(conn, session_id, "recovery", str(seq))
-    return receipt
+    return _record_receipt(conn, session_id, receipt)
 
 
 def recover_coordinator(  # noqa: V103
@@ -261,10 +246,17 @@ def recover_coordinator(  # noqa: V103
     links = {(link.kind, link.entity_id) for link in links_for_session(conn, session_id)}
     bindings = provider_bindings_for_session(conn, session_id)
     resolved = _resolve_sessions(session, bindings, links, runtime)
+    groups = {
+        entity_id: runtime.groups.get(entity_id)
+        for kind, entity_id in links
+        if kind == "execution_group"
+    }
+    if any(group is None for group in groups.values()):
+        raise ValueError("linked execution group does not exist")
     restored = {
-        item.binding.scope_id: runtime.worktrees.restore(item.group)
-        for item in resolved
-        if item.group is not None
+        group_id: runtime.worktrees.restore(group)
+        for group_id, group in groups.items()
+        if group is not None
     }
     receipts = tuple(
         _record_receipt(
@@ -281,5 +273,17 @@ def recover_coordinator(  # noqa: V103
             ),
         )
         for item in resolved
+    )
+    bound_groups = {item.binding.scope_id for item in resolved if item.group is not None}
+    receipts += tuple(
+        _record_receipt(
+            conn,
+            session_id,
+            RecoveryReceipt(
+                "execution_group", group_id, None, Path(group.worktree_path), "unavailable"
+            ),
+        )
+        for group_id, group in groups.items()
+        if group_id not in bound_groups and group is not None
     )
     return CoordinatorRecovery(session, receipts, _mark_unknown_turns(conn, session_id))

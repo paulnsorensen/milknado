@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class GroupWorkspace:
     worktree_path: str
     branch_name: str
-    provider_session_id: str
+    provider_session_id: str | None
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class ExecutionGroup:
     graph_id: str
     worktree_path: str
     branch_name: str
-    provider_session_id: str
+    provider_session_id: str | None
     source_group_id: str | None = None
 
 

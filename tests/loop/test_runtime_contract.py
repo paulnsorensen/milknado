@@ -73,8 +73,8 @@ def test_provider_contract_declares_each_lifecycle_capability(
         state in {"native", "runtime", "unsupported"} for state in capabilities.floor.values()
     )
     assert capabilities.floor["start"] == "native"
-    assert capabilities.floor["resume"] == "unsupported"
-    assert capabilities.floor["recovery_report"] == "unsupported"
+    assert capabilities.floor["resume"] == "native"
+    assert capabilities.floor["recovery_report"] == "runtime"
     assert frozenset(protocol.actions) == capabilities.native_actions
 
 
@@ -167,19 +167,130 @@ def test_stale_handle_cannot_submit_after_channel_restart(tmp_path: Path) -> Non
     assert [command.action for command in channel.drain()] == ["interrupt"]
 
 
-def test_resume_port_reports_explicit_unsupported_result(tmp_path: Path) -> None:
+def test_resume_rejects_provider_and_worktree_mismatch(tmp_path: Path) -> None:
     identity = ProviderSessionIdentity("codex", "provider-1")
     spec = AgentRunSpec(
-        cmd=["codex"], prompt="continue", timeout=1, log_dir=None, iteration=1, cwd=tmp_path
+        cmd=["claude"], prompt="continue", timeout=1, log_dir=None, iteration=1, cwd=tmp_path
     )
     request = RuntimeRequest(
         spec=spec,
         channel=SessionChannel(),
         resume=RuntimeRecoveryRequest(identity=identity, cwd=tmp_path),
     )
-    result = start_or_resume(request)
-    assert result.run is None
-    assert result.recovery == RecoveryReceipt(identity, "unsupported")
+    with pytest.raises(ValueError, match="provider family"):
+        _ = start_or_resume(request)
+    with pytest.raises(ValueError, match="worktree"):
+        _ = start_or_resume(
+            RuntimeRequest(
+                spec=replace(spec, cmd=["codex"]),
+                channel=SessionChannel(),
+                resume=RuntimeRecoveryRequest(identity, tmp_path / "other"),
+            )
+        )
+
+
+def test_resume_rejects_codex_effective_cwd_before_launch(tmp_path: Path) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    identity = ProviderSessionIdentity("codex", "thread-1")
+    spec = AgentRunSpec(
+        cmd=["codex", "--cd", str(other)],
+        prompt="continue",
+        timeout=1,
+        log_dir=None,
+        iteration=1,
+        cwd=tmp_path,
+    )
+    with pytest.raises(ValueError, match="worktree"):
+        _ = start_or_resume(
+            RuntimeRequest(spec, SessionChannel(), RuntimeRecoveryRequest(identity, tmp_path))
+        )
+
+
+def test_claude_resume_uses_provider_identity_and_reports_confirmation(tmp_path: Path) -> None:
+    script = tmp_path / "worker.py"
+    _ = script.write_text(
+        textwrap.dedent(
+            """\
+            import json
+            import sys
+
+            assert sys.argv[1:3] == ["--resume", "provider-1"]
+            for raw in sys.stdin:
+                if json.loads(raw).get("type") == "user":
+                    print(json.dumps({"type": "result", "subtype": "success",
+                                      "session_id": "provider-1", "result": "done"}), flush=True)
+                    break
+            """
+        ),
+        encoding="utf-8",
+    )
+    worker = tmp_path / "claude"
+    worker.symlink_to(sys.executable)
+    identity = ProviderSessionIdentity("claude", "provider-1")
+    spec = AgentRunSpec(
+        cmd=[str(worker), str(script)],
+        prompt="continue",
+        timeout=5,
+        log_dir=None,
+        iteration=1,
+        cwd=tmp_path,
+    )
+    result = start_or_resume(
+        RuntimeRequest(spec, SessionChannel(), RuntimeRecoveryRequest(identity, tmp_path))
+    )
+    assert result.run is not None and result.run.returncode == 0
+    assert result.recovery == RecoveryReceipt(identity, "resumed", turn_confirmed=True)
+
+
+@pytest.mark.parametrize("prefix", ((), ("app-server",)))
+def test_codex_resume_uses_thread_identity_and_confirms_turn(
+    tmp_path: Path, prefix: tuple[str, ...]
+) -> None:
+    worker = tmp_path / "codex"
+    _ = worker.write_text(
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            import json
+            import sys
+
+            assert sys.argv[1:] == ["app-server"]
+            for raw in sys.stdin:
+                request = json.loads(raw)
+                method = request.get("method")
+                if method == "initialize":
+                    result = {}
+                elif method == "thread/resume":
+                    assert request["params"]["threadId"] == "thread-1"
+                    result = {"thread": {"id": "thread-1"}}
+                elif method == "turn/start":
+                    assert request["params"]["threadId"] == "thread-1"
+                    result = {"turn": {"id": "turn-1", "status": "completed"}}
+                else:
+                    continue
+                print(json.dumps({"id": request["id"], "result": result}), flush=True)
+                if method == "turn/start":
+                    break
+            """
+        ),
+        encoding="utf-8",
+    )
+    worker.chmod(0o755)
+    identity = ProviderSessionIdentity("codex", "thread-1")
+    spec = AgentRunSpec(
+        cmd=[str(worker), *prefix],
+        prompt="continue",
+        timeout=5,
+        log_dir=None,
+        iteration=1,
+        cwd=tmp_path,
+    )
+    result = start_or_resume(
+        RuntimeRequest(spec, SessionChannel(), RuntimeRecoveryRequest(identity, tmp_path))
+    )
+    assert result.run is not None and result.run.returncode == 0
+    assert result.recovery == RecoveryReceipt(identity, "resumed", turn_confirmed=True)
 
 
 def test_start_port_runs_provider_session(tmp_path: Path) -> None:
