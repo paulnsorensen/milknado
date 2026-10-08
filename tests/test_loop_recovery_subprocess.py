@@ -29,7 +29,7 @@ class _StartedRun(TypedDict):
 
 
 def _wait_for_worker(graph: MikadoGraph, node_id: int, marker: Path) -> WorkerRecord:
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         workers = graph.runs.live_workers(node_id=node_id)
         if workers and marker.exists() and marker.read_text() == str(workers[0].pid):

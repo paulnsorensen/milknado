@@ -52,22 +52,55 @@ def _helper_observing(process: ProcessTerminationPort, record: WorkerRecord) -> 
 def _await_helper(
     evidence: WorkerEvidenceStore,
     process: ProcessTerminationPort,
-    record: WorkerRecord,
+    record: WorkerRecord | None,
     deadline: float,
 ) -> WorkerRecord | None:
     """Let a live lifeline helper finish its observation; its parent loss races recovery."""
-    current: WorkerRecord | None = record
+    current = record
     while (
         current is not None and _helper_observing(process, current) and time.monotonic() < deadline
     ):
         time.sleep(_HELPER_POLL_SECONDS)
-        current = evidence.get(record.invocation_id)
+        current = evidence.get(current.invocation_id)
     return current
 
 
-def _prepare_worker(
-    evidence: WorkerEvidenceStore, process: ProcessTerminationPort, record: WorkerRecord
+def _supervisor_key(record: WorkerRecord) -> ObservationKey:
+    return ObservationKey(
+        record.invocation_id,
+        "supervisor",
+        record.snapshot_seq + 1,
+        -1,
+        record.pid,
+        record.start_token,
+    )
+
+
+def _begin_observation(
+    evidence: WorkerEvidenceStore,
+    process: ProcessTerminationPort,
+    record: WorkerRecord,
+    deadline: float,
 ) -> WorkerRecord | None:
+    """Begin once more after a helper observation that started after the record was read."""
+    try:
+        evidence.begin(_supervisor_key(record))
+    except RuntimeError:
+        current = _await_helper(evidence, process, evidence.get(record.invocation_id), deadline)
+        if current is None or current.ended_at is not None:
+            return current
+        evidence.begin(_supervisor_key(current))
+        return current
+    return record
+
+
+def _prepare_worker(
+    evidence: WorkerEvidenceStore,
+    process: ProcessTerminationPort,
+    record: WorkerRecord,
+    deadline: float,
+) -> WorkerRecord | None:
+    """Return the observed record, a record the helper closed, or None when unresolved."""
     if record.observation_owner is not None:
         _logger.error(
             "worker recovery unresolved: invocation_id=%s interrupted observation=%s sequence=%s",
@@ -76,18 +109,12 @@ def _prepare_worker(
             record.observation_seq,
         )
         return None
-    key = ObservationKey(
-        record.invocation_id,
-        "supervisor",
-        record.snapshot_seq + 1,
-        -1,
-        record.pid,
-        record.start_token,
-    )
     try:
-        evidence.begin(key)
-        observed = process.observe_worker(_identity(record))
-        evidence.commit(key, observed)
+        begun = _begin_observation(evidence, process, record, deadline)
+        if begun is not None and begun.ended_at is not None:
+            return begun
+        if begun is not None:
+            evidence.commit(_supervisor_key(begun), process.observe_worker(_identity(begun)))
         refreshed = evidence.get(record.invocation_id)
     except Exception:
         _logger.exception(
@@ -95,7 +122,8 @@ def _prepare_worker(
         )
         return None
     if (
-        refreshed is None
+        begun is None
+        or refreshed is None
         or refreshed.observation_owner is not None
         or refreshed.ended_at is not None
     ):
@@ -216,13 +244,14 @@ def reap_orphaned_workers(
                 if (current := _await_helper(evidence, process, record, deadline)) is not None
                 and current.ended_at is None
             )
-            prepared = tuple(
+            candidates = tuple(
                 refreshed
                 for record in settled
                 if time.monotonic() < deadline
-                and (refreshed := _prepare_worker(evidence, process, record)) is not None
+                and (refreshed := _prepare_worker(evidence, process, record, deadline)) is not None
             )
-            complete = complete and len(prepared) == len(settled)
+            complete = complete and len(candidates) == len(settled)
+            prepared = tuple(record for record in candidates if record.ended_at is None)
             if not prepared:
                 return complete
             if time.monotonic() >= deadline:
