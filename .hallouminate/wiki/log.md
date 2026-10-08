@@ -50,3 +50,12 @@
 
 2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
 
+
+
+- 2026-10-08 · `1f36991176fcae5d` · merged · `architecture/entry-points.md` · Record the released CRG FastMCP constraint and locked-install checks. All frozen retrieval probes pass.
+- 2026-10-08 · `1f36991176fcae5d` · new-page · `sources/code-review-graph.md` · Preserve PyPI metadata provenance and resolver evidence limits. Exact source retrieval ranks first.
+
+
+
+2026-10-08 · a292776dfa8bc0d7 · merged · architecture/entry-points.md · Use active voice for the executable declaration. Preserve names, targets, page identity, and dependency facts. All frozen retrieval probes pass.
+

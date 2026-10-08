@@ -62,7 +62,7 @@ def load_credential(path: Path, master_hash: str) -> bytes | None:
         _validate_handle(handle, path, directory=False)
         _validate_protection(handle, path, sid)
         _status, raw = win32file.ReadFile(handle.handle, _MAX_CREDENTIAL_BYTES + 1)
-        value = raw if isinstance(raw, bytes) else raw.encode()
+        value = raw
         if len(value) > _MAX_CREDENTIAL_BYTES:
             raise _authorization(f"controller credential record has unsafe size: {path}")
     except pywintypes.error as exc:
