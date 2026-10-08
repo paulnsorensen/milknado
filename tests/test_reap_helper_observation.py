@@ -52,24 +52,23 @@ def _observing_graph(
     return graph
 
 
-class _HelperRace(ProcessAdapter):
-    """Run one helper step after reap reads the worker record and before it begins."""
-
-    def __init__(self, step: Callable[[], None]) -> None:
-        super().__init__()
-        self._step: Callable[[], None] | None = step
-
-    @override
-    def supervisor_state(self, pid: int, start_token: float) -> str:  # pyright: ignore[reportIncompatibleMethodOverride]
-        if self._step is not None:
-            step, self._step = self._step, None
-            step()
-        return super().supervisor_state(pid, start_token)
-
-
 def _reap(graph: MikadoGraph, step: Callable[[], None]) -> bool:
+    pending_step: Callable[[], None] | None = step
+
+    class _HelperRace(ProcessAdapter):
+        """Run one helper step after reap reads the worker record and before it begins."""
+
+        @staticmethod
+        @override
+        def supervisor_state(pid: int, start_token: float) -> str:
+            nonlocal pending_step
+            if pending_step is not None:
+                callback, pending_step = pending_step, None
+                callback()
+            return ProcessAdapter.supervisor_state(pid, start_token)
+
     request = ReapRequest(NodeWorkers(1), deadline=time.monotonic() + 5)
-    return reap_orphaned_workers(graph, _HelperRace(step), request)
+    return reap_orphaned_workers(graph, _HelperRace(), request)
 
 
 def _helper_key(helper: HelperIdentity) -> ObservationKey:
