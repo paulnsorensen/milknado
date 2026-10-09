@@ -6,7 +6,6 @@ import importlib
 from pathlib import Path
 from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
@@ -97,7 +96,7 @@ def test_owner_host_stops_scheduling_on_first_interrupt(monkeypatch, tmp_path: P
         server_release.wait()
 
     result = web_module.run_owner_web(
-        OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+        OwnerWebContext(tmp_path, MilknadoConfig(), []),
         OwnerWebOptions(),
         OwnerWebServices(server=server),
     )
@@ -135,7 +134,7 @@ def test_owner_host_closes_graph_when_server_fails_before_bind(
 
     with pytest.raises(RuntimeError, match="bind failed"):
         web_module.run_owner_web(
-            OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+            OwnerWebContext(tmp_path, MilknadoConfig(), []),
             OwnerWebOptions(),
             OwnerWebServices(server=server),
         )
@@ -158,7 +157,7 @@ def test_owner_host_stops_controller_when_server_fails_after_ready(
 
     with pytest.raises(RuntimeError, match="server failed"):
         web_module.run_owner_web(
-            OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+            OwnerWebContext(tmp_path, MilknadoConfig(), []),
             OwnerWebOptions(),
             OwnerWebServices(server=server),
         )
@@ -192,7 +191,7 @@ def test_owner_host_preserves_graph_when_controller_misses_shutdown_deadline(
 
     with pytest.raises(RuntimeError, match="shutdown deadline"):
         web_module.run_owner_web(
-            OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+            OwnerWebContext(tmp_path, MilknadoConfig(), []),
             OwnerWebOptions(),
             OwnerWebServices(server=server),
         )
@@ -244,7 +243,7 @@ def test_owner_host_exits_on_first_interrupt_after_controller_completes(
         Event().wait()
 
     result = web_module.run_owner_web(
-        OwnerWebContext(tmp_path, cast(MilknadoConfig, object()), []),
+        OwnerWebContext(tmp_path, MilknadoConfig(), []),
         OwnerWebOptions(),
         OwnerWebServices(server=server),
     )

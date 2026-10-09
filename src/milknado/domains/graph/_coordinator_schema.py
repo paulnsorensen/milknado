@@ -44,6 +44,13 @@ CREATE_EVENTS_OPERATION_INDEX = (
     "WHERE operation_hash IS NOT NULL"
 )
 
+CREATE_WEB_RECEIPTS = (
+    "CREATE TABLE IF NOT EXISTS coordinator_web_receipts ("
+    "command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+    "command_hash TEXT NOT NULL, status TEXT NOT NULL, "
+    "result_json TEXT NOT NULL)"
+)
+
 CORE_MIGRATIONS: tuple[tuple[int, str], ...] = (
     (41, CREATE_SESSIONS),
     (42, CREATE_LINKS),
@@ -51,6 +58,7 @@ CORE_MIGRATIONS: tuple[tuple[int, str], ...] = (
     (44, CREATE_EVENTS_SESSION_INDEX),
     (45, CREATE_EVENTS_EXPIRY_INDEX),
     (46, CREATE_EVENTS_OPERATION_INDEX),
+    (47, CREATE_WEB_RECEIPTS),
 )
 
 CREATE_DISPATCHES = (

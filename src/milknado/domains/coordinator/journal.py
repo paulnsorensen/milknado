@@ -169,3 +169,39 @@ def control_history(  # noqa
         ).fetchall(),
     )
     return tuple(_record(row) for row in rows)
+
+
+def snapshot_control_history(
+    conn: sqlite3.Connection, session_id: str, cursor: int, *, now: datetime | None = None
+) -> tuple[tuple[ControlRecord, ...], tuple[ControlRecord, ...], int]:
+    timestamp = _utc(now).isoformat()
+    columns = "seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, created_at"
+    recent_rows = cast(
+        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        conn.execute(
+            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND seq > ? "
+            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
+            (session_id, cursor, timestamp),
+        ).fetchall(),
+    )
+    recovery_rows = cast(
+        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        conn.execute(
+            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND kind = 'recovery' "
+            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
+            (session_id, timestamp),
+        ).fetchall(),
+    )
+    if recent_rows:
+        latest = recent_rows[-1][0]
+    else:
+        row = cast(
+            tuple[int | None],
+            conn.execute(
+                "SELECT MAX(seq) FROM coordinator_events WHERE session_id = ? "
+                + "AND (expires_at IS NULL OR expires_at > ?)",
+                (session_id, timestamp),
+            ).fetchone(),
+        )
+        latest = row[0] if row[0] is not None else cursor
+    return tuple(map(_record, recent_rows)), tuple(map(_record, recovery_rows)), latest

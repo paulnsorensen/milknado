@@ -72,16 +72,19 @@ class CoordinatorWorkflow:  # noqa: V102
     def plan_goal(  # noqa: V105
         self, session: CoordinatorSession, planner: Planner, project_root: Path, operation_id: str
     ) -> PlanResult:
-        fresh, result = begin_plan(self._conn, session.id, operation_id)
-        if fresh:
-            goal = self._graph.get_node(session.goal_id)
-            if goal is None:
+        with self._graph.synchronization_lock:
+            fresh, result = begin_plan(self._conn, session.id, operation_id)
+            goal = self._graph.get_node(session.goal_id) if fresh else None
+            if fresh and goal is None:
                 raise ValueError("coordinator goal does not exist")
+        if goal is not None:
             result = planner.launch(goal.description, project_root, target_goal_id=session.goal_id)
-            finish_plan(self._conn, operation_id, result)
-        if result is None:
-            raise RuntimeError("planning operation has no result")
-        self.record_plan(session, operation_id, "accepted" if result.success else "failed")
+        with self._graph.synchronization_lock:
+            if result is None:
+                raise RuntimeError("planning operation has no result")
+            if fresh:
+                finish_plan(self._conn, operation_id, result)
+            self.record_plan(session, operation_id, "accepted" if result.success else "failed")
         return result
 
     def record_plan(self, session: CoordinatorSession, plan_id: str, status: str) -> None:

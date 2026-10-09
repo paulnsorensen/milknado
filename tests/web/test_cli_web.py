@@ -12,8 +12,8 @@ from typer.testing import CliRunner
 
 from milknado.cli import app
 from milknado.cli.web import _Controller, _owner_capabilities, _ProjectGitInspection
-from milknado.domains.common import SessionContext
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.common import MilknadoConfig, SessionContext
+from milknado.domains.graph import ControllerAuthorizationError, MikadoGraph
 from milknado.web.login import LaunchToken
 
 runner = CliRunner()
@@ -24,7 +24,7 @@ def test_web_command_accepts_port_and_no_open(tmp_path: Path) -> None:
     with (
         patch(
             "milknado.cli.web.load_or_default",
-            return_value=(SimpleNamespace(db_path=tmp_path / "db"), []),
+            return_value=(MilknadoConfig(db_path=tmp_path / "db"), []),
         ),
         patch("milknado.cli.web.ensure_db") as ensure_db,
         patch("milknado.cli.web.LaunchToken", return_value=token),
@@ -42,6 +42,36 @@ def test_web_command_accepts_port_and_no_open(tmp_path: Path) -> None:
     options = server.call_args.args[2]
     assert options.port == 8123
     assert options.no_open is True
+
+
+def test_web_denied_controller_credential_disables_review_port(tmp_path: Path) -> None:
+    with (
+        patch(
+            "milknado.cli.web.load_or_default",
+            return_value=(MilknadoConfig(db_path=tmp_path / "db"), []),
+        ),
+        patch("milknado.cli.web.ensure_db") as ensure_db,
+        patch("milknado.cli.web.PolledSnapshotSource") as polling,
+        patch("milknado.cli.web.run_server") as server,
+    ):
+        ensure_db.return_value.register_controller_master.side_effect = (
+            ControllerAuthorizationError("denied")
+        )
+        result = runner.invoke(app, ["web", "--project-root", str(tmp_path), "--no-open"])
+    assert result.exit_code == 0, result.output
+    polling.return_value.start.assert_called_once()
+    context = server.call_args.args[0].state.web
+    assert context.commands.review_decision is None
+    assert context.commands.coordinator._services.review_decision is None
+
+
+def test_launch_delegates_repository_and_browser_options(tmp_path: Path) -> None:
+    with patch("milknado.cli.web.web") as host:
+        result = runner.invoke(
+            app, ["launch", "--project-root", str(tmp_path), "--port", "8125", "--no-open"]
+        )
+    assert result.exit_code == 0, result.output
+    host.assert_called_once_with(tmp_path, 8125, True)
 
 
 def test_run_web_options_delegate_to_owner_host(tmp_path: Path) -> None:
