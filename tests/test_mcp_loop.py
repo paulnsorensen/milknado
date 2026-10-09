@@ -22,7 +22,7 @@ from milknado.mcp.todo_mutate import milknado_todo_add
 
 
 @pytest.fixture(autouse=True)
-def _initialize_git_repository(tmp_path: Path) -> None:  # pyright: ignore[reportUnusedFunction]
+def _initialize_git_repository(tmp_path: Path) -> None:
     _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
     _ = subprocess.run(
         [
