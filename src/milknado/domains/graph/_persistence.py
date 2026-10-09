@@ -671,6 +671,8 @@ def drop_all(conn: sqlite3.Connection) -> int:
         raise RuntimeError("node count query returned no row")
     count = cast(int, _as_tuple(count_row)[0])
     for statement in (
+        *_coordinator_schema.RESET_STATEMENTS,
+        *_group_schema.RESET_STATEMENTS,
         "DELETE FROM run_messages",
         "DELETE FROM command_receipts",
         "DELETE FROM session_commands",

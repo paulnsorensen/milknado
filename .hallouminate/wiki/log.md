@@ -108,3 +108,7 @@
 2026-10-09 · d14a265069979181 · merged · architecture/execution.md · Record approved group-action graph admission through the adapter facade. Preserve root RuntimeSession, durable drain, and identity fences. Supersede the wrapper-free group-action claim. Five frozen checks rank first.
 2026-10-09 · d14a265069979181 · merged · architecture/graph.md · Replace moved schema citations with stable symbols; preserve steps 51–52 and their SQL meaning. Earlier retrieval warning remains 20/21, with corrupt-reference retrieval last observed at rank 4. Index reconciliation remains incomplete.
 
+
+
+2026-10-09 · 07edf6c0c36fac2a · merged · architecture/graph.md · Record FK-safe graph persistence reset, receipt cleanup, schema retention, and unchanged worker/filesystem policies. Four frozen probes pass.
+
