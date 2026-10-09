@@ -3,8 +3,9 @@
 These captures show actual terminal and browser presentation with fixed offline data.
 Baseline checkout: `e734344fdc953dbc116e9f9bdc5f83cb6974c98e`.
 Current terminal presentation matches `dbddcad986674232746f668d9abd4df6f696c4ad`; later Cure changes do not alter these view files.
-Current browser captures use the rebuilt `index-CSuvHvHG.js` dashboard and reviewed proposal API.
-All 90 PNGs are opened and inspected before publication.
+The original 46 browser captures use `index-CSuvHvHG.js` at head `822da910980cfda82d129aea94c082f1ae924b2c`.
+The missing-session section adds four matched repair captures using `index-BkmT1k_E.js`.
+All 94 PNGs are opened and inspected before publication.
 The [manifest](./manifest.json) records their exact hashes.
 
 ## Terminal comparisons
@@ -169,3 +170,33 @@ Snapshot equality passes for all three states on both source checkouts.
 The browser fixture uses the public `CoordinatorServices` import and nine source-grounded states.
 Its state helper asserts the expected unavailable response without suppressing other console errors.
 Both scripts satisfy the written size limits.
+
+## Missing stored session repair
+These four additional captures compare head `822da910980cfda82d129aea94c082f1ae924b2c` with the missing-session repair.
+They use the same empty graph, stored missing session ID, dark theme, project root, and viewport.
+The baseline asset is `index-CSuvHvHG.js`; the repaired asset is `index-BkmT1k_E.js`.
+Both baseline viewports produce two snapshot 404 responses and repeated notices after 2300 milliseconds.
+Both repaired viewports produce one 404, clear browser selection, expose intake, and show one notice.
+The fixture checks the authenticated response body and exact console message with matching snapshot URLs.
+Expected 404 console errors remain observable; all other console errors, page errors, and HTTP 500 responses fail.
+No live worker, provider authority, or server authorization change runs.
+All four images are opened and inspected.
+The baseline mobile notices overlap lower viewport controls.
+Mobile pages extend below the viewport; these captures do not claim full-page visibility.
+
+| Viewport | Before | After |
+| --- | --- | --- |
+| 1440x900 | [before](./browser/before-missing-session-1440x900.png) | [after](./browser/after-missing-session-1440x900.png) |
+| 390x844 | [before](./browser/before-missing-session-390x844.png) | [after](./browser/after-missing-session-390x844.png) |
+
+Use the current script for both checkouts:
+
+```sh
+AFTER=/path/to/current-checkout
+CHECKOUT=/path/to/source-checkout
+SIDE=after
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$CHECKOUT/src:$CHECKOUT" \
+  "$AFTER/.venv/bin/python" \
+  "$AFTER/docs/tui-captures/pr-520-integration/capture_missing_session.py" \
+  --checkout "$CHECKOUT" --side "$SIDE" --output-dir /tmp/pr520-missing-session
+```

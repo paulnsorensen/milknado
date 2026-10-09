@@ -2,9 +2,13 @@
   "baseline": "e734344fdc953dbc116e9f9bdc5f83cb6974c98e",
   "terminalViewSource": "dbddcad986674232746f668d9abd4df6f696c4ad (unchanged presentation by later Cure)",
   "browserAsset": "index-CSuvHvHG.js",
+  "originalBrowserHead": "822da910980cfda82d129aea94c082f1ae924b2c",
+  "missingSessionBaseline": "822da910980cfda82d129aea94c082f1ae924b2c",
+  "missingSessionAsset": "index-BkmT1k_E.js",
+  "missingSessionLimits": "Four matched viewport captures. Expected URL-attributed 404 console errors are asserted. Baseline repeats twice; repair observes one response after 2300 milliseconds. Baseline mobile notices overlap lower controls. No live worker or authority.",
   "openedTerminal": 44,
-  "openedBrowser": 46,
-  "artifactCount": 90,
+  "openedBrowser": 50,
+  "artifactCount": 94,
   "limits": "Offline fixture only. No live worker, provider authority, or palette fidelity. Baseline has no proposal controls. Focused cockpit captures use scrolling. Supplements do not have matched dimensions. PNG reruns are not byte-stable. Coordinator-unavailable asserts one expected HTTP 409 console error. Applying seeds a valid proposal transition, not a worker crash."
 ,
 "artifacts": [
@@ -97,6 +101,10 @@
 {"path":"docs/tui-captures/pr-520-integration/terminal/before/watch-help-120x40.png","sha256":"d2d3c579ef1472ed5e0134a5698987edf745d4e1891d3cb40147be1dbc204b5f"},
 {"path":"docs/tui-captures/pr-520-integration/terminal/before/watch-help-80x24.png","sha256":"180e36498eef6fff32b958c726062ef977a9111551315a08d516f76c5d98cbb0"},
 {"path":"docs/tui-captures/pr-520-integration/terminal/before/watch-normal-120x40.png","sha256":"55f50f20c6bb08722035e3fa36d444bdf88b76f1a0fd0371a2040941083d8140"},
-{"path":"docs/tui-captures/pr-520-integration/terminal/before/watch-normal-80x24.png","sha256":"430e38c89496980756ce8de6484619233e093d506a90032c5c73652d7bd8a3b7"}
+{"path":"docs/tui-captures/pr-520-integration/terminal/before/watch-normal-80x24.png","sha256":"430e38c89496980756ce8de6484619233e093d506a90032c5c73652d7bd8a3b7"},
+{"path":"docs/tui-captures/pr-520-integration/browser/after-missing-session-1440x900.png","sha256":"953f46f110cd173206333a88c4890a85ebb3bb4b175d612a9c07c5276b77c255"},
+{"path":"docs/tui-captures/pr-520-integration/browser/after-missing-session-390x844.png","sha256":"c190175ecac3e880ab92443b02d306ba186d15fed37ea5f736f52cab20aa4d7d"},
+{"path":"docs/tui-captures/pr-520-integration/browser/before-missing-session-1440x900.png","sha256":"81fd3e2137edf04059bfc5229aed383237163a833947388220a4c276fc9d5856"},
+{"path":"docs/tui-captures/pr-520-integration/browser/before-missing-session-390x844.png","sha256":"90ffa27dccfc8f61b9fe4c49c58a630e1387494284dae47833ac7894f2b54469"}
 ]
 }

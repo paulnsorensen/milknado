@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { get, post } from '../../app/api';
+import { ApiError, get, post } from '../../app/api';
 import { pushNotice, setCoordinatorGraph } from '../../app/store';
 import { graphFrom, type Receipt, type SessionSummary, type Snapshot } from './types';
 
@@ -79,9 +79,15 @@ export function useCoordinatorSession() {
         setSnapshot(value);
         setCoordinatorGraph(graphFrom(value));
       }
-    } catch {
-      if (scope.current === currentScope && currentScope.active && !controller.signal.aborted) {
-        pushNotice(failureNotice);
+    } catch (error) {
+      if (scope.current === currentScope && currentScope.active &&
+        request === currentScope.request && !controller.signal.aborted) {
+        if (error instanceof ApiError && error.status === 404) {
+          selectSession('');
+          pushNotice('Coordinator session was not found.');
+        } else {
+          pushNotice(failureNotice);
+        }
       }
     } finally {
       currentScope.controllers.delete(controller);
