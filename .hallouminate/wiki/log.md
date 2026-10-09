@@ -66,3 +66,7 @@
 
 2026-10-08 · a292776dfa8bc0d7 · merged · architecture/entry-points.md · Use active voice for the executable declaration. Preserve names, targets, page identity, and dependency facts. All frozen retrieval probes pass.
 
+
+
+2026-10-09 · ff588573ffce3aa1 · merged · architecture/execution.md · Preserve mixed-provider bindings and terminal group-task failure contracts. Do not infer coordinator recovery from isolated graph alternatives. Current code-head gate and nine CI checks pass.
+

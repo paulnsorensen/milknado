@@ -503,6 +503,9 @@ The full gate remains pending behind the selection-writer freeze barrier.[^fixtu
 
 Coordinator commands require an exact durable coordinator, provider-family, and provider-session binding before reserving a receipt.[^pr518-action-binding]
 A display or discovery link does not authorize provider input.
+Provider binding is a separate lifecycle operation; discovery alone does not establish recovery or action authority.[^pr518-explicit-binding]
+Mixed-provider recovery keeps the coordinator family separate from the execution-group family.
+Do not infer an execution-group provider family from `CoordinatorSession.provider`; `GroupWorkspace` contains no family field.[^pr518-mixed-binding]
 The domain submission port uses identity properties and one submission method.
 The existing `RuntimeSession` implements that port without a separate wrapper or unused factory.[^pr518-live-port]
 Its method delegates to native admission and incarnation fencing.
@@ -523,6 +526,21 @@ These checks preserve durable-before-submit ordering and ownership instead of re
 
 
 _Source: approved PR 518 guard and submission-port corrections · Updated: 2026-10-09._
+
+
+
+Launch failure records a terminal group-task result once no unresolved worker remains.
+Admission does not overwrite terminal results or skip a failed predecessor.[^pr518-terminal-group]
+This contract does not promise in-place relaunch.
+Graph forking creates an isolated alternative and drops external parent links.
+It is not a verified coordinator retry path.[^pr518-fork-limit]
+
+[^pr518-explicit-binding]: src/milknado/domains/coordinator/workflow.py:118-119; src/milknado/domains/coordinator/recovery.py:234-235; tests/coordinator/test_recovery.py:66-70; tests/coordinator/test_workflow.py:129-144.
+[^pr518-mixed-binding]: tests/coordinator/test_recovery.py:73-107; src/milknado/domains/graph/_group_models.py:7-10.
+[^pr518-terminal-group]: src/milknado/domains/graph/_group_reservation.py:33-43,89-118; tests/test_execution_groups.py:80-91; tests/coordinator/test_reservation_guards.py:109-115.
+[^pr518-fork-limit]: src/milknado/domains/graph/_group_fork.py:1-65.
+
+_Source: current-head PR 518 lifecycle feedback and existing source contracts · Updated: 2026-10-09._
 
 ## Deposit channel — worker → coordinator results (#122)
 
