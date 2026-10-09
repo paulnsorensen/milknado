@@ -26,7 +26,7 @@ def test_capability_publication_follows_permission_indexing() -> None:
 
     assert publications[-1] == (
         ("approve",),
-        (("1/request-1",), (("1/request-1", "confirm"),)),
+        (("1/invocation-1/request-1",), (("1/invocation-1/request-1", "confirm"),)),
     )
 
 
@@ -48,6 +48,28 @@ def test_durable_permission_identity_stays_separate_from_provider_id() -> None:
     assert [(event.event_id, event.state) for event in user_events] == [
         ("1/command-1", "submitted")
     ]
+
+
+def test_fresh_invocation_rejects_stale_permission_identity() -> None:
+    def ask(invocation_id: str) -> tuple[SessionChannel, str]:
+        channel = SessionChannel()
+        channel.start(_CONTEXT, ("approve",), invocation_id=invocation_id)
+        channel.publish(
+            SessionEvent(
+                kind="permission", text="confirm", event_id="request-1", state="requested"
+            )
+        )
+        return channel, channel.view().permissions[0].event_id
+
+    earlier, stale_id = ask("invocation-1")
+    earlier.close()
+    current, current_id = ask("invocation-2")
+
+    assert stale_id != current_id
+    assert not current.submit(SessionInput(action="approve", request_id=stale_id))
+    assert current.submit(SessionInput(action="approve", request_id=current_id))
+    (submitted,) = current.drain()
+    assert submitted.request_id == "request-1"
 
 
 def test_capacity_includes_inputs_waiting_for_vendor_receipts() -> None:

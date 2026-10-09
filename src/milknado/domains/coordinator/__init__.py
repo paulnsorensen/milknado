@@ -1,3 +1,4 @@
+from milknado.domains.coordinator.commands import ActionSession
 from milknado.domains.coordinator.control import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     CoordinatorCommand,
@@ -13,6 +14,7 @@ from milknado.domains.coordinator.control_services import (
     TurnRuntimeRequest,
     TurnRuntimeResult,
 )
+from milknado.domains.coordinator.journal import redact_control_text
 from milknado.domains.coordinator.model import (
     ControlEvent,
     ControlRecord,
@@ -20,7 +22,11 @@ from milknado.domains.coordinator.model import (
     EntityLink,
     ProviderBinding,
 )
-from milknado.domains.coordinator.projection import CoordinatorSnapshot
+from milknado.domains.coordinator.projection import (
+    CoordinatorSnapshot,
+    CoordinatorStatus,
+    read_coordinator_status,
+)
 from milknado.domains.coordinator.recovery import (
     ProviderIdentity,
     RecoveryOutcome,
@@ -28,11 +34,13 @@ from milknado.domains.coordinator.recovery import (
 )
 
 __all__ = [
+    "ActionSession",
     "CoordinatorCommand",
     "CoordinatorCommandReceipt",
     "CoordinatorControl",
     "CoordinatorSnapshot",
     "CoordinatorServices",
+    "CoordinatorStatus",
     "ControlEvent",
     "ControlRecord",
     "CoordinatorSession",
@@ -48,4 +56,6 @@ __all__ = [
     "TurnRunResult",
     "TurnRuntimeRequest",
     "TurnRuntimeResult",
+    "read_coordinator_status",
+    "redact_control_text",
 ]

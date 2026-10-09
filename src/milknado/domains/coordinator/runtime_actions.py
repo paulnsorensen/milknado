@@ -6,6 +6,7 @@ import hashlib
 import sqlite3
 from collections.abc import Callable
 from contextlib import closing
+from dataclasses import dataclass
 from typing import Literal
 
 import msgspec
@@ -16,21 +17,26 @@ from milknado.domains.coordinator.control_models import (
     RuntimeAction,
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
-from milknado.domains.coordinator.persistence import create_coordinator_tables, get_coordinator
+from milknado.domains.coordinator.persistence import get_coordinator
 from milknado.domains.coordinator.receipt_results import reserve_command_receipt
 from milknado.domains.graph import MikadoGraph
 
 
-def send_runtime_action(  # noqa: PLR0913 - command completion belongs to the controller
+@dataclass(frozen=True, slots=True)
+class ActionInvocation:
+    session_id: str
+    command: RuntimeAction
+
+
+def send_runtime_action(
     graph: MikadoGraph,
     services: CoordinatorServices,
-    session_id: str,
-    command: RuntimeAction,
+    invocation: ActionInvocation,
     complete: Callable[..., CoordinatorCommandReceipt],
 ) -> CoordinatorCommandReceipt:
+    session_id, command = invocation.session_id, invocation.command
     with graph.synchronization_lock:
         conn = graph.group_connection
-        create_coordinator_tables(conn)
         session = get_coordinator(conn, session_id)
         if session is None:
             raise KeyError(session_id)

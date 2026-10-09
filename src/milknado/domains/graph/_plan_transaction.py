@@ -6,19 +6,23 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
 
+def graph_revision(conn: sqlite3.Connection) -> int:
+    row = cast(
+        tuple[int] | None,
+        conn.execute("SELECT revision FROM graph_revision WHERE id = 1").fetchone(),
+    )
+    if row is None:
+        raise RuntimeError("graph revision is unavailable")
+    return row[0]
+
+
 @contextmanager
 def plan_transaction(
     conn: sqlite3.Connection, lock: AbstractContextManager[object], expected_revision: int
 ) -> Generator[bool]:
     with lock, conn:
         _ = conn.execute("BEGIN IMMEDIATE")
-        row = cast(
-            tuple[int] | None,
-            conn.execute("SELECT revision FROM graph_revision WHERE id = 1").fetchone(),
-        )
-        if row is None:
-            raise RuntimeError("graph revision is unavailable")
-        current = row[0] == expected_revision
+        current = graph_revision(conn) == expected_revision
         if current:
             _ = conn.execute("UPDATE graph_revision SET revision = revision + 1 WHERE id = 1")
         yield current

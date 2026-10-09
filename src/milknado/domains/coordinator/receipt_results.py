@@ -1,31 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from typing import Literal, cast
 
 import msgspec
 
 from milknado.domains.coordinator.control_models import CoordinatorCommandReceipt
 from milknado.domains.coordinator.recovery import CoordinatorRecovery
-from milknado.domains.planning import PlanResult
 
 
-@dataclass(frozen=True, slots=True)
-class PlanCommandResult:
-    success: bool
-    exit_code: int
-    context_path: str | None
-    nodes_created: int
-    batch_count: int
-    oversized_count: int
-    solver_status: str
-    change_count: int
-    mega_batch_change_count: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class RecoveryItem:
+class RecoveryItem(msgspec.Struct, frozen=True):
     entity_kind: str
     entity_id: str
     provider_family: str | None  # noqa: V107
@@ -34,15 +18,13 @@ class RecoveryItem:
     outcome: str
 
 
-@dataclass(frozen=True, slots=True)
-class UnknownTurnItem:
+class UnknownTurnItem(msgspec.Struct, frozen=True):
     provider_family: str  # noqa: V107
     provider_session_id: str
     turn_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class RecoveryCommandResult:
+class RecoveryCommandResult(msgspec.Struct, frozen=True):
     session_id: str
     receipts: tuple[RecoveryItem, ...]
     unknown_turns: tuple[UnknownTurnItem, ...]
@@ -52,13 +34,6 @@ def reserve_command_receipt(
     conn: sqlite3.Connection, session_id: str, command_id: str, fingerprint: str
 ) -> CoordinatorCommandReceipt | None:
     with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_web_receipts (
-                command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-                command_hash TEXT NOT NULL, status TEXT NOT NULL,
-                result_json TEXT NOT NULL
-            )
-        """)
         cursor = conn.execute(
             "INSERT OR IGNORE INTO coordinator_web_receipts "
             + "(command_id, session_id, command_hash, status, result_json) "
@@ -92,18 +67,6 @@ def reserve_command_receipt(
 
 def receipt_payload(result: object) -> object:
     match result:
-        case PlanResult():
-            payload = PlanCommandResult(
-                result.success,
-                result.exit_code,
-                str(result.context_path) if result.context_path is not None else None,
-                result.nodes_created,
-                result.batch_count,
-                result.oversized_count,
-                result.solver_status,
-                result.change_count,
-                result.mega_batch_change_count,
-            )
         case CoordinatorRecovery():
             payload = RecoveryCommandResult(
                 result.session.id,

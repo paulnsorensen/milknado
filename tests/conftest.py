@@ -15,7 +15,7 @@ pytest_plugins = ("tests.rebalance_helpers",)
 
 
 @pytest.fixture(autouse=True, scope="session")
-def _block_real_agent_clis(  # pyright: ignore[reportUnusedFunction]
+def _block_real_agent_clis(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> Generator[None, None, None]:
     """Shadow every allowlisted agent CLI on PATH for the whole session.
@@ -35,7 +35,7 @@ def _block_real_agent_clis(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
+def _isolate_global_milknado_config(
     tmp_path_factory: pytest.TempPathFactory,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -49,7 +49,7 @@ def _isolate_global_milknado_config(  # pyright: ignore[reportUnusedFunction]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_worker_identity(  # pyright: ignore[reportUnusedFunction]
+def _isolate_worker_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Remove ambient worker identity and provision the test controller."""

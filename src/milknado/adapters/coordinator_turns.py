@@ -4,18 +4,23 @@ import shlex
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from threading import Event
+from threading import Condition, Event
+from time import monotonic
 from typing import Literal, cast, final
 
 import psutil
 
+from milknado.adapters._group_action_session import (
+    GroupActionSession,
+    drain_group_commands,
+    record_group_command,
+)
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.adapters.recovery import ExistingWorktreeRecovery
 from milknado.domains.common import (
     MilknadoConfig,
     SessionAction,
     SessionContext,
-    SessionInput,
     WorkerOwner,
     resolve_execution_agent_command,
     validate_worker_argv,
@@ -35,6 +40,7 @@ from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 from milknado.loop.sessions import (
     ProviderSessionIdentity,
+    RuntimePreflightError,
     RuntimeRecoveryRequest,
     RuntimeRequest,
     RuntimeSession,
@@ -53,12 +59,16 @@ class NativeCoordinatorTurns:
         self.root = root
         self.config = config
         self.graph = graph
-        self._active: dict[str, RuntimeSession] = {}
+        self._active: dict[str, RuntimeSession | GroupActionSession] = {}
         self._stops: dict[str, Event] = {}
         self._lock = threading.Lock()
+        self._done = Condition(self._lock)
+        self._closing = False
         self._workers = WorkerRegistry()
 
-    def runtime_session(self, provider_session_id: str) -> RuntimeSession | None:
+    def runtime_session(
+        self, provider_session_id: str
+    ) -> RuntimeSession | GroupActionSession | None:
         with self._lock:
             return self._active.get(provider_session_id)
 
@@ -80,6 +90,19 @@ class NativeCoordinatorTurns:
             stop.set()
             return True
 
+    def shutdown(self, timeout: float = 10.0) -> None:
+        deadline = monotonic() + timeout
+        with self._done:
+            self._closing = True
+            for stop in self._stops.values():
+                stop.set()
+        stopped = self._workers.stop_all(deadline)
+        with self._done:
+            while self._stops and (remaining := deadline - monotonic()) > 0:
+                _ = self._done.wait(remaining)
+            if self._stops or not stopped:
+                raise RuntimeError("native worker shutdown is unconfirmed")
+
     def _spawn(
         self, options: SpawnOptions, turn_id: str, attempt: TaskAttempt | None
     ) -> ProtectedWorker:
@@ -90,6 +113,8 @@ class NativeCoordinatorTurns:
             with graph.synchronization_lock:
                 if graph.groups.active_attempt(attempt.group_id) != attempt:
                     raise TurnPreflightError("execution group writer changed before launch")
+                if not graph.goal_admission(attempt.node_id).allowed:
+                    raise TurnPreflightError("goal review pauses task launch")
                 return spawn_protected(options, self._protection(turn_id, attempt))
         return spawn_protected(options, self._protection(turn_id, None))
 
@@ -140,8 +165,8 @@ class NativeCoordinatorTurns:
 
         channel = SessionChannel(
             sink=request.hooks.event,
-            durable_drain=lambda: self._drain_commands(graph, attempt, owner),
-            command_state_sink=lambda command, state: self._record_command(graph, command, state),
+            durable_drain=lambda: drain_group_commands(graph, attempt, owner),
+            command_state_sink=lambda command, state: record_group_command(graph, command, state),
         )
         channel.set_capability_sink(
             publish,
@@ -150,30 +175,6 @@ class NativeCoordinatorTurns:
             ),
         )
         return channel
-
-    def _drain_commands(
-        self, graph: MikadoGraph, attempt: TaskAttempt, owner: str
-    ) -> tuple[SessionInput, ...]:
-        return tuple(
-            SessionInput(
-                action=command.action,
-                text=command.text,
-                request_id=command.permission_id or command.command_id,
-                command_id=command.command_id,
-            )
-            for command in graph.commands.claim_pending(attempt.attempt_id, owner)
-        )
-
-    def _record_command(self, graph: MikadoGraph, command: SessionInput, state: str) -> None:
-        stored = graph.commands.command(command.command_id)
-        transition = {
-            "submitted": graph.commands.submit,
-            "delivered": graph.commands.deliver,
-            "rejected": graph.commands.reject,
-            "unconfirmed": graph.commands.unconfirm,
-        }.get(state)
-        if stored is not None and transition is not None:
-            _ = transition(stored)
 
     def _registration_callback(
         self, request: TurnRuntimeRequest, channel: SessionChannel, active_ids: set[str]
@@ -186,13 +187,27 @@ class NativeCoordinatorTurns:
             incarnation = channel.capture_incarnation()
             if incarnation is None:
                 raise RuntimeError("provider session has no active channel")
-            session = RuntimeSession(
+            session: RuntimeSession | GroupActionSession = RuntimeSession(
                 ProviderSessionIdentity(
                     cast(Literal["claude", "codex"], request.provider), provider_id
                 ),
                 channel,
                 incarnation,
             )
+            if request.group is not None:
+                graph, attempt = self.graph, request.attempt
+                if graph is None or attempt is None:
+                    raise TurnPreflightError("execution group command owner is unavailable")
+                capabilities = graph.commands.capabilities(attempt.attempt_id)
+                if capabilities is None or capabilities.owner_incarnation != request.hooks.turn_id:
+                    raise TurnPreflightError("execution group owner capabilities are unavailable")
+                session = GroupActionSession(
+                    session,
+                    graph,
+                    attempt.attempt_id,
+                    request.hooks.turn_id,
+                    capabilities.invocation_id,
+                )
             with self._lock:
                 if provider_id in self._active:
                     raise ValueError("provider session is already active")
@@ -231,21 +246,21 @@ class NativeCoordinatorTurns:
             native.recovery.turn_confirmed if native.recovery else None,
         )
 
-    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
-        prompt = request.prompt
-        group, identity, hooks = request.group, request.identity, request.hooks
+    def _native_request(
+        self, request: TurnRuntimeRequest, stop: Event, active_ids: set[str]
+    ) -> RuntimeRequest:
         cwd, argv = self._prepare(request)
+        hooks = request.hooks
         channel = (
-            self._group_channel(request) if group is not None else SessionChannel(sink=hooks.event)
+            self._group_channel(request)
+            if request.group is not None
+            else SessionChannel(sink=hooks.event)
         )
-        active_ids: set[str] = set()
-        stop = Event()
-        with self._lock:
-            self._stops[hooks.turn_id] = stop
-
+        if stop.is_set():
+            raise TurnPreflightError("native turn is shutting down")
         spec = AgentRunSpec(
             argv,
-            prompt,
+            request.prompt,
             timeout=self.config.completion_timeout_seconds,
             force_stop_event=stop,
             log_dir=None,
@@ -254,13 +269,28 @@ class NativeCoordinatorTurns:
             spawn_worker=lambda options: self._spawn(options, hooks.turn_id, request.attempt),
             on_session_id=self._registration_callback(request, channel, active_ids),
         )
-        resume = self._resume(identity, cwd)
+        return RuntimeRequest(spec, channel, self._resume(request.identity, cwd))
+
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
+        active_ids: set[str] = set()
+        channel: SessionChannel | None = None
+        stop = Event()
+        with self._done:
+            if self._closing:
+                raise TurnPreflightError("native turn is shutting down")
+            self._stops[request.hooks.turn_id] = stop
         try:
-            return self._result(start_or_resume(RuntimeRequest(spec, channel, resume)))
+            runtime_request = self._native_request(request, stop, active_ids)
+            channel = runtime_request.channel
+            try:
+                return self._result(start_or_resume(runtime_request))
+            except RuntimePreflightError as error:
+                raise TurnPreflightError(str(error)) from error
         finally:
-            with self._lock:
-                _ = self._stops.pop(hooks.turn_id, None)
+            with self._done:
+                _ = self._stops.pop(request.hooks.turn_id, None)
                 for active_id in active_ids:
                     current = self._active.get(active_id)
                     if current is not None and current.channel is channel:
                         del self._active[active_id]
+                self._done.notify_all()

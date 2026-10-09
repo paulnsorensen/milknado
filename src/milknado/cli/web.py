@@ -1,5 +1,3 @@
-"""CLI hosts for the local web application."""
-
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -29,8 +27,10 @@ from milknado.web import (
 
 if TYPE_CHECKING:
     from milknado.adapters import ChangedFile, GitAdapter
+    from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
+    from milknado.app.run import ExecutionController
     from milknado.domains.common import GitPort, MilknadoConfig, PluginHook, SessionContext
-    from milknado.domains.coordinator import ReviewDecisionPort
+    from milknado.domains.coordinator import CoordinatorControl, ReviewDecisionPort
     from milknado.domains.execution import RunLoopResult
     from milknado.domains.graph import MikadoGraph, OwnerCapabilities
 
@@ -74,42 +74,11 @@ def _host_dependencies(
         ReviewDecisionPort | None,
     ],
 ) -> HostDependencies:
-    from milknado.adapters import (
-        DeferredProviderRecovery,
-        ExistingWorktreeRecovery,
-        ProcessAdapter,
-    )
-    from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
-    from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecovery
-    from milknado.app.plan import build_planner
-    from milknado.domains.coordinator import (
-        CoordinatorControl,
-        CoordinatorServices,
-        RecoveryRuntime,
-    )
+    from milknado.adapters import ProcessAdapter
 
     git = _ProjectGitInspection(project_root)
     owner, review_decision = ports
-    turn_runtime = NativeCoordinatorTurns(project_root, config, graph)
-    coordinator = CoordinatorControl(
-        graph,
-        project_root,
-        CoordinatorServices(
-            planner=build_planner(graph, project_root, config),
-            recovery_runtime=RecoveryRuntime(
-                graph.groups,
-                project_root,
-                DeferredProviderRecovery(),
-                ExistingWorktreeRecovery(project_root),
-                CoordinatorWorkerRecovery(config.db_path),
-            ),
-            review_decision=review_decision,
-            turn_runtime=turn_runtime,
-            turn_owner=turn_runtime.owner,
-            turn_cancel=turn_runtime.cancel,
-            runtime_session=turn_runtime.runtime_session,
-        ),
-    )
+    coordinator, turn_runtime = _coordinator_host(graph, config, project_root, review_decision)
 
     return HostDependencies(
         graph=graph,
@@ -121,7 +90,43 @@ def _host_dependencies(
         git=git,
         owner_capabilities=owner,
         coordinator=coordinator,
+        shutdown=partial(coordinator.shutdown, turn_runtime.shutdown),
     )
+
+
+def _coordinator_host(
+    graph: MikadoGraph,
+    config: MilknadoConfig,
+    project_root: Path,
+    review_decision: ReviewDecisionPort | None,
+) -> tuple[CoordinatorControl, NativeCoordinatorTurns]:
+    from milknado.adapters import DeferredProviderRecovery, ExistingWorktreeRecovery
+    from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
+    from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecovery
+    from milknado.app.plan import build_planner
+    from milknado.domains.coordinator import (
+        CoordinatorControl,
+        CoordinatorServices,
+        RecoveryRuntime,
+    )
+
+    turn_runtime = NativeCoordinatorTurns(project_root, config, graph)
+    services = CoordinatorServices(
+        planner=build_planner(graph, project_root, config),
+        recovery_runtime=RecoveryRuntime(
+            graph.groups,
+            project_root,
+            DeferredProviderRecovery(),
+            ExistingWorktreeRecovery(project_root),
+            CoordinatorWorkerRecovery(config.db_path),
+        ),
+        review_decision=review_decision,
+        turn_runtime=turn_runtime,
+        turn_owner=turn_runtime.owner,
+        turn_cancel=turn_runtime.cancel,
+        runtime_session=turn_runtime.runtime_session,
+    )
+    return CoordinatorControl(graph, project_root, services), turn_runtime
 
 
 def _owner_capabilities(
@@ -156,17 +161,19 @@ def web(
         review_decision = graph.decide_goal_review
     source = PolledSnapshotSource(_watch_source(project_root, config.db_path))
     login = LaunchToken()
+    dependencies: HostDependencies | None = None
     try:
         source.start()
         owner = partial(_owner_capabilities, source, graph)
-        commands = observer_commands(
-            dependencies=_host_dependencies(graph, config, project_root, (owner, review_decision))
-        )
+        dependencies = _host_dependencies(graph, config, project_root, (owner, review_decision))
+        commands = observer_commands(dependencies=dependencies)
         app = create_app(source, commands, login)
         run_server(app, login, ServerOptions(port=port, no_open=no_open))
     finally:
-        source.close()
-        graph.close()
+        try:
+            source.close()
+        finally:
+            _close_host(graph, dependencies)
 
 
 def launch(
@@ -206,28 +213,32 @@ class OwnerWebServices:
     server: Callable[..., None] = run_server
 
 
-def run_owner_web(
-    context: OwnerWebContext,
-    options: OwnerWebOptions | None = None,
-    services: OwnerWebServices | None = None,
-) -> RunLoopResult | None:
-    """Run an execution controller beside its owner web host."""
-    options = options or OwnerWebOptions()
-    services = services or OwnerWebServices()
+def _build_owner_controller(graph: MikadoGraph, context: OwnerWebContext) -> ExecutionController:
     from rich.console import Console
 
     from milknado.app.run import build_execution_controller
     from milknado.cli._helpers import apply_runnable_root_exclusions
 
+    _ = graph.reconcile_completed_goals()
+    _ = apply_runnable_root_exclusions(graph, Console())
+    return build_execution_controller(graph, context.config, context.project_root)
+
+
+def run_owner_web(
+    context: OwnerWebContext,
+    options: OwnerWebOptions | None = None,
+    services: OwnerWebServices | None = None,
+) -> RunLoopResult | None:
+    options = options or OwnerWebOptions()
+    services = services or OwnerWebServices()
     graph = ensure_db(context.config, context.plugins)
-    controller: _Controller | None = None
+    controller: ExecutionController | None = None
     controller_thread: Thread | None = None
+    dependencies: HostDependencies | None = None
     interrupts = 0
     errors: list[BaseException] = []
     try:
-        _ = graph.reconcile_completed_goals()
-        _ = apply_runnable_root_exclusions(graph, Console())
-        controller = build_execution_controller(graph, context.config, context.project_root)
+        controller = _build_owner_controller(graph, context)
         login = LaunchToken()
 
         def owner(run_id: str | None = None) -> OwnerCapabilities | None:
@@ -241,20 +252,33 @@ def run_owner_web(
             OwnerLaunch(controller, context, options, services, app, login)
         )
         interrupts = _wait_for_shutdown(controller, server_thread, controller_thread)
-        if interrupts >= 2:
-            return cast("RunLoopResult", results[0]) if results else None
-        if errors:
-            raise errors[0]
-        if results and isinstance(results[0], BaseException):
-            raise results[0]
-        return cast("RunLoopResult", results[0]) if results else None
+        return _owner_result(interrupts, errors, results)
     finally:
-        if controller_thread is not None:
-            assert controller is not None
-            finish_shutdown(controller, controller_thread, interrupts, errors)
-            graph.close()
-        else:
-            graph.close()
+        confirmed = False
+        try:
+            if controller_thread is not None:
+                assert controller is not None
+                finish_shutdown(controller, controller_thread, interrupts, errors)
+            confirmed = True
+        finally:
+            _close_host(graph, dependencies, confirmed)
+
+
+def _owner_result(
+    interrupts: int, errors: list[BaseException], results: list[object]
+) -> RunLoopResult | None:
+    if interrupts < 2 and errors:
+        raise errors[0]
+    if interrupts < 2 and results and isinstance(results[0], BaseException):
+        raise results[0]
+    return cast("RunLoopResult", results[0]) if results else None
+
+
+def _close_host(graph: MikadoGraph, deps: HostDependencies | None, confirmed: bool = True) -> None:
+    if deps is not None and deps.shutdown is not None:
+        deps.shutdown()
+    if confirmed:
+        graph.close()
 
 
 def _wait_for_shutdown(

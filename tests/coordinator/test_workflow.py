@@ -26,6 +26,7 @@ from milknado.domains.coordinator.persistence import (
     link_entity,
     links_for_session,
 )
+from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
 from milknado.domains.coordinator.turns import TurnLaunch, bind_confirmed_identity
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
@@ -47,7 +48,7 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
         task = graph.add_node("Implement", session.goal_id, files=("src/a.py",))
-        workflow.record_plan(session, "plan-1", "accepted")
+        CoordinatorPlanning(graph, conn).record_plan(session, "plan-1", "accepted")
         group = workflow.create_group(
             session, "main", (task.id,), GroupWorkspace("/tmp/group-a", "group-a", "provider-a")
         )

@@ -20,6 +20,10 @@ from milknado.loop.sessions._runtime import run_session
 ActionState = Literal["queued", "rejected", "unsupported", "unknown_session"]
 
 
+class RuntimePreflightError(ValueError):
+    """The runtime rejected a resume before worker launch."""
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeRequest:
     spec: AgentRunSpec
@@ -38,6 +42,17 @@ class RuntimeSession:
     identity: ProviderSessionIdentity
     channel: SessionChannel
     incarnation: int
+
+    @property
+    def family(self) -> str:
+        return self.identity.family
+
+    @property
+    def provider_session_id(self) -> str:
+        return self.identity.session_id
+
+    def submit_action(self, action: SessionInput) -> str:
+        return submit_runtime_action(self.provider_session_id, action, self).state
 
     @classmethod
     def from_step(  # noqa: V1xx
@@ -74,20 +89,33 @@ def _resume_command(command: list[str], identity: ProviderSessionIdentity) -> li
     return [command[0], "resume", identity.session_id, *args]
 
 
+def _resume_spec(request: RuntimeRequest) -> AgentRunSpec:
+    resume = request.resume
+    assert resume is not None
+    try:
+        if (
+            request.spec.cwd is None
+            or request.spec.cwd != resume.cwd
+            or not resume.cwd.is_absolute()
+        ):
+            raise ValueError("resume worktree does not match run cwd")
+        command = _resume_command(request.spec.cmd, resume.identity)
+        if resume.identity.family == "codex":
+            from milknado.loop.sessions._codex_policy import translate_argv
+
+            if translate_argv(tuple(command), request.spec.cwd).cwd != resume.cwd.resolve():
+                raise ValueError("resume worktree does not match Codex effective cwd")
+    except ValueError as error:
+        raise RuntimePreflightError(str(error)) from error
+    return replace(request.spec, cmd=command)
+
+
 def start_or_resume(request: RuntimeRequest) -> RuntimeResult:
     """Run an explicit turn against the provider's recorded session."""
     if request.resume is None:
         return RuntimeResult(run=run_session(request.spec, request.channel))
     resume = request.resume
-    if request.spec.cwd is None or request.spec.cwd != resume.cwd or not resume.cwd.is_absolute():
-        raise ValueError("resume worktree does not match run cwd")
-    command = _resume_command(request.spec.cmd, resume.identity)
-    if resume.identity.family == "codex":
-        from milknado.loop.sessions._codex_policy import translate_argv
-
-        if translate_argv(tuple(command), request.spec.cwd).cwd != resume.cwd.resolve():
-            raise ValueError("resume worktree does not match Codex effective cwd")
-    run = run_session(replace(request.spec, cmd=command), request.channel)
+    run = run_session(_resume_spec(request), request.channel)
     confirmed = run.session_id == resume.identity.session_id
     outcome = "resumed" if confirmed else "unavailable"
     receipt = RecoveryReceipt(resume.identity, outcome, confirmed and run.terminal_confirmed)

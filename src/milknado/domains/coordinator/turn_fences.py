@@ -8,15 +8,15 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from milknado.domains.common import WorkerOwner
-from milknado.domains.coordinator.control_models import StartTurn
+from milknado.domains.coordinator.model import ProviderIdentity
 from milknado.domains.coordinator.recovery import (
-    ProviderIdentity,
     ProviderTurn,
     WorkerTerminationPort,
     record_provider_turn,
 )
+from milknado.domains.coordinator.turn_context import TurnContext
 from milknado.domains.coordinator.turns import TurnLaunch
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, live_runtime_workers
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,14 +28,9 @@ class TurnFence:
     supervisor_start_token: float
 
 
-def claim_turn(  # noqa: PLR0913 - launch ownership needs the command, scope, and owner
-    conn: sqlite3.Connection,
-    session_id: str,
-    command: StartTurn,
-    launch: TurnLaunch,
-    owner: WorkerOwner | None,
-) -> None:
-    if owner is not None and owner.runtime_run_id != command.command_id:
+def claim_turn(context: TurnContext, launch: TurnLaunch, owner: WorkerOwner | None) -> None:
+    conn, session_id, command_id = context.conn, context.session_id, context.command_id
+    if owner is not None and owner.runtime_run_id != command_id:
         raise ValueError("provider turn owner does not match command")
     try:
         with conn:
@@ -45,7 +40,7 @@ def claim_turn(  # noqa: PLR0913 - launch ownership needs the command, scope, an
                 + "supervisor_pid, supervisor_start_token) "
                 + "VALUES (?, ?, ?, ?, 'submitted', ?, ?)",
                 (
-                    command.command_id,
+                    command_id,
                     session_id,
                     launch.scope_kind,
                     launch.scope_id,
@@ -61,7 +56,7 @@ def claim_turn(  # noqa: PLR0913 - launch ownership needs the command, scope, an
             session_id,
             ProviderTurn(
                 ProviderIdentity(launch.provider, launch.identity.session_id),
-                command.command_id,
+                command_id,
                 "submitted",
             ),
         )
@@ -103,14 +98,7 @@ def clear_verified_fence(conn: sqlite3.Connection, fence: TurnFence) -> bool:
             fence.supervisor_start_token,
         ):
             return False
-        active = cast(
-            tuple[int] | None,
-            conn.execute(
-                "SELECT 1 FROM run_workers WHERE runtime_run_id = ? AND ended_at IS NULL LIMIT 1",
-                (fence.command_id,),
-            ).fetchone(),
-        )
-        if active is not None:
+        if live_runtime_workers(conn, fence.command_id):
             return False
         _ = conn.execute(
             "UPDATE coordinator_turn_launches SET state = 'unknown' WHERE command_id = ?",

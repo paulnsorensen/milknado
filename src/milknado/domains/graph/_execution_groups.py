@@ -18,7 +18,7 @@ from milknado.domains.graph._group_models import (
     TaskAttempt,
     TaskOutcome,
 )
-from milknado.domains.graph._group_policy import validate_membership
+from milknado.domains.graph._group_policy import validate_membership, validate_task_prerequisites
 from milknado.domains.graph._group_reservation import (
     admit_writer,
     fail_reservation,
@@ -205,22 +205,28 @@ class ExecutionGroupStore:
                 )
                 if row is not None and (row[0], row[1]) == ("running", attempt.attempt_id):
                     return
-                if not self._graph.claim_group_node(
-                    attempt.node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
-                ):
-                    raise ValueError("execution group task is not ready")
-                cursor = conn.execute(
-                    "UPDATE nodes SET worktree_path = ?, branch_name = ? "
-                    + "WHERE id = ? AND run_id = ? AND status = 'running'",
-                    (
-                        workspace.worktree_path,
-                        workspace.branch_name,
-                        attempt.node_id,
-                        attempt.attempt_id,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("execution group writer fence lost")
+                validate_task_prerequisites(conn, attempt.group_id, attempt.node_id)
+                self._claim_task(conn, attempt, workspace)
+
+    def _claim_task(
+        self, conn: sqlite3.Connection, attempt: TaskAttempt, workspace: GroupWorkspace
+    ) -> None:
+        if not self._graph.claim_group_node(
+            attempt.node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
+        ):
+            raise ValueError("execution group task is not ready")
+        cursor = conn.execute(
+            "UPDATE nodes SET worktree_path = ?, branch_name = ? "
+            + "WHERE id = ? AND run_id = ? AND status = 'running'",
+            (
+                workspace.worktree_path,
+                workspace.branch_name,
+                attempt.node_id,
+                attempt.attempt_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("execution group writer fence lost")
 
     def fail_reserved_task(self, attempt: TaskAttempt, reason: str) -> None:
         if not reason:
@@ -239,17 +245,7 @@ class ExecutionGroupStore:
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
                 attempt, workspace = admit_writer(conn, group_id, node_id, run_id)
-                if not self._graph.claim_group_node(
-                    node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
-                ):
-                    raise ValueError("execution group task is not ready")
-                cursor = conn.execute(
-                    "UPDATE nodes SET worktree_path = ?, branch_name = ? "
-                    + "WHERE id = ? AND run_id = ? AND status = 'running'",
-                    (workspace.worktree_path, workspace.branch_name, node_id, attempt.attempt_id),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("execution group writer fence lost")
+                self._claim_task(conn, attempt, workspace)
                 return attempt
 
     def finish_task(self, attempt: TaskAttempt, outcome: TaskOutcome) -> None:  # noqa: V105

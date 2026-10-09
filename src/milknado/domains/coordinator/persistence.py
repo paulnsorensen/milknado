@@ -27,60 +27,6 @@ _LINK_KINDS = frozenset(
 )
 
 
-def create_coordinator_tables(conn: sqlite3.Connection) -> None:
-    """Create the coordinator store in the graph database."""
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_sessions (
-                id TEXT PRIMARY KEY,
-                goal_id INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
-                provider TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_links (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                kind TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                UNIQUE (session_id, kind, entity_id)
-            )
-        """)
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_events (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                kind TEXT NOT NULL,
-                text TEXT NOT NULL,
-                entity_kind TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                turn_id TEXT NOT NULL DEFAULT '',
-                provider_session_id TEXT NOT NULL DEFAULT '',
-                duration_ms INTEGER,
-                created_at TEXT NOT NULL,
-                expires_at TEXT
-            )
-        """)
-        _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_coordinator_events_session "
-            + "ON coordinator_events(session_id, seq)"
-        )
-        _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_coordinator_events_expiry "
-            + "ON coordinator_events(expires_at) WHERE expires_at IS NOT NULL"
-        )
-        _ = conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinator_events_operation "
-            + "ON coordinator_events(session_id, kind, entity_kind, entity_id, status) "
-            + "WHERE entity_kind != '' AND entity_id != '' AND kind IN "
-            + "('planning_decision', 'graph_revision', 'approval', 'run_transition', "
-            + "'execution_group', 'command')"
-        )
-
-
 def _session(row: tuple[str, int, str, str]) -> CoordinatorSession:
     return CoordinatorSession(
         id=str(row[0]),
@@ -129,7 +75,6 @@ def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> 
     if not provider.strip():
         raise ValueError("provider must not be empty")
     _require_top_level_goal(conn, goal_id)
-    create_coordinator_tables(conn)
     with conn:
         _ = conn.execute(
             "INSERT OR IGNORE INTO coordinator_sessions (id, goal_id, provider, created_at) "

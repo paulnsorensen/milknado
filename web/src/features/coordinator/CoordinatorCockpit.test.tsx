@@ -17,6 +17,7 @@ describe('CoordinatorCockpit', () => {
     cleanup();
     localStorage.clear();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('hides controls when the server has no coordinator port', async () => {
@@ -210,5 +211,90 @@ describe('CoordinatorCockpit', () => {
     expect(screen.getByText('Goal A', { selector: 'strong' })).toBeInTheDocument();
     expect(getState().coordinatorGraph?.nodes[0]?.description).toBe('Goal A');
   });
+  it('bounds delayed polls, aborts cleanup, and rejects a stale same-session response', async () => {
+    localStorage.setItem('milknado.coordinator.session', 'session-a');
+    let finishPoll!: (response: Response) => void;
+    const delayed = new Promise<Response>((resolve) => { finishPoll = resolve; });
+    let snapshotReads = 0;
+    let pollSignal: AbortSignal | undefined;
+    const snapshot = (description: string) => ({
+      session: { id: 'session-a', goal_id: 1, provider: 'codex' },
+      goal: { id: 1, description, status: 'pending', parent_id: null },
+      nodes: [{ id: 1, description, status: 'pending', parent_id: null }],
+      edges: [], runs: [], reviews: [], recovery: [], provider_turns: [], provider_bindings: [],
+      capability_floor: {}, native_actions: [], unsupported_actions: [], events: [], cursor: 0,
+    });
+    vi.mocked(fetch).mockImplementation((input, options) => {
+      if (String(input) === '/api/coordinators') return response([]) as Promise<Response>;
+      if (options?.method === 'POST') return response({ status: 'accepted', result: {} }) as Promise<Response>;
+      snapshotReads += 1;
+      if (snapshotReads === 2) { pollSignal = options?.signal ?? undefined; return delayed; }
+      return response(snapshot(snapshotReads === 1 ? 'Before command' : 'After command')) as Promise<Response>;
+    });
+    vi.useFakeTimers();
+    const view = render(<CoordinatorCockpit />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText('Before command', { selector: 'strong' })).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(snapshotReads).toBe(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(snapshotReads).toBe(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Propose plan' }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(snapshotReads).toBe(3);
+    expect(screen.getByText('After command', { selector: 'strong' })).toBeInTheDocument();
+    expect(pollSignal?.aborted).toBe(true);
+    await act(async () => { finishPoll(await response(snapshot('Stale poll')) as Response); });
+    expect(screen.getByText('After command', { selector: 'strong' })).toBeInTheDocument();
+    view.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+    expect(snapshotReads).toBe(3);
+    expect(getState().notices).toEqual([]);
+  });
 
+  it('aborts a pending snapshot on unmount without reporting cancellation', async () => {
+    localStorage.setItem('milknado.coordinator.session', 'session-a');
+    let pendingSignal: AbortSignal | undefined;
+    vi.mocked(fetch).mockImplementation((input, options) => {
+      if (String(input) === '/api/coordinators') return response([]) as Promise<Response>;
+      pendingSignal = options?.signal ?? undefined;
+      return new Promise<Response>(() => {});
+    });
+    const view = render(<CoordinatorCockpit />);
+    await waitFor(() => expect(pendingSignal).toBeDefined());
+    view.unmount();
+    expect(pendingSignal?.aborted).toBe(true);
+    expect(getState().notices).toEqual([]);
+  });
+
+  it('aborts the old session snapshot and ignores its late result', async () => {
+    localStorage.setItem('milknado.coordinator.session', 'session-a');
+    let finishOld!: (response: Response) => void;
+    let oldSignal: AbortSignal | undefined;
+    vi.mocked(fetch).mockImplementation((input, options) => {
+      const url = String(input);
+      if (url === '/api/coordinators') return response([
+        { id: 'session-a', description: 'Goal A', provider: 'codex' },
+        { id: 'session-b', description: 'Goal B', provider: 'codex' },
+      ]) as Promise<Response>;
+      if (url.includes('session-a/snapshot')) {
+        oldSignal = options?.signal ?? undefined;
+        return new Promise<Response>((resolve) => { finishOld = resolve; });
+      }
+      return response({ session: { id: 'session-b', goal_id: 2, provider: 'codex' },
+        goal: { id: 2, description: 'Goal B', status: 'pending', parent_id: null },
+        nodes: [{ id: 2, description: 'Goal B', status: 'pending', parent_id: null }],
+        edges: [], runs: [], reviews: [], recovery: [], provider_turns: [], provider_bindings: [],
+        capability_floor: {}, native_actions: [], unsupported_actions: [], events: [], cursor: 0,
+      }) as Promise<Response>;
+    });
+    render(<CoordinatorCockpit />);
+    await waitFor(() => expect(oldSignal).toBeDefined());
+    fireEvent.click(screen.getByRole('button', { name: 'Goal B · codex' }));
+    expect(await screen.findByText('Goal B', { selector: 'strong' })).toBeInTheDocument();
+    expect(oldSignal?.aborted).toBe(true);
+    await act(async () => { finishOld(await response({ goal: { description: 'Stale A' } }) as Response); });
+    expect(screen.getByText('Goal B', { selector: 'strong' })).toBeInTheDocument();
+    expect(getState().notices).toEqual([]);
+  });
 });

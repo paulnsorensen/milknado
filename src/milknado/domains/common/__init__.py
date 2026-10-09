@@ -69,6 +69,7 @@ from milknado.domains.common.protocols import (
     TerminalRunOutcome,
     VerifySpecResult,
 )
+from milknado.domains.common.redaction import redact_control_text
 from milknado.domains.common.session import (
     SessionAction,
     SessionContext,
@@ -156,6 +157,7 @@ __all__ = [
     "resolve_project_path",
     "trust_global_path",
     "validate_hint_path",
+    "redact_control_text",
     "save_config",
     "resolve_flavor_profile",
     "NodeAgentSession",

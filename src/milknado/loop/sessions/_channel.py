@@ -89,7 +89,9 @@ class SessionChannel:
                 raise RuntimeError("cannot replace an active session context")
             if not self._active:
                 self._epoch += 1
-                self._prefix = f"{self._epoch}/"
+                self._prefix = (
+                    f"{self._epoch}/{invocation_id}/" if invocation_id else f"{self._epoch}/"
+                )
             self._closed = False
             self._context = context
             self._actions = tuple(dict.fromkeys(actions))

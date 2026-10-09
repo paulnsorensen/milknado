@@ -150,9 +150,9 @@ def _output(proc: subprocess.Popen[bytes], master: int | None) -> str:
     return bytes(_PTY_OUTPUT[master]).decode(errors="replace")
 
 
-def _wait_exit(proc: subprocess.Popen[bytes], master: int | None) -> int:
+def _wait_exit(proc: subprocess.Popen[bytes], master: int | None, timeout: float = 8.5) -> int:
     try:
-        return proc.wait(timeout=8.5)
+        return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         output = _output(proc, master) if master is not None else "<headless output pending>"
         pytest.fail(f"CLI exceeded shutdown deadline; output={output[-2000:]!r}")
@@ -285,7 +285,7 @@ class _BlockedPopen(_original_popen):
     def __init__(self, argv, *args, **kwargs):
         if isinstance(argv, (tuple, list)) and "milknado.loop._exec_gate" in argv:
             Path(os.environ["SHUTDOWN_SPAWN_MARKER"]).touch()
-            deadline = time.monotonic() + 20
+            deadline = time.monotonic() + 60
             while (
                 not Path(os.environ["SHUTDOWN_SPAWN_RELEASE"]).exists()
                 and time.monotonic() < deadline
@@ -314,7 +314,10 @@ def test_cli_exits_while_worker_popen_is_blocked(
     try:
         _wait_for(marker)
         os.kill(proc.pid, signum)
-        assert _wait_exit(proc, master) == 128 + signum, _output(proc, master)
+        # The barrier holds Popen until the test releases it after exit, so a CLI that
+        # waits for the launch hangs past this ceiling. The cleanup bound is asserted below.
+        exit_code = _wait_exit(proc, master, timeout=STOP_TIMEOUT_SECONDS + 10)
+        assert exit_code == 128 + signum, _output(proc, master)
         assert timing.exists(), "bounded cleanup did not report completion"
         signal_at, deadline, completed_at = map(float, timing.read_text().split())
         assert deadline == signal_at + STOP_TIMEOUT_SECONDS

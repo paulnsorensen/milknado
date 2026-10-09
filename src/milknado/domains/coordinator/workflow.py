@@ -8,7 +8,6 @@ from typing import cast
 from milknado.domains.common import NodeKind, NodeSpec, RunResult
 from milknado.domains.coordinator.commands import (
     DispatchHandoff,
-    create_dispatch_table,
     get_dispatch_state,
     owned_dispatch_state,
     record_control_once,
@@ -68,6 +67,8 @@ class CoordinatorWorkflow:  # noqa: V102
     def start_goal(self, description: str, provider: str) -> CoordinatorSession:  # noqa: V105
         if not description.strip():
             raise ValueError("goal description must not be empty")
+        if not provider.strip():
+            raise ValueError("provider must not be empty")
         goal = self._graph.add_node(description, spec=NodeSpec(kind=NodeKind.GOAL))
         return start_coordinator(self._conn, goal.id, provider)
 
@@ -85,9 +86,6 @@ class CoordinatorWorkflow:  # noqa: V102
         decision: str,
     ) -> PlanProposalRecord:
         return self._planning.decide_plan(session, planner, project_root, proposal_id, decision)
-
-    def record_plan(self, session: CoordinatorSession, plan_id: str, status: str) -> None:
-        self._planning.record_plan(session, plan_id, status)
 
     def create_group(  # noqa: V105
         self,
@@ -131,7 +129,6 @@ class CoordinatorWorkflow:  # noqa: V102
         _ = self._owned_group(session, group_id, node_id)
         if not self._graph.goal_admission(node_id).allowed:
             raise ValueError("goal review pauses task dispatch")
-        create_dispatch_table(self._conn)
         attempt = self._graph.groups.active_attempt(group_id)
         if attempt is None:
             attempt = self._graph.groups.reserve_task(group_id, node_id, run_id)
@@ -180,7 +177,8 @@ class CoordinatorWorkflow:  # noqa: V102
             raise ValueError("group run identity conflicts with launched writer")
         with self._conn:
             _ = self._conn.execute(
-                "UPDATE coordinator_dispatches SET state = 'launched' WHERE attempt_id = ?",
+                "UPDATE coordinator_dispatches SET state = 'launched' "
+                + "WHERE attempt_id = ? AND state = 'awaiting_launch'",
                 (handoff.attempt.attempt_id,),
             )
         self._event_once(
@@ -192,7 +190,7 @@ class CoordinatorWorkflow:  # noqa: V102
                 status="running",
             ),
         )
-        return DispatchHandoff(handoff.attempt, "launched")
+        return DispatchHandoff(handoff.attempt, self._owned_attempt(session, handoff.attempt))
 
     def fail_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str

@@ -8,22 +8,27 @@ from typing import Literal, cast
 import msgspec
 
 from milknado.domains.common import SessionEvent
+from milknado.domains.coordinator.commands import owned_dispatch_state
 from milknado.domains.coordinator.control_models import StartTurn
 from milknado.domains.coordinator.control_services import (
     TurnIdentity,
     TurnRuntimeHooks,
     TurnRuntimeResult,
 )
-from milknado.domains.coordinator.journal import append_control_event
-from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
-from milknado.domains.coordinator.persistence import provider_bindings_for_session
-from milknado.domains.coordinator.recovery import (
-    ProviderIdentity,
-    ProviderTurn,
-    RecoveryReceipt,
-    record_provider_turn,
+from milknado.domains.coordinator.journal import (
+    append_control_event,
+    append_stream_control_event,
 )
+from milknado.domains.coordinator.model import (
+    ControlEvent,
+    CoordinatorSession,
+    ProviderIdentity,
+    RecoveryReceipt,
+)
+from milknado.domains.coordinator.persistence import provider_bindings_for_session
+from milknado.domains.coordinator.recovery import ProviderTurn, record_provider_turn
 from milknado.domains.coordinator.recovery_receipts import record_recovery_receipt
+from milknado.domains.coordinator.turn_context import TurnContext
 from milknado.domains.graph import (
     ExecutionGroup,
     MikadoGraph,
@@ -68,32 +73,17 @@ def _owned_group(
         or admission.goal_id != session.goal_id
     ):
         raise ValueError("turn does not own the active execution group writer")
-    state = cast(
-        tuple[str] | None,
-        conn.execute(
-            "SELECT state FROM coordinator_dispatches WHERE attempt_id = ? AND session_id = ?",
-            (attempt.attempt_id, session.id),
-        ).fetchone(),
-    )
-    if state is None or state[0] != "launched":
+    if owned_dispatch_state(conn, session.id, attempt) != "launched":
         raise ValueError("execution group writer is not launched")
     return group
 
 
-def prepare_turn(
+def _resolve_provider_binding(
     conn: sqlite3.Connection,
-    graph: MikadoGraph,
     session: CoordinatorSession,
     command: StartTurn,
-) -> TurnLaunch:
-    if not command.prompt.strip():
-        raise ValueError("turn prompt must not be empty")
-    fields = (command.group_id, command.node_id, command.run_id, command.attempt_id)
-    if any(value is not None for value in fields) and not all(
-        value is not None for value in fields
-    ):
-        raise ValueError("group turn requires a complete writer attempt")
-    group = _owned_group(conn, graph, session, command) if command.group_id else None
+    group: ExecutionGroup | None,
+) -> tuple[str, TurnIdentity | None, str, str]:
     scope_kind = "execution_group" if group else "coordinator"
     scope_id = group.id if group else session.id
     binding = next(
@@ -114,6 +104,28 @@ def prepare_turn(
     if group and group.provider_session_id != (binding.provider_session_id if binding else None):
         raise ValueError("execution group provider binding mismatch")
     identity = TurnIdentity(provider, binding.provider_session_id) if binding else None
+    return provider, identity, scope_kind, scope_id
+
+
+def prepare_turn(
+    conn: sqlite3.Connection,
+    graph: MikadoGraph,
+    session: CoordinatorSession,
+    command: StartTurn,
+) -> TurnLaunch:
+    if not command.prompt.strip():
+        raise ValueError("turn prompt must not be empty")
+    if command.group_id == "":
+        raise ValueError("group turn requires a non-empty group ID")
+    fields = (command.group_id, command.node_id, command.run_id, command.attempt_id)
+    if any(value is not None for value in fields) and not all(
+        value is not None for value in fields
+    ):
+        raise ValueError("group turn requires a complete writer attempt")
+    group = _owned_group(conn, graph, session, command) if command.group_id is not None else None
+    provider, identity, scope_kind, scope_id = _resolve_provider_binding(
+        conn, session, command, group
+    )
     attempt = (
         TaskAttempt(
             group.id,
@@ -174,14 +186,10 @@ class TurnResponse(msgspec.Struct, frozen=True):
     turn_id: str
 
 
-def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and worktree
-    conn: sqlite3.Connection,
-    session_id: str,
-    command: StartTurn,
-    launch: TurnLaunch,
-    result: TurnRuntimeResult,
-    root: Path,
+def finish_turn(
+    context: TurnContext, launch: TurnLaunch, result: TurnRuntimeResult, root: Path
 ) -> tuple[Literal["accepted", "unavailable"], object]:
+    conn, session_id, command_id = context.conn, context.session_id, context.command_id
     run = result.run
     if run is None or not run.session_id:
         return "unavailable", "Provider did not confirm a session identity."
@@ -189,12 +197,12 @@ def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and w
         return "unavailable", "Provider resumed a different session."
     bind_confirmed_identity(conn, session_id, launch, run.session_id)
     identity = ProviderIdentity(launch.provider, run.session_id)
-    record_provider_turn(conn, session_id, ProviderTurn(identity, command.command_id, "submitted"))
+    record_provider_turn(conn, session_id, ProviderTurn(identity, command_id, "submitted"))
     if not run.terminal_confirmed or (
         launch.identity is not None and not result.recovery_turn_confirmed
     ):
         return "unavailable", "Provider turn has no confirmed terminal result."
-    record_provider_turn(conn, session_id, ProviderTurn(identity, command.command_id, "confirmed"))
+    record_provider_turn(conn, session_id, ProviderTurn(identity, command_id, "confirmed"))
     if launch.identity is not None and result.recovery_turn_confirmed is not None:
         _ = record_recovery_receipt(
             conn,
@@ -210,18 +218,13 @@ def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and w
     with conn:
         _ = conn.execute(
             "UPDATE coordinator_turn_launches SET state = 'confirmed' WHERE command_id = ?",
-            (command.command_id,),
+            (command_id,),
         )
-    return "accepted", TurnResponse(run.session_id, command.command_id)
+    return "accepted", TurnResponse(run.session_id, command_id)
 
 
-def confirm_turn_identity(  # noqa: PLR0913 - handshake binds command evidence to scope
-    conn: sqlite3.Connection,
-    session_id: str,
-    command_id: str,
-    launch: TurnLaunch,
-    provider_id: str,
-) -> None:
+def confirm_turn_identity(context: TurnContext, launch: TurnLaunch, provider_id: str) -> None:
+    conn, session_id, command_id = context.conn, context.session_id, context.command_id
     if launch.identity is not None and provider_id != launch.identity.session_id:
         raise ValueError("provider resumed a different session")
     bind_confirmed_identity(conn, session_id, launch, provider_id)
@@ -232,48 +235,39 @@ def confirm_turn_identity(  # noqa: PLR0913 - handshake binds command evidence t
     )
 
 
-def record_turn_event(  # noqa: PLR0913 - event needs its turn and provider identity
-    conn: sqlite3.Connection,
-    session_id: str,
-    command_id: str,
-    event: SessionEvent,
-    provider_id: str | None,
-) -> None:
+def record_turn_event(context: TurnContext, event: SessionEvent, provider_id: str | None) -> None:
+    conn, session_id, command_id = context.conn, context.session_id, context.command_id
     if event.kind == "permission" and not provider_id:
         raise ValueError("permission event has no confirmed provider identity")
-    _ = append_control_event(
-        conn,
-        session_id,
-        ControlEvent(
-            kind=event.kind,
-            text=event.text,
-            entity_kind="permission" if event.kind == "permission" else "provider_turn",
-            entity_id=event.event_id if event.kind == "permission" else command_id,
-            tool_name=event.text if event.kind == "tool" else "",
-            status=event.state,
-            turn_id=command_id,
-            provider_session_id=provider_id or "",
-        ),
+    control = ControlEvent(
+        kind=event.kind,
+        text=event.text,
+        entity_kind="permission" if event.kind == "permission" else "provider_turn",
+        entity_id=event.event_id if event.kind == "permission" else command_id,
+        tool_name=event.text if event.kind == "tool" else "",
+        status=event.state,
+        turn_id=command_id,
+        provider_session_id=provider_id or "",
     )
+    if event.kind in {"assistant", "error"} and event.event_id:
+        _ = append_stream_control_event(conn, session_id, control, event.event_id)
+    else:
+        _ = append_control_event(conn, session_id, control)
 
 
-def make_turn_hooks(  # noqa: PLR0913 - hooks carry the launch context
-    conn: sqlite3.Connection,
-    graph: MikadoGraph,
-    session_id: str,
-    command_id: str,
-    launch: TurnLaunch,
+def make_turn_hooks(
+    context: TurnContext, graph: MikadoGraph, launch: TurnLaunch
 ) -> TurnRuntimeHooks:
     provider_id = launch.identity.session_id if launch.identity else None
 
     def confirm(confirmed_id: str) -> None:
         nonlocal provider_id
         with graph.synchronization_lock:
-            confirm_turn_identity(conn, session_id, command_id, launch, confirmed_id)
+            confirm_turn_identity(context, launch, confirmed_id)
             provider_id = confirmed_id
 
     def publish(event: SessionEvent) -> None:
         with graph.synchronization_lock:
-            record_turn_event(conn, session_id, command_id, event, provider_id)
+            record_turn_event(context, event, provider_id)
 
-    return TurnRuntimeHooks(command_id, confirm, publish)
+    return TurnRuntimeHooks(context.command_id, confirm, publish)

@@ -1,32 +1,40 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 
-from milknado.domains.coordinator.model import CoordinatorSession, ProviderBinding
-from milknado.domains.coordinator.persistence import (
-    get_coordinator,
-    links_for_session,
-    provider_bindings_for_session,
+from milknado.domains.coordinator.journal import redact_control_text
+from milknado.domains.coordinator.model import CoordinatorSession
+from milknado.domains.coordinator.model import (
+    ProviderIdentity as ProviderIdentity,
+)
+from milknado.domains.coordinator.model import RecoveryOutcome as RecoveryOutcome
+from milknado.domains.coordinator.model import (
+    RecoveryReceipt as RecoveryReceipt,
+)
+from milknado.domains.coordinator.recovery_phases import (
+    ProviderRecoveryPort as ProviderRecoveryPort,
+)
+from milknado.domains.coordinator.recovery_phases import (
+    RecoveryRuntime as RecoveryRuntime,
+)
+from milknado.domains.coordinator.recovery_phases import (
+    WorkerTerminationPort as WorkerTerminationPort,
+)
+from milknado.domains.coordinator.recovery_phases import (
+    WorktreeRecoveryPort as WorktreeRecoveryPort,
+)
+from milknado.domains.coordinator.recovery_phases import (
+    probe_recovery,
+    snapshot_recovery,
+    validate_recovery,
 )
 from milknado.domains.coordinator.recovery_receipts import record_recovery_receipt
-from milknado.domains.graph import ExecutionGroup, ExecutionGroupStore
 
-RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
 TurnStatus = Literal["submitted", "confirmed", "unknown"]
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderIdentity:
-    family: str
-    session_id: str
-
-    def __post_init__(self) -> None:
-        if self.family not in {"claude", "codex"} or not self.session_id:
-            raise ValueError("recovery requires a supported provider session identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,50 +51,10 @@ class UnknownTurn:
 
 
 @dataclass(frozen=True, slots=True)
-class RecoveryReceipt:
-    entity_kind: str
-    entity_id: str
-    identity: ProviderIdentity | None
-    worktree_path: Path
-    outcome: RecoveryOutcome
-
-
-@dataclass(frozen=True, slots=True)
 class CoordinatorRecovery:
     session: CoordinatorSession
     receipts: tuple[RecoveryReceipt, ...]
     unknown_turns: tuple[UnknownTurn, ...]  # noqa: V107
-
-
-class ProviderRecoveryPort(Protocol):
-    def recover(self, identity: ProviderIdentity, cwd: Path) -> RecoveryOutcome: ...
-
-
-class WorktreeRecoveryPort(Protocol):
-    def restore(self, group: ExecutionGroup) -> bool: ...
-
-
-class WorkerTerminationPort(Protocol):
-    def terminated(
-        self, turn_id: str, supervisor_pid: int, supervisor_start_token: float
-    ) -> bool: ...
-
-
-@dataclass(frozen=True, slots=True)
-class RecoveryRuntime:
-    groups: ExecutionGroupStore
-    root: Path
-    provider: ProviderRecoveryPort
-    worktrees: WorktreeRecoveryPort
-    workers: WorkerTerminationPort | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _ResolvedSession:
-    binding: ProviderBinding
-    identity: ProviderIdentity
-    path: Path
-    group: ExecutionGroup | None = None
 
 
 def _latest_turn_status(
@@ -124,7 +92,14 @@ def _write_turn_event(conn: sqlite3.Connection, coordinator_id: str, turn: Provi
         "INSERT INTO coordinator_events "
         + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, created_at) "
         + "VALUES (?, 'provider_turn', 'provider turn transition', ?, ?, ?, ?, ?)",
-        values,
+        (
+            coordinator_id,
+            redact_control_text(turn.identity.family),
+            redact_control_text(turn.identity.session_id),
+            redact_control_text(turn.turn_id),
+            redact_control_text(turn.status),
+            timestamp,
+        ),
     )
 
 
@@ -193,88 +168,22 @@ def _mark_unknown_turns(conn: sqlite3.Connection, coordinator_id: str) -> tuple[
     return tuple(unknown)
 
 
-def _resolve_sessions(
-    session: CoordinatorSession,
-    bindings: tuple[ProviderBinding, ...],
-    links: set[tuple[str, str]],
-    runtime: RecoveryRuntime,
-) -> tuple[_ResolvedSession, ...]:
-    expected = {(kind, entity_id) for kind, entity_id in links if kind == "provider_session"}
-    resolved: list[_ResolvedSession] = []
-    for binding in bindings:
-        identity = ProviderIdentity(binding.family, binding.provider_session_id)
-        if ("provider_session", identity.session_id) not in links:
-            raise ValueError("provider session binding is not linked to coordinator")
-        if binding.scope_kind == "coordinator":
-            if binding.scope_id != session.id or identity.family != session.provider:
-                raise ValueError("coordinator provider binding identity mismatch")
-            resolved.append(_ResolvedSession(binding, identity, runtime.root))
-        else:
-            if ("execution_group", binding.scope_id) not in links:
-                raise ValueError("execution group binding is not linked to coordinator")
-            group = runtime.groups.get(binding.scope_id)
-            if group is None or group.provider_session_id != identity.session_id:
-                raise ValueError("execution group provider identity mismatch")
-            path = Path(group.worktree_path)
-            if not path.is_absolute() or not group.branch_name:
-                raise ValueError("execution group worktree identity is invalid")
-            resolved.append(_ResolvedSession(binding, identity, path, group))
-        expected.discard(("provider_session", identity.session_id))
-    if expected:
-        raise ValueError("coordinator has unbound provider session links")
-    return tuple(resolved)
-
-
 def recover_coordinator(  # noqa: V103
-    conn: sqlite3.Connection, session_id: str, runtime: RecoveryRuntime
+    conn: sqlite3.Connection,
+    session_id: str,
+    runtime: RecoveryRuntime,
+    *,
+    synchronization_lock: AbstractContextManager[object] | None = None,
 ) -> CoordinatorRecovery:
-    """Resolve all identities before restoring worktrees or provider sessions."""
-    session = get_coordinator(conn, session_id)
-    if session is None:
-        raise ValueError("coordinator session does not exist")
-    if not runtime.root.is_absolute():
-        raise ValueError("project root must be absolute")
-    links = {(link.kind, link.entity_id) for link in links_for_session(conn, session_id)}
-    bindings = provider_bindings_for_session(conn, session_id)
-    resolved = _resolve_sessions(session, bindings, links, runtime)
-    groups = {
-        entity_id: runtime.groups.get(entity_id)
-        for kind, entity_id in links
-        if kind == "execution_group"
-    }
-    if any(group is None for group in groups.values()):
-        raise ValueError("linked execution group does not exist")
-    restored = {
-        group_id: runtime.worktrees.restore(group)
-        for group_id, group in groups.items()
-        if group is not None
-    }
-    receipts = tuple(
-        record_recovery_receipt(
-            conn,
-            session_id,
-            RecoveryReceipt(
-                item.binding.scope_kind,
-                item.binding.scope_id,
-                item.identity,
-                item.path,
-                runtime.provider.recover(item.identity, item.path)
-                if item.group is None or restored[item.binding.scope_id]
-                else "unavailable",
-            ),
+    """Probe external recovery outside the lock, then fence its evidence."""
+    lock = synchronization_lock or nullcontext()
+    with lock:
+        snapshot = snapshot_recovery(conn, session_id, runtime)
+    candidates = probe_recovery(snapshot, runtime)
+    with lock:
+        validate_recovery(conn, snapshot, runtime)
+        receipts = tuple(
+            record_recovery_receipt(conn, session_id, receipt) for receipt in candidates
         )
-        for item in resolved
-    )
-    bound_groups = {item.binding.scope_id for item in resolved if item.group is not None}
-    receipts += tuple(
-        record_recovery_receipt(
-            conn,
-            session_id,
-            RecoveryReceipt(
-                "execution_group", group_id, None, Path(group.worktree_path), "unavailable"
-            ),
-        )
-        for group_id, group in groups.items()
-        if group_id not in bound_groups and group is not None
-    )
-    return CoordinatorRecovery(session, receipts, _mark_unknown_turns(conn, session_id))
+        unknown = _mark_unknown_turns(conn, session_id)
+    return CoordinatorRecovery(snapshot.session, receipts, unknown)

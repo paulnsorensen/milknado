@@ -100,6 +100,13 @@ def fail_reservation(conn: sqlite3.Connection, attempt: TaskAttempt, reason: str
     node = fetchone(conn, "SELECT status, run_id FROM nodes WHERE id = ?", (attempt.node_id,))
     if node is None or (node[0], node[1]) != (reservation[0], reservation[1]):
         raise ValueError("reserved task changed owner before launch failure")
+    worker = fetchone(
+        conn,
+        "SELECT 1 FROM run_workers WHERE node_id = ? AND ended_at IS NULL LIMIT 1",
+        (attempt.node_id,),
+    )
+    if worker is not None:
+        raise ValueError("reserved task has an unresolved worker")
     _ = conn.execute(
         "UPDATE execution_group_tasks SET status = 'failed', result = ? "
         + "WHERE group_id = ? AND node_id = ?",

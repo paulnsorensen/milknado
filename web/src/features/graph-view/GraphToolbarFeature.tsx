@@ -5,7 +5,7 @@
 // call, both out of this feature's scope.
 import type { ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
-import { getState, setGraphView, subscribe } from '../../app/store';
+import { effectiveGraph, getState, setGraphView, subscribe } from '../../app/store';
 import { toGraphNodes } from '../../app/wire';
 import { Milknado } from '../../design-system';
 import { clampZoom, collapsibleIds, ZOOM_STEP } from './toolbarActions';
@@ -14,9 +14,11 @@ export function GraphToolbarFeature(): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
   const [hideDone, setHideDone] = useState(false);
   const { GraphToolbar } = Milknado;
-  const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
+  const graph = effectiveGraph(state);
+  const nodes = graph ? toGraphNodes(graph) : [];
   const { graphView, selection } = state;
   const zoom = graphView.zoom ?? 1;
+  const canFocus = selection != null && nodes.some((node) => node.id === selection);
 
   return (
     <GraphToolbar
@@ -25,9 +27,9 @@ export function GraphToolbarFeature(): ReactElement {
       onFilter={(filter) => setGraphView({ filter })}
       hideDone={hideDone}
       onHideDone={setHideDone}
-      focus={graphView.focus != null && graphView.focus === selection}
-      canFocus={selection != null}
-      onFocus={(active) => setGraphView({ focus: active ? selection : null })}
+      focus={canFocus && graphView.focus === selection}
+      canFocus={canFocus}
+      onFocus={(active) => setGraphView({ focus: active && canFocus ? selection : null })}
       lod={graphView.lod}
       onLod={(lod) => setGraphView({ lod })}
       onJump={(id) => setGraphView({ focus: id })}

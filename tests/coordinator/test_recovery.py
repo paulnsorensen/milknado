@@ -12,7 +12,6 @@ from milknado.domains.coordinator import ProviderBinding
 from milknado.domains.coordinator.journal import control_history
 from milknado.domains.coordinator.persistence import (
     bind_provider_session,
-    create_coordinator_tables,
     link_entity,
     start_coordinator,
 )
@@ -253,7 +252,6 @@ def test_missing_coordinator_and_unlinked_session_fail_closed(
 ) -> None:
     provider = ProviderPort()
     with closing(sqlite3.connect(graph.db_path)) as conn:
-        create_coordinator_tables(conn)
         with pytest.raises(ValueError, match="coordinator"):
             _ = recover_coordinator(
                 conn, "missing", RecoveryRuntime(graph.groups, tmp_path, provider, WorktreePort())

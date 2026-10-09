@@ -405,9 +405,7 @@ def test_proposal_preparation_does_not_mutate_graph(
         prepared = planner.prepare_proposal(proposal, tmp_path)
     assert prepared == plan
     assert tmp_graph.get_children(goal.id) == []
-    result = planner.apply_proposal(
-        proposal, tmp_path, target_goal_id=goal.id, prepared_plan=prepared
-    )
+    result = planner.apply_proposal(proposal, target_goal_id=goal.id, prepared_plan=prepared)
     assert result.nodes_created == 1
     assert [node.description for node in tmp_graph.get_children(goal.id)] == ["1. Implement"]
 
@@ -498,7 +496,7 @@ class TestPlanner:
 
         assert result.success is True
         process.run_agent.assert_called_once_with(  # pyright: ignore[reportAny]
-            tmp_path / ".milknado" / "planning-context.md",
+            result.context_path,
             "claude",
             tmp_path,
         )
@@ -1756,3 +1754,36 @@ def test_cli_plan_surfaces_critic_failures_in_both_modes(
             cast(Planner, MagicMock()), "goal", tmp_path, tmp_path / "spec", 1, cfg
         )
     assert interactive.value.exit_code == 1
+
+
+class _ContextReadingProcess:
+    def __init__(self) -> None:
+        self.snapshots: list[tuple[Path, str]] = []
+
+    def run_agent(
+        self, context_path: Path, command: str, project_root: Path
+    ) -> PlanningProcessResult:
+        del command, project_root
+        self.snapshots.append((context_path, context_path.read_text(encoding="utf-8")))
+        return PlanningProcessResult(exit_code=0, stdout="")
+
+    def run_validation(
+        self, command: str, payload: dict[str, object], project_root: Path
+    ) -> PlanningProcessResult:
+        del command, payload, project_root
+        return PlanningProcessResult(exit_code=0)
+
+
+def test_planner_invocations_keep_distinct_context_bytes(
+    tmp_graph: MikadoGraph, mock_crg: MagicMock, tmp_path: Path
+) -> None:
+    process = _ContextReadingProcess()
+    planner = Planner(tmp_graph, mock_crg, "claude", PlanningPorts(process))
+    first = planner.launch("first goal", tmp_path)
+    second = planner.launch("second goal", tmp_path)
+    assert first.context_path is not None and second.context_path is not None
+    assert first.context_path != second.context_path
+    assert first.context_path.read_text(encoding="utf-8") == process.snapshots[0][1]
+    assert second.context_path.read_text(encoding="utf-8") == process.snapshots[1][1]
+    assert "first goal" in process.snapshots[0][1]
+    assert "second goal" in process.snapshots[1][1]

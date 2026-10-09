@@ -83,12 +83,10 @@ def test_plan_approval_api_requires_login_and_applies_once(tmp_path: Path) -> No
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
-            assert project_root == tmp_path
             _ = prepared_plan
             _ = graph.add_node("Applied task", target_goal_id)
             return PlanResult(True, 0, proposal.context_path, nodes_created=1)

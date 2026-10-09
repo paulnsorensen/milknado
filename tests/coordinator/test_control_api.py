@@ -1,3 +1,5 @@
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import cast
 
@@ -15,6 +17,7 @@ from milknado.domains.coordinator.control_models import (
     RuntimeAction,
     StartGoal,
 )
+from milknado.domains.coordinator.turn_context import TurnContext
 from milknado.domains.coordinator.turns import record_turn_event
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.graph import MikadoGraph
@@ -158,9 +161,13 @@ def test_permission_events_keep_request_and_provider_turn_identity(tmp_path: Pat
     request = SessionEvent(
         kind="permission", text="Approve", event_id="1/shared", state="requested"
     )
-    record_turn_event(graph.group_connection, session.id, "turn-a", request, "provider-a")
+    record_turn_event(
+        TurnContext(graph.group_connection, session.id, "turn-a"), request, "provider-a"
+    )
     first = control.read_coordinator_snapshot(session.id, 0)
-    record_turn_event(graph.group_connection, session.id, "turn-b", request, "provider-b")
+    record_turn_event(
+        TurnContext(graph.group_connection, session.id, "turn-b"), request, "provider-b"
+    )
     delta = control.read_coordinator_snapshot(session.id, first.cursor)
     permissions = [
         event
@@ -243,3 +250,41 @@ def test_redacted_command_ids_keep_distinct_journal_events(tmp_path: Path) -> No
         "first" not in event.entity_id and "second" not in event.entity_id for event in events
     )
     graph.close()
+
+
+def test_coordinator_operation_tables_exist_before_use_and_after_reopen(tmp_path: Path) -> None:
+
+    path = tmp_path / "graph.db"
+    for _ in range(2):
+        graph = MikadoGraph(path)
+        with closing(sqlite3.connect(path)) as conn:
+            tables = {
+                row[0]
+                for row in cast(
+                    "list[tuple[str, ...]]",
+                    conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' "
+                        + "AND name LIKE 'coordinator_%'"
+                    ).fetchall(),
+                )
+            }
+            expected = {
+                "coordinator_dispatches",
+                "coordinator_action_receipts",
+                "coordinator_plans",
+            }
+            assert expected <= tables
+            for table in expected:
+                keys = cast(
+                    "list[tuple[object, object, object, object, object, int]]",
+                    conn.execute(f"PRAGMA table_info({table})").fetchall(),
+                )
+                assert sum(row[5] for row in keys) == 1
+                foreign = cast(
+                    "list[tuple[object, object, str, str]]",
+                    conn.execute(f"PRAGMA foreign_key_list({table})").fetchall(),
+                )
+                assert any(
+                    row[2] == "coordinator_sessions" and row[3] == "session_id" for row in foreign
+                )
+        graph.close()

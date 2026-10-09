@@ -101,7 +101,12 @@ export function toGraphNodes(graph: WireGraphSnapshot): GraphNodeData[] {
         dependent.parent_id === prerequisite.id || prerequisite.parent_id === dependent.id) {
       continue;
     }
-    extras.set(dependent.id, [...(extras.get(dependent.id) ?? []), prerequisite.id]);
+    let prerequisites = extras.get(dependent.id);
+    if (!prerequisites) {
+      prerequisites = [];
+      extras.set(dependent.id, prerequisites);
+    }
+    prerequisites.push(prerequisite.id);
   }
   return graph.nodes.map((node) => ({
     id: node.id,

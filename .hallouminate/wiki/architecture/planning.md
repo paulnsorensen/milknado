@@ -12,7 +12,8 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 1. **Build context** — `build_planning_context` (`context.py`) assembles a markdown
    prompt: goal, compact CRG architecture overview, the existing Mikado graph state, a
    batching-policy note, the v2 manifest schema + instructions, and (optionally) the spec
-   text. Written to `<root>/.milknado/planning-context.md`.
+   text. Each launch writes a unique
+   `<root>/.milknado/planning-context-*.md` file.[^goal-context]
 2. **Run the agent** — `build_planning_subprocess` (in `domains/common/agent_argv`)
    builds the argv; the agent runs as a subprocess with stdout piped.
 3. **Parse manifest** — `parse_manifest_from_output` (`manifest.py`) extracts a single
@@ -29,15 +30,32 @@ builder detecting existing nodes, not by a separate code path.
 
 ## Coordinator proposal review
 
-The browser coordinator stores a validated `PlanGoal` manifest as a pending proposal. It does not apply the proposal immediately. A person reviews changes, dependencies, and relationships before approval. Rejection leaves the graph unchanged.[^1]
+The browser coordinator stores a validated `PlanGoal` manifest as a pending proposal.
+It applies the proposal only after human approval.
+The proposal panel shows changes, dependencies, relationships, and durable status.
+Rejection leaves the graph unchanged.[^1]
 
-The coordinator captures the graph revision before it reads planning input. It rejects the proposal if the graph changes during planning. Approval marks the proposal `applying`. It then checks the revision under a graph-owned SQLite write transaction. That transaction covers batch graph writes. A stale proposal does not apply. An interrupted apply requires manual recovery.[^2]
+The coordinator captures the graph revision before it reads planning input.
+A graph change during planning prevents proposal storage.
+Approval marks the proposal `applying`, then checks its revision inside the graph-owned SQLite write transaction.
+That transaction covers every batch graph write.
+Stale proposals do not apply.
+Interrupted application requires manual recovery.[^2]
 
-The ordinary CLI still calls `Planner.launch` and applies its validated manifest immediately. Do not use that path for browser coordinator approval.[^3]
+Every proposal database phase and planning journal write uses the graph synchronization lock.
+Snapshot readers use the same lock and shared SQLite connection.
+An unlocked connection context can otherwise roll back another approval's graph transaction.
+External proposal generation, batch preparation, and telemetry remain outside synchronization.[^shared-planning]
+The shared-connection regression checks retained nodes, applied status, and the accepted journal after reopening the database.[^shared-planning-test]
 
-[^1]: src/milknado/domains/coordinator/planning_workflow.py:25-49; web/src/features/coordinator/CoordinatorCockpit.tsx:205-235
-[^2]: src/milknado/domains/coordinator/planning_workflow.py:36-49,59-88; src/milknado/domains/graph/_plan_transaction.py:9-21
-[^3]: src/milknado/domains/planning/planner.py:63-123; src/milknado/app/plan.py:248-257
+The ordinary CLI still calls `Planner.launch` and applies its validated manifest immediately.
+Do not use that path for browser coordinator approval.[^3]
+
+[^1]: src/milknado/domains/coordinator/planning_workflow.py:24-50; web/src/features/coordinator/CoordinatorPresentation.tsx:7-33.
+[^2]: src/milknado/domains/coordinator/planning_workflow.py:60-86,88-109; src/milknado/domains/graph/_plan_transaction.py:19-28.
+[^3]: src/milknado/domains/planning/planner.py:70-125; src/milknado/app/plan.py:248-257.
+[^shared-planning]: src/milknado/domains/coordinator/control.py:96-115; src/milknado/domains/coordinator/planning_workflow.py:27-50,60-122; src/milknado/domains/coordinator/projection.py:112-122.
+[^shared-planning-test]: tests/coordinator/test_shared_planning_transactions.py:100-139,84-97.
 
 ## The manifest (`manifest.py`)
 
@@ -78,6 +96,18 @@ shape decisions:
   schema, enum constraints, granularity guidance ("emit file-level changes, let the solver
   batch"), and the MCP-targeting note (require repository inspection for real hash anchors).
 - Guard: `spec_text == ""` raises — callers must pass `None` to omit the spec, never empty.
+
+
+
+## Goal planning context isolation and replay
+
+Goal planning context isolation preserves each goal's review context across distinct planner launches.[^goal-context]
+Each real `Planner.launch` writes a new retained context file.
+Another launch cannot overwrite that file through the planner's former shared filename.[^goal-context]
+A completed coordinator proposal replay returns its stored manifest and context path without starting another planner.[^goal-context-replay]
+
+PR #518's context isolation repair is merged.
+This proposal behavior describes the PR #520 implementation.
 
 ## Bridge into batching (`batching_bridge.py`)
 
@@ -132,3 +162,8 @@ a multi-batch plan holding one oversized batch passed silently. The producer-own
 fixes both. See `history/review-lessons.md` § "Review scope: diff-scoped review can't see an
 inherited encapsulation smell" and
 [easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).
+
+[^goal-context]: src/milknado/domains/planning/planner.py:179-190.
+[^goal-context-replay]: src/milknado/domains/coordinator/planning_workflow.py:27-35; src/milknado/domains/coordinator/plans.py:20-53.
+
+_Source: merged PR #518 and current PR #520 source/tests · Updated: 2026-10-09 · Supersedes: shared context filenames and unlocked proposal persistence._

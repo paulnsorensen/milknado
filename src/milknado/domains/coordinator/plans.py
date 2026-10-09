@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import msgspec
 
+from milknado.domains.graph import graph_revision
 from milknado.domains.planning import (
     PlanChangeManifest,
     PlanProposal,
@@ -16,8 +16,7 @@ from milknado.domains.planning import (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class PlanProposalRecord:
+class PlanProposalRecord(msgspec.Struct, frozen=True):
     id: str
     session_id: str
     manifest: PlanChangeManifest
@@ -27,16 +26,6 @@ class PlanProposalRecord:
 
     def proposal(self) -> PlanProposal:
         return PlanProposal(self.manifest, Path(self.context_path))
-
-
-def graph_revision(conn: sqlite3.Connection) -> int:
-    row = cast(
-        tuple[int] | None,
-        conn.execute("SELECT revision FROM graph_revision WHERE id = 1").fetchone(),
-    )
-    if row is None:
-        raise RuntimeError("graph revision is unavailable")
-    return row[0]
 
 
 def _record(row: tuple[str, str, str, str, int, str]) -> PlanProposalRecord:

@@ -44,6 +44,35 @@ from milknado.loop.sessions import (
 )
 
 
+def _execute_native_turn(
+    request: RuntimeRequest, adapter: NativeCoordinatorTurns, root: Path
+) -> RuntimeResult:
+    assert request.spec.spawn_worker is not None
+    assert request.spec.on_session_id is not None
+    request.channel.start(
+        SessionContext(family="codex", cwd=str(root)),
+        ("steer", "follow_up", "interrupt", "approve", "deny"),
+    )
+    request.spec.on_session_id("thread")
+    active = adapter.runtime_session("thread")
+    assert isinstance(active, RuntimeSession)
+    assert (
+        submit_runtime_action("thread", SessionInput(action="interrupt"), active).state == "queued"
+    )
+    request.channel.publish(
+        SessionEvent(kind="permission", text="Approve tool", event_id="ask", state="requested")
+    )
+    assert (
+        submit_runtime_action(
+            "thread", SessionInput(action="approve", request_id="1/ask"), active
+        ).state
+        == "queued"
+    )
+    request.channel.publish(SessionEvent(kind="assistant", text="Streamed answer"))
+    request.channel.close()
+    return RuntimeResult(AgentResult(0, session_id="thread", terminal_confirmed=True))
+
+
 def test_native_turn_registers_active_channel_and_protected_spawn(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -60,31 +89,7 @@ def test_native_turn_registers_active_channel_and_protected_spawn(
     identities: list[str] = []
 
     def execute(request: RuntimeRequest) -> RuntimeResult:
-        assert request.spec.spawn_worker is not None
-        assert request.spec.on_session_id is not None
-        request.channel.start(
-            SessionContext(family="codex", cwd=str(tmp_path)),
-            ("steer", "follow_up", "interrupt", "approve", "deny"),
-        )
-        request.spec.on_session_id("thread")
-        active = adapter.runtime_session("thread")
-        assert active is not None
-        assert (
-            submit_runtime_action("thread", SessionInput(action="interrupt"), active).state
-            == "queued"
-        )
-        request.channel.publish(
-            SessionEvent(kind="permission", text="Approve tool", event_id="ask", state="requested")
-        )
-        assert (
-            submit_runtime_action(
-                "thread", SessionInput(action="approve", request_id="1/ask"), active
-            ).state
-            == "queued"
-        )
-        request.channel.publish(SessionEvent(kind="assistant", text="Streamed answer"))
-        request.channel.close()
-        return RuntimeResult(AgentResult(0, session_id="thread", terminal_confirmed=True))
+        return _execute_native_turn(request, adapter, tmp_path)
 
     monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", execute)
     result = adapter.run(

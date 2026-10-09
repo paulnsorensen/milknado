@@ -22,6 +22,18 @@ from milknado.loop._agent import AgentResult
 from milknado.loop.sessions import RuntimeRequest, RuntimeResult, RuntimeSession, SessionChannel
 
 
+def _execute_turn(
+    request: RuntimeRequest, root: Path, ready: Event, finish: Event
+) -> RuntimeResult:
+    request.channel.start(SessionContext(family="codex", cwd=str(root)), ("interrupt",))
+    assert request.spec.on_session_id is not None
+    request.spec.on_session_id("thread")
+    ready.set()
+    assert finish.wait(2)
+    request.channel.close()
+    return RuntimeResult(AgentResult(130, session_id="thread", terminal_confirmed=False))
+
+
 def _active_turn(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[MikadoGraph, CoordinatorControl, str, RuntimeSession, Event, Thread]:
@@ -38,13 +50,7 @@ def _active_turn(
     ready, finish = Event(), Event()
 
     def execute(request: RuntimeRequest) -> RuntimeResult:
-        request.channel.start(SessionContext(family="codex", cwd=str(root)), ("interrupt",))
-        assert request.spec.on_session_id is not None
-        request.spec.on_session_id("thread")
-        ready.set()
-        assert finish.wait(2)
-        request.channel.close()
-        return RuntimeResult(AgentResult(130, session_id="thread", terminal_confirmed=False))
+        return _execute_turn(request, root, ready, finish)
 
     monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", execute)
     control = CoordinatorControl(
@@ -65,7 +71,7 @@ def _active_turn(
     turn.start()
     assert ready.wait(2)
     active = adapter.runtime_session("thread")
-    assert active is not None
+    assert isinstance(active, RuntimeSession)
     return graph, control, session_id, active, finish, turn
 
 

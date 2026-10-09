@@ -10,7 +10,7 @@ import { HeaderHost } from './hosts/HeaderHost';
 import { RailHost } from './hosts/RailHost';
 import { SidecarHost } from './hosts/SidecarHost';
 import { useRegionSize } from './hosts/useRegionSize';
-import { getState, setGraphView, setSelection, subscribe } from './store';
+import { effectiveGraph, getState, setGraphView, setSelection, subscribe } from './store';
 import { toGraphNodes } from './wire';
 
 export function DefaultLayout(): ReactElement {
@@ -19,7 +19,7 @@ export function DefaultLayout(): ReactElement {
   const canvasSize = useRegionSize(canvasRef);
   const { MikadoGraph } = Milknado;
 
-  const graph = state.coordinatorGraph ?? state.snapshot?.graph;
+  const graph = effectiveGraph(state);
   const nodes = graph ? toGraphNodes(graph) : [];
 
   return (

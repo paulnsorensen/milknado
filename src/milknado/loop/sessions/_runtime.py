@@ -40,7 +40,7 @@ from milknado.loop.sessions._process import (
     write_commands,
 )
 from milknado.loop.sessions._protocol import ProtocolStep, SessionProtocol
-from milknado.loop.sessions._stream import StreamContext, consume, drain
+from milknado.loop.sessions._stream import StreamContext, capture_failure, consume, drain
 
 
 @dataclass(slots=True)
@@ -118,6 +118,7 @@ class _SessionExecution:
                     outcome.tool_count += 1
                     record_tool_count(wind_down, outcome.tool_count)
             outcome.interrupted = outcome.interrupted or event.state in {"interrupted", "aborted"}
+        capture_failure(self.stream_context, step)
         if step.result_text is not None:
             outcome.result_text = step.result_text
         outcome.done, outcome.failed = outcome.done or step.done, outcome.failed or step.failed

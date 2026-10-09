@@ -1,6 +1,7 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getState, resetStore, setCoordinatorGraph, setGraphView } from './store';
+import { getState, resetStore, setCoordinatorGraph, setGraphView, setSnapshot } from './store';
+import { mergeSnapshot } from '../features/live-state/runtimeSnapshot';
 
 vi.mock('../design-system', () => ({
   Milknado: {
@@ -71,4 +72,24 @@ describe('DefaultLayout', () => {
     expect(nodes.find((node) => node.id === 1)?.extra).toBeUndefined();
     expect(nodes.find((node) => node.id === 3)?.extra).toBeUndefined();
   });
+  it('restores the untouched execution graph when the coordinator clears', () => {
+    const ordinary = mergeSnapshot({
+      goal: 'Ordinary goal',
+      graph: { nodes: [{ id: 1, description: 'Ordinary task', status: 'pending', parent_id: null, kind: 'task', flavor: null }],
+        edges: [], root_ids: [1] },
+      active_runs: [], event_lines: [],
+    }, null);
+    setSnapshot(ordinary);
+    setCoordinatorGraph({
+      nodes: [{ id: 9, description: 'Coordinator task', status: 'pending', parent_id: null, kind: 'task', flavor: null }],
+      edges: [], root_ids: [9],
+    });
+    render(<DefaultLayout />);
+    const canvas = screen.getByText('trigger');
+    expect(JSON.parse(canvas.getAttribute('data-nodes') ?? '[]')).toEqual([expect.objectContaining({ id: 9 })]);
+    act(() => setCoordinatorGraph(null));
+    expect(getState().snapshot).toBe(ordinary);
+    expect(JSON.parse(canvas.getAttribute('data-nodes') ?? '[]')).toEqual([expect.objectContaining({ id: 1 })]);
+  });
+
 });

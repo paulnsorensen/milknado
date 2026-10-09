@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
+import { getState, resetStore, setCoordinatorGraph, setSelection, setSnapshot } from '../../app/store';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
 import { GraphToolbarFeature } from './GraphToolbarFeature';
 
@@ -61,6 +61,32 @@ describe('GraphToolbarFeature', () => {
     screen.getByTitle('Collapse all groups').click();
 
     expect(getState().graphView.collapsed).toEqual([1]);
+  });
+
+  it('searches and collapses only the active coordinator graph, then restores execution nodes', () => {
+    const execution = getState().snapshot;
+    setSelection(2);
+    setCoordinatorGraph({
+      nodes: [
+        { id: 10, description: 'Coordinator goal', status: 'pending', parent_id: null, kind: 'goal', flavor: null },
+        { id: 11, description: 'Coordinator task', status: 'pending', parent_id: 10, kind: 'task', flavor: null },
+      ],
+      edges: [{ parent_id: 10, child_id: 11 }], root_ids: [10],
+    });
+    render(<GraphToolbarFeature />);
+    expect(screen.getByRole('button', { name: 'Focus' })).toBeDisabled();
+    const input = screen.getByLabelText('Jump to node');
+    fireEvent.change(input, { target: { value: 'Task' } });
+    expect(screen.getByRole('option', { name: /Coordinator task/ })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /Task one/ })).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole('option', { name: /Coordinator task/ }));
+    expect(getState().graphView.focus).toBe(11);
+    screen.getByTitle('Collapse all groups').click();
+    expect(getState().graphView.collapsed).toEqual([10]);
+    setCoordinatorGraph(null);
+    expect(getState().snapshot).toBe(execution);
+    fireEvent.change(input, { target: { value: 'Task' } });
+    expect(screen.getByRole('option', { name: /Task one/ })).toBeInTheDocument();
   });
 
   it('picking a node style sets the level of detail', () => {

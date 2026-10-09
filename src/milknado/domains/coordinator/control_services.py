@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from milknado.domains.common import SessionEvent, WorkerOwner
+from milknado.domains.coordinator.commands import ActionSession
 from milknado.domains.coordinator.recovery import RecoveryRuntime
 from milknado.domains.graph import (
     ExecutionGroup,
@@ -13,7 +14,6 @@ from milknado.domains.graph import (
     TaskAttempt,
 )
 from milknado.domains.planning import Planner
-from milknado.loop.sessions import RuntimeSession
 
 
 class ReviewDecisionPort(Protocol):
@@ -68,7 +68,7 @@ class TurnRuntimePort(Protocol):
 @dataclass(frozen=True, slots=True)
 class CoordinatorServices:
     planner: Planner | None = None
-    runtime_session: Callable[[str], RuntimeSession | None] | None = None
+    runtime_session: Callable[[str], ActionSession | None] | None = None
     recovery_runtime: RecoveryRuntime | None = None
     review_decision: ReviewDecisionPort | None = None
     turn_runtime: TurnRuntimePort | None = None

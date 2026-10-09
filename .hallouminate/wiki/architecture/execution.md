@@ -510,11 +510,87 @@ Coordinator native turn contracts separate coordinator-owned identity and result
 The adapter converts native runtime results into coordinator values before returning them.[^coordinator-turn-adapter]
 `finish_turn` retains its identity, terminal-result, and recovery-confirmation checks.
 The receipt still exposes `provider_session_id` and `turn_id` through the existing JSON conversion boundary.[^coordinator-turn-receipt]
-
 These value types do not replace task-dispatch run identities or create the graph coordinator-run entity described above.
-This note describes retained local corrections for PR #521, not a merged release.
-Receipt typing, stream storage, and guard findings remain deferred.
-This note does not establish merge readiness.
+
+Coordinator `model.py` owns `ProviderIdentity`, `RecoveryOutcome`, and `RecoveryReceipt`.
+Receipt persistence returns the same receipt object after recording its journal evidence and recovery link.
+This internal ownership preserves receipt fields, identity validation, and public JSON conversion.[^pr521-recovery-values]
+
+### Native admission, permission identity, and shutdown
+
+Native coordinator admission rechecks the active group attempt and pending-goal admission under the graph synchronization lock immediately before protected spawn.[^pr521-native-admission]
+Parsed resume validation raises `RuntimePreflightError` before launch.
+The adapter maps that error to `TurnPreflightError`; uncertain postlaunch outcomes retain their durable fence.[^pr521-native-preflight]
+
+Native permission event identities include the actual process invocation.
+An approval for an earlier invocation cannot approve a later resumed invocation.
+Channels without an invocation retain their epoch-only identity grammar.[^pr521-permission-identity]
+
+Owner and observer web hosts combine coordinator command shutdown with the native shutdown callback.
+Command shutdown closes admission before requesting native stop, then waits for whole commands through final receipt and journal writes.
+Public review decisions enter the same command lifetime.
+Native shutdown closes worker admission, requests stop, and waits for active turn callbacks.
+Graph persistence closes only after controller, native worker, and command shutdown complete.
+Unconfirmed shutdown raises and leaves graph persistence open.[^pr521-native-shutdown]
+
+### Coordinator recovery concurrency
+
+Coordinator recovery snapshots session ownership under its synchronization lock, then probes external worktrees and providers without that lock.
+Before persistence, recovery revalidates the session, explicit bindings, links, immutable execution-group values, and exact turn-event evidence.
+Changed inputs reject the recovery result, so older evidence cannot mark a newer live turn unknown.[^pr521-recovery-phases]
+Explicit group bindings may name a different provider family from the coordinator.
+Recovery does not infer that family from the coordinator or immutable group workspace.[^pr521-recovery-phases]
+
+Fence reconciliation calls the graph-owned live-runtime query on the same `BEGIN IMMEDIATE` connection as its guarded fence update.
+A live runtime worker prevents clearance of its turn fence.[^pr521-recovery-fence]
+See [Graph Domain](./graph.md#append-only-coordinator-stream-history) for compact stream history and current schema setup.
+
+### Coordinator action and reservation guards
+
+Coordinator commands require an exact durable coordinator, provider-family, and provider-session binding before reserving a receipt.[^pr518-action-binding]
+A display or discovery link does not authorize provider input.
+Provider binding is a separate lifecycle operation; discovery alone does not establish recovery or action authority.[^pr518-explicit-binding]
+Mixed-provider recovery keeps the coordinator family separate from the execution-group family.
+Do not infer an execution-group provider family from `CoordinatorSession.provider`; `GroupWorkspace` contains no family field.[^pr518-mixed-binding]
+The domain `ActionSession` port exposes `family`, `provider_session_id`, and `submit_action`.
+Root coordinator actions retain the existing `RuntimeSession` and native incarnation fencing.
+Execution-group actions use the adapter-owned `GroupActionSession` facade.[^pr518-live-port]
+The group facade checks channel incarnation and pins the command's invocation and owner identities.
+It calls graph-owned `admit_session_command` before the native channel drains and claims durable commands.
+Rejected graph admission returns a rejected action instead of bypassing the graph command path.[^pr521-group-action]
+Uncertain submission keeps its durable receipt; retries do not submit the action again.[^pr518-action-replay]
+
+Reserved launches recheck prerequisites inside the transaction before claiming.
+Already-running retries retain their idempotent branch.[^pr518-reserved-launch]
+Launch failure retains reservation ownership while any same-node worker has no confirmed end record.
+Confirmed cleanup permits the normal failure path.[^pr518-reservation-cleanup]
+These checks preserve durable-before-submit ordering and ownership instead of relaxing them.
+
+[^pr518-action-binding]: src/milknado/domains/coordinator/commands.py:135-150; tests/coordinator/test_action_binding_guards.py:18-42.
+[^pr518-live-port]: src/milknado/domains/coordinator/commands.py (`ActionSession`); src/milknado/domains/coordinator/control_services.py (`CoordinatorServices`); src/milknado/loop/sessions/_lifecycle.py (`RuntimeSession`); src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns._registration_callback`).
+[^pr521-group-action]: src/milknado/adapters/_group_action_session.py (`GroupActionSession.submit_action`, `drain_group_commands`, `record_group_command`); src/milknado/domains/graph/_command_admission.py (`admit_session_command`); src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns._group_channel`, `_registration_callback`).
+[^pr518-action-replay]: tests/coordinator/test_action_receipts.py:42-135.
+[^pr518-reserved-launch]: src/milknado/domains/graph/_execution_groups.py:191-205; tests/coordinator/test_reservation_guards.py:14-82.
+[^pr518-reservation-cleanup]: src/milknado/domains/graph/_group_reservation.py:89-118; tests/coordinator/test_reservation_guards.py:85-116.
+
+
+
+_Source: approved PR #518 guards and PR #521 group-action admission repair · Updated: 2026-10-09 · Supersedes: wrapper-free submission for execution-group actions._
+
+
+
+Launch failure records a terminal group-task result once no unresolved worker remains.
+Admission does not overwrite terminal results or skip a failed predecessor.[^pr518-terminal-group]
+This contract does not promise in-place relaunch.
+Graph forking creates an isolated alternative and drops external parent links.
+It is not a verified coordinator retry path.[^pr518-fork-limit]
+
+[^pr518-explicit-binding]: src/milknado/domains/coordinator/workflow.py:118-119; src/milknado/domains/coordinator/recovery.py:234-235; tests/coordinator/test_recovery.py:66-70; tests/coordinator/test_workflow.py:129-144.
+[^pr518-mixed-binding]: tests/coordinator/test_recovery.py:73-107; src/milknado/domains/graph/_group_models.py:7-10.
+[^pr518-terminal-group]: src/milknado/domains/graph/_group_reservation.py:33-43,89-118; tests/test_execution_groups.py:80-91; tests/coordinator/test_reservation_guards.py:109-115.
+[^pr518-fork-limit]: src/milknado/domains/graph/_group_fork.py:1-65.
+
+_Source: current-head PR 518 lifecycle feedback and existing source contracts · Updated: 2026-10-09._
 
 ## Deposit channel — worker → coordinator results (#122)
 
@@ -767,8 +843,15 @@ sentinel.
 
 _Source: PR #488 and the verified deep-module commits cited above · Updated: 2026-09-30 · Supersedes: pending orphan-worker implementation, absent durable recovery, shared driver mixin, and combined scheduling/presentation ownership. The accepted F-5/F-7–F-12 limits remain._
 
-[^coordinator-turn-contract]: `src/milknado/domains/coordinator/control_services.py:36-65`; `src/milknado/domains/coordinator/__init__.py:7-14,45-50` in the retained local PR #521 correction.
-[^coordinator-turn-adapter]: `src/milknado/adapters/coordinator_turns.py:219-259` in the retained local PR #521 correction.
-[^coordinator-turn-receipt]: `src/milknado/domains/coordinator/turns.py:172-215`; `src/milknado/domains/coordinator/receipt_results.py:93-128` in the retained local PR #521 correction.
+[^coordinator-turn-contract]: src/milknado/domains/coordinator/control_services.py:36-65.
+[^coordinator-turn-adapter]: src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns._resume`, `_result`).
+[^coordinator-turn-receipt]: src/milknado/domains/coordinator/turns.py (`finish_turn`, `TurnResponse`); src/milknado/domains/coordinator/receipt_results.py (`receipt_payload`).
+[^pr521-recovery-values]: src/milknado/domains/coordinator/model.py:40-59; src/milknado/domains/coordinator/recovery_receipts.py:14-31; src/milknado/domains/coordinator/receipt_results.py.
+[^pr521-native-admission]: src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns._spawn`).
+[^pr521-native-preflight]: src/milknado/loop/sessions/_lifecycle.py (`_resume_spec`, `start_or_resume`); src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns.run`); src/milknado/domains/coordinator/turns.py (`finish_turn`); src/milknado/domains/coordinator/turn_fences.py (`claim_turn`).
+[^pr521-permission-identity]: src/milknado/loop/sessions/_channel.py:78-101; src/milknado/loop/sessions/_runtime.py (`_new_execution`, `_SessionExecution`).
+[^pr521-native-shutdown]: src/milknado/domains/coordinator/_command_lifecycle.py (`CommandLifecycle.command`, `shutdown`, `complete`); src/milknado/domains/coordinator/control.py (`CoordinatorControl.send_coordinator_command`, `decide_goal_review`, `shutdown`); src/milknado/adapters/coordinator_turns.py (`NativeCoordinatorTurns.shutdown`, `run`); src/milknado/cli/web.py (`_host_dependencies`, `_close_host`, `run_owner_web`); tests/coordinator/test_command_shutdown.py; tests/coordinator/test_native_turn_shutdown.py.
+[^pr521-recovery-phases]: src/milknado/domains/coordinator/recovery.py:167-185; src/milknado/domains/coordinator/recovery_phases.py:80-174.
+[^pr521-recovery-fence]: src/milknado/domains/coordinator/turn_fences.py (`clear_verified_fence`); src/milknado/domains/graph/_worker_persistence.py (`live_runtime_workers`).
 
-_Source: PR #521 retained local coordinator-contract correction, pending publication · Updated: 2026-10-08 · Supersedes: no existing claim. Guard, receipt-typing, and stream-storage decisions remain deferred._
+_Source: PR #521 native authority, recovery, and storage source contracts · Updated: 2026-10-09 · Supersedes: deferred receipt ownership, stream storage, and native guard claims._
