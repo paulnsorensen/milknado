@@ -50,3 +50,12 @@
 
 2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
 
+
+
+2026-10-08 · ecca3a51b4180ee5 · merged · architecture/planning.md · Record retained local unique planning-context files and completed-operation replay. Supersede the shared filename claim; preserve pending publication and guard approval. All three frozen probes return the page at rank 1.
+
+
+
+2026-10-09 · 315896be240f9a95 · merged · architecture/graph.md · Record verified graph-owned coordinator setup. Supersede the stale no-ladder claim. Preserve current data and the no-backfill rule.
+2026-10-09 · 315896be240f9a95 · merged · architecture/execution.md · Record exact action bindings, the live submission port, and retained reservation ownership. Focused and full gates pass; publication follows dependency integration.
+

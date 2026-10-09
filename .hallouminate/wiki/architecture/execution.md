@@ -497,6 +497,33 @@ The full gate remains pending behind the selection-writer freeze barrier.[^fixtu
 
 [^fixture-implemented]: `task38_explicit_fixture_cure`, `task38_recovery_review`, and `task38_explicit_fixture_taste` handbacks on 2026-09-13; `tests/test_session_lifecycle.py`, `tests/test_session_failure_paths.py`, and `tests/test_session_runtime.py` in `milknado-38-tree-left-shared-workspace-and-2`.
 
+
+
+### Coordinator action and reservation guards
+
+Coordinator commands require an exact durable coordinator, provider-family, and provider-session binding before reserving a receipt.[^pr518-action-binding]
+A display or discovery link does not authorize provider input.
+The domain submission port uses identity properties and one submission method.
+The existing `RuntimeSession` implements that port without a separate wrapper or unused factory.[^pr518-live-port]
+Its method delegates to native admission and incarnation fencing.
+Uncertain submission keeps its durable receipt; retries do not submit the action again.[^pr518-action-replay]
+
+Reserved launches recheck prerequisites inside the transaction before claiming.
+Already-running retries retain their idempotent branch.[^pr518-reserved-launch]
+Launch failure retains reservation ownership while any same-node worker has no confirmed end record.
+Confirmed cleanup permits the normal failure path.[^pr518-reservation-cleanup]
+These checks preserve durable-before-submit ordering and ownership instead of relaxing them.
+
+[^pr518-action-binding]: src/milknado/domains/coordinator/commands.py:135-150; tests/coordinator/test_action_binding_guards.py:18-42.
+[^pr518-live-port]: src/milknado/domains/coordinator/commands.py:17-24,151-159; src/milknado/loop/sessions/_lifecycle.py:35-50.
+[^pr518-action-replay]: tests/coordinator/test_action_receipts.py:42-135.
+[^pr518-reserved-launch]: src/milknado/domains/graph/_execution_groups.py:191-205; tests/coordinator/test_reservation_guards.py:14-82.
+[^pr518-reservation-cleanup]: src/milknado/domains/graph/_group_reservation.py:89-118; tests/coordinator/test_reservation_guards.py:85-116.
+
+
+
+_Source: approved PR 518 guard and submission-port corrections · Updated: 2026-10-09._
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives

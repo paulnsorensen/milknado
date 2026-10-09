@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
-from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.journal import append_control_event, redact_control_text
 from milknado.domains.coordinator.model import (
     ControlEvent,
     CoordinatorSession,
@@ -123,7 +123,14 @@ def _write_turn_event(conn: sqlite3.Connection, coordinator_id: str, turn: Provi
         "INSERT INTO coordinator_events "
         + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, created_at) "
         + "VALUES (?, 'provider_turn', 'provider turn transition', ?, ?, ?, ?, ?)",
-        values,
+        (
+            coordinator_id,
+            redact_control_text(turn.identity.family),
+            redact_control_text(turn.identity.session_id),
+            redact_control_text(turn.turn_id),
+            redact_control_text(turn.status),
+            timestamp,
+        ),
     )
 
 

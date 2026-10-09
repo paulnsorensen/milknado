@@ -7,7 +7,6 @@ from typing import cast
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.coordinator.commands import (
     DispatchHandoff,
-    create_dispatch_table,
     get_dispatch_state,
     owned_dispatch_state,
     record_control_once,
@@ -135,7 +134,6 @@ class CoordinatorWorkflow:  # noqa: V102
         _ = self._owned_group(session, group_id, node_id)
         if not self._graph.goal_admission(node_id).allowed:
             raise ValueError("goal review pauses task dispatch")
-        create_dispatch_table(self._conn)
         attempt = self._graph.groups.active_attempt(group_id)
         if attempt is None:
             attempt = self._graph.groups.reserve_task(group_id, node_id, run_id)
@@ -170,7 +168,8 @@ class CoordinatorWorkflow:  # noqa: V102
         self._graph.groups.launch_reserved_task(handoff.attempt)
         with self._conn:
             _ = self._conn.execute(
-                "UPDATE coordinator_dispatches SET state = 'launched' WHERE attempt_id = ?",
+                "UPDATE coordinator_dispatches SET state = 'launched' "
+                + "WHERE attempt_id = ? AND state = 'awaiting_launch'",
                 (handoff.attempt.attempt_id,),
             )
         self._event_once(
@@ -182,7 +181,7 @@ class CoordinatorWorkflow:  # noqa: V102
                 status="running",
             ),
         )
-        return DispatchHandoff(handoff.attempt, "launched")
+        return DispatchHandoff(handoff.attempt, self._owned_attempt(session, handoff.attempt))
 
     def fail_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str

@@ -11,17 +11,6 @@ from typing import cast
 from milknado.domains.planning import PlanResult
 
 
-def _create_table(conn: sqlite3.Connection) -> None:
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_plans (
-                operation_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                result_json TEXT
-            )
-        """)
-
-
 def _decode_result(payload: str) -> PlanResult:
     values = cast(dict[str, object], json.loads(payload))
     context = values["context_path"]
@@ -43,7 +32,6 @@ def begin_plan(
 ) -> tuple[bool, PlanResult | None]:
     if not operation_id:
         raise ValueError("planning operation identity must not be empty")
-    _create_table(conn)
     with conn:
         cursor = conn.execute(
             "INSERT OR IGNORE INTO coordinator_plans (operation_id, session_id) VALUES (?, ?)",
