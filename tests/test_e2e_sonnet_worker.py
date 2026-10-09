@@ -55,7 +55,7 @@ pytestmark = [
 
 
 @pytest.fixture(autouse=True)
-def _allow_real_claude(  # pyright: ignore[reportUnusedFunction]
+def _allow_real_claude(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """This live e2e module is the one deliberate user of the real claude CLI."""

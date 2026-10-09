@@ -6,7 +6,6 @@ from milknado.domains.coordinator.commands import record_control_once
 from milknado.domains.coordinator.control_models import DecideGoalReview
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
-from milknado.domains.coordinator.persistence import create_coordinator_tables
 from milknado.domains.graph import GoalReviewDecisionRequest, GoalReviewRecord, MikadoGraph
 
 
@@ -20,7 +19,6 @@ def decide_goal_review(
         raise PermissionError("Review decisions are unavailable.")
     with graph.synchronization_lock:
         conn = graph.group_connection
-        create_coordinator_tables(conn)
         linked = cast(
             tuple[str] | None,
             conn.execute(

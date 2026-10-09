@@ -19,9 +19,12 @@ constraint solver.
 ```python
 from milknado.domains.batching import (
     plan_batches,
-    FileChange, SymbolRef,
+    FileChange,
+    SymbolRef,
     NewRelationship,
-    Batch, SymbolSpread, BatchPlan,
+    Batch,
+    SymbolSpread,
+    BatchPlan,
 )
 ```
 

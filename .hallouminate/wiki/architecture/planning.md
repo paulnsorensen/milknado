@@ -12,7 +12,8 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 1. **Build context** — `build_planning_context` (`context.py`) assembles a markdown
    prompt: goal, compact CRG architecture overview, the existing Mikado graph state, a
    batching-policy note, the v2 manifest schema + instructions, and (optionally) the spec
-   text. Written to `<root>/.milknado/planning-context.md`.
+   text. Each retained local PR #518 launch writes a unique
+   `<root>/.milknado/planning-context-*.md` file.[^goal-context]
 2. **Run the agent** — `build_planning_subprocess` (in `domains/common/agent_argv`)
    builds the argv; the agent runs as a subprocess with stdout piped.
 3. **Parse manifest** — `parse_manifest_from_output` (`manifest.py`) extracts a single
@@ -67,6 +68,18 @@ shape decisions:
   batch"), and the MCP-targeting note (require repository inspection for real hash anchors).
 - Guard: `spec_text == ""` raises — callers must pass `None` to omit the spec, never empty.
 
+
+
+## Goal planning context isolation and replay
+
+Goal planning context isolation preserves each goal's review context across distinct planner launches.[^goal-context]
+Each real `Planner.launch` writes a new retained context file.
+Another launch cannot overwrite that file through the planner's former shared filename.[^goal-context]
+A completed coordinator planning replay returns its stored `PlanResult.context_path` without starting another planner.[^goal-context-replay]
+
+These facts describe retained local corrections for PR #518.
+Publication and guard approval remain pending.
+
 ## Bridge into batching (`batching_bridge.py`)
 
 `run_batching` calls `plan_batches` with `budget=DUMB_ZONE_BUDGET` (120K) and a 10s time
@@ -120,3 +133,8 @@ a multi-batch plan holding one oversized batch passed silently. The producer-own
 fixes both. See `history/review-lessons.md` § "Review scope: diff-scoped review can't see an
 inherited encapsulation smell" and
 [easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).
+
+[^goal-context]: `src/milknado/domains/planning/planner.py:121-146` in the retained local PR #518 correction.
+[^goal-context-replay]: `src/milknado/domains/coordinator/workflow.py:70-83`; `src/milknado/domains/coordinator/plans.py:14-66` in the retained local PR #518 correction.
+
+_Source: PR #518 retained local planning-context correction, pending publication · Updated: 2026-10-08 · Supersedes: the shared planning-context.md filename claim._

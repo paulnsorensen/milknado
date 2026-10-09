@@ -13,7 +13,7 @@ import pytest
 from milknado.domains.coordinator import ControlEvent
 from milknado.domains.coordinator.journal import append_control_event, control_history
 from milknado.domains.coordinator.persistence import start_coordinator
-from milknado.domains.graph._persistence import create_tables
+from milknado.domains.graph._persistence import create_tables, migrate
 
 
 def _session(path: str) -> tuple[sqlite3.Connection, str]:
@@ -21,6 +21,7 @@ def _session(path: str) -> tuple[sqlite3.Connection, str]:
     conn.row_factory = sqlite3.Row
     _ = conn.execute("PRAGMA foreign_keys = ON")
     create_tables(conn)
+    migrate(conn)
     _ = conn.execute(
         "INSERT INTO nodes (id, description, kind, created_at) VALUES (1, 'goal', 'goal', 'now')"
     )
@@ -196,8 +197,8 @@ def test_unterminated_quoted_secret_has_bounded_redaction_time() -> None:
         [
             sys.executable,
             "-c",
-            "from milknado.domains.coordinator.journal import _redact; "
-            + "import sys; print(_redact(sys.argv[1]))",
+            "from milknado.domains.coordinator.journal import redact_control_text; "
+            + "import sys; print(redact_control_text(sys.argv[1]))",
             payload,
         ],
         capture_output=True,

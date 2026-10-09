@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import TypedDict, Unpack
 from unittest.mock import patch
 
-from click.testing import Result
-from typer.testing import CliRunner
+from typer.testing import CliRunner, Result
 
 from milknado.cli import app
 from milknado.domains.planning.planner import PlanResult

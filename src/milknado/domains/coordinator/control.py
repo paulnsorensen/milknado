@@ -31,7 +31,7 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
-from milknado.domains.coordinator.persistence import create_coordinator_tables, get_coordinator
+from milknado.domains.coordinator.persistence import get_coordinator
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
@@ -85,7 +85,6 @@ class CoordinatorControl:
                 "start_goal requires an empty session ID; other commands require a session ID"
             )
         with self._graph.synchronization_lock:
-            create_coordinator_tables(self._conn)
             if session_id and get_coordinator(self._conn, session_id) is None:
                 raise KeyError(session_id)
             fingerprint = hashlib.sha256(msgspec.json.encode(command)).hexdigest()

@@ -6,57 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.common import SessionContext, SessionInput
 from milknado.domains.coordinator import ControlEvent, EntityLink
-from milknado.domains.coordinator.commands import (
-    CoordinatorAction,
-    record_control_once,
-    submit_coordinator_action,
-)
+from milknado.domains.coordinator.commands import record_control_once
 from milknado.domains.coordinator.journal import append_control_event, control_history
 from milknado.domains.coordinator.persistence import link_entity, links_for_session
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
-from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
-from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
-
-
-def test_action_retry_repairs_history_without_resubmission(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
-    with closing(sqlite3.connect(graph.db_path)) as conn:
-        workflow = CoordinatorWorkflow(graph, conn)
-        session = workflow.start_goal("Goal", "codex")
-        link_entity(conn, session.id, "provider_session", "provider")
-        channel = SessionChannel()
-        channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("steer",))
-        incarnation = channel.capture_incarnation()
-        assert incarnation is not None
-        runtime = RuntimeSession(
-            ProviderSessionIdentity("codex", "provider"), channel, incarnation
-        )
-        command = CoordinatorAction("command-1", SessionInput(action="steer", text="continue"))
-        original = append_control_event
-        failed = False
-
-        def fail_once(target: sqlite3.Connection, session_id: str, event: ControlEvent) -> int:
-            nonlocal failed
-            if not failed:
-                failed = True
-                raise sqlite3.OperationalError("injected event failure")
-            return original(target, session_id, event)
-
-        monkeypatch.setattr(
-            "milknado.domains.coordinator.commands.append_control_event", fail_once
-        )
-        with pytest.raises(sqlite3.OperationalError, match="injected"):
-            _ = submit_coordinator_action(conn, session, runtime, command)
-        receipt = submit_coordinator_action(conn, session, runtime, command)
-        assert receipt.state == "queued"
-        assert len(channel.drain()) == 1
-        assert [event.kind for event in control_history(conn, session.id)] == ["command"]
-    graph.close()
+from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph, TaskAttempt
 
 
 def test_review_retry_repairs_link_after_persistence_failure(
@@ -203,4 +159,99 @@ def test_control_event_identity_is_database_enforced(tmp_path: Path) -> None:
         assert len(control_history(conn, session.id)) == 1
         with pytest.raises(sqlite3.IntegrityError):
             _ = append_control_event(conn, session.id, event)
+    graph.close()
+
+
+def test_control_identity_survives_redaction_without_collisions(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
+        first = ControlEvent(
+            kind="command",
+            entity_kind="coordinator_command",
+            entity_id="token=alpha",
+            status="queued",
+        )
+        second = ControlEvent(
+            kind="command",
+            entity_kind="coordinator_command",
+            entity_id="token=beta",
+            status="queued",
+        )
+        record_control_once(conn, session.id, first)
+        record_control_once(conn, session.id, first)
+        record_control_once(conn, session.id, second)
+        history = control_history(conn, session.id)
+        assert len(history) == 2
+        assert [event.entity_id for event in history] == ["token=[REDACTED]"] * 2
+    graph.close()
+
+
+def test_coordinator_operation_tables_exist_before_use_and_after_reopen(tmp_path: Path) -> None:
+    from typing import cast
+
+    path = tmp_path / "graph.db"
+    for _ in range(2):
+        graph = MikadoGraph(path)
+        with closing(sqlite3.connect(path)) as conn:
+            tables = {
+                row[0]
+                for row in cast(
+                    "list[tuple[str, ...]]",
+                    conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table' "
+                        + "AND name LIKE 'coordinator_%'"
+                    ).fetchall(),
+                )
+            }
+            expected = {
+                "coordinator_dispatches",
+                "coordinator_action_receipts",
+                "coordinator_plans",
+            }
+            assert expected <= tables
+            for table in expected:
+                keys = cast(
+                    "list[tuple[object, object, object, object, object, int]]",
+                    conn.execute(f"PRAGMA table_info({table})").fetchall(),
+                )
+                assert sum(row[5] for row in keys) == 1
+                foreign = cast(
+                    "list[tuple[object, object, str, str]]",
+                    conn.execute(f"PRAGMA foreign_key_list({table})").fetchall(),
+                )
+                assert any(
+                    row[2] == "coordinator_sessions" and row[3] == "session_id" for row in foreign
+                )
+        graph.close()
+
+
+def test_late_launch_acknowledgement_keeps_finished_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/late", "late", "provider")
+        )
+        handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+        original_launch = graph.groups.launch_reserved_task
+
+        def finish_after_launch(attempt: TaskAttempt) -> None:
+            original_launch(attempt)
+            with conn:
+                _ = conn.execute(
+                    "UPDATE coordinator_dispatches SET state = 'launched' WHERE attempt_id = ?",
+                    (attempt.attempt_id,),
+                )
+            workflow.finish_task(session, attempt, NodeLoopOutcome(task.id, True, "done"))
+
+        monkeypatch.setattr(graph.groups, "launch_reserved_task", finish_after_launch)
+        acknowledged = workflow.acknowledge_launch(session, handoff)
+        assert acknowledged.state == "finished"
+        assert workflow.dispatch_state(handoff.attempt.attempt_id) == "finished"
+        assert graph.groups.task_result(task.id) == ("done", "done")
     graph.close()

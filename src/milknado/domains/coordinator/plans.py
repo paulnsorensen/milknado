@@ -2,39 +2,39 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
-from dataclasses import asdict
 from pathlib import Path
 from typing import cast
+
+import msgspec
 
 from milknado.domains.planning import PlanResult
 
 
-def _create_table(conn: sqlite3.Connection) -> None:
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_plans (
-                operation_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                result_json TEXT
-            )
-        """)
+class _PlanReceipt(msgspec.Struct, frozen=True):
+    success: bool
+    exit_code: int
+    context_path: str | None
+    nodes_created: int
+    batch_count: int
+    oversized_count: int
+    solver_status: str
+    change_count: int
+    mega_batch_change_count: int | None
 
 
 def _decode_result(payload: str) -> PlanResult:
-    values = cast(dict[str, object], json.loads(payload))
-    context = values["context_path"]
+    receipt = msgspec.json.decode(payload, type=_PlanReceipt)
     return PlanResult(
-        success=cast(bool, values["success"]),
-        exit_code=cast(int, values["exit_code"]),
-        context_path=Path(cast(str, context)) if context is not None else None,
-        nodes_created=cast(int, values["nodes_created"]),
-        batch_count=cast(int, values["batch_count"]),
-        oversized_count=cast(int, values["oversized_count"]),
-        solver_status=cast(str, values["solver_status"]),
-        change_count=cast(int, values["change_count"]),
-        mega_batch_change_count=cast(int | None, values["mega_batch_change_count"]),
+        success=receipt.success,
+        exit_code=receipt.exit_code,
+        context_path=Path(receipt.context_path) if receipt.context_path is not None else None,
+        nodes_created=receipt.nodes_created,
+        batch_count=receipt.batch_count,
+        oversized_count=receipt.oversized_count,
+        solver_status=receipt.solver_status,
+        change_count=receipt.change_count,
+        mega_batch_change_count=receipt.mega_batch_change_count,
     )
 
 
@@ -43,7 +43,6 @@ def begin_plan(
 ) -> tuple[bool, PlanResult | None]:
     if not operation_id:
         raise ValueError("planning operation identity must not be empty")
-    _create_table(conn)
     with conn:
         cursor = conn.execute(
             "INSERT OR IGNORE INTO coordinator_plans (operation_id, session_id) VALUES (?, ?)",
@@ -66,13 +65,22 @@ def begin_plan(
 
 
 def finish_plan(conn: sqlite3.Connection, operation_id: str, result: PlanResult) -> None:
-    values = asdict(result)
-    values["context_path"] = str(result.context_path) if result.context_path else None
+    receipt = _PlanReceipt(
+        result.success,
+        result.exit_code,
+        str(result.context_path) if result.context_path else None,
+        result.nodes_created,
+        result.batch_count,
+        result.oversized_count,
+        result.solver_status,
+        result.change_count,
+        result.mega_batch_change_count,
+    )
     with conn:
         cursor = conn.execute(
             "UPDATE coordinator_plans SET result_json = ? "
             + "WHERE operation_id = ? AND result_json IS NULL",
-            (json.dumps(values), operation_id),
+            (msgspec.json.encode(receipt).decode(), operation_id),
         )
     if cursor.rowcount != 1:
         raise ValueError("planning operation result was already recorded")
