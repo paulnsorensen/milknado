@@ -42,6 +42,7 @@ class RecoveryCommandResult(msgspec.Struct, frozen=True):
 
 
 def receipt_payload(result: object) -> object:
+    payload: object = result
     match result:
         case PlanResult():
             payload = PlanCommandResult(
