@@ -31,3 +31,6 @@ CREATE_GROUP_CLAIM_TRIGGER = (
     "AND (g.active_node_id IS NOT NEW.id OR g.active_attempt_id IS NOT NEW.run_id)) "
     "BEGIN SELECT RAISE(ABORT, 'group writer admission required'); END"
 )
+
+ADD_RESERVED_NODE_STATUS = "ALTER TABLE execution_groups ADD COLUMN active_node_status TEXT"
+ADD_RESERVED_NODE_RUN_ID = "ALTER TABLE execution_groups ADD COLUMN active_node_run_id TEXT"

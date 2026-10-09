@@ -23,6 +23,7 @@ class GoalReviewRequest:
     affected_node_ids: tuple[int, ...] | None = None
     reviewer: str = ""
     assessed_at: str | None = None
+    operation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class GoalReviewRecord:
     decided_at: str | None
     decided_by: str | None
     interruption_receipts: tuple[CommandReceipt, ...] = ()
+    operation_id: str | None = None
 
     @property
     def unbounded(self) -> bool:

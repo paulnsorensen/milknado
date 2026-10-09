@@ -19,6 +19,14 @@ class EntityLink:
     entity_id: str
 
 
+@dataclass(frozen=True)
+class ProviderBinding:
+    scope_kind: str
+    scope_id: str
+    family: str
+    provider_session_id: str
+
+
 class ControlEvent(msgspec.Struct, frozen=True):
     kind: str
     text: str = ""

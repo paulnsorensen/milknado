@@ -70,7 +70,60 @@ def _record(row: object) -> GoalReviewRecord:
         assessed_at=cast(str, _value(row, "assessed_at")),
         decided_at=cast(str | None, _value(row, "decided_at")),
         decided_by=cast(str | None, _value(row, "decided_by")),
+        operation_id=cast(str | None, _value(row, "operation_id")),
     )
+
+
+_ReviewIdentity = tuple[int, str, str, str, tuple[int, ...] | None, str]
+
+
+def _matching_operation(
+    conn: sqlite3.Connection,
+    operation_id: str,
+    identity: _ReviewIdentity,
+) -> GoalReviewRecord | None:
+    known = fetchone(conn, "SELECT * FROM goal_reviews WHERE operation_id = ?", (operation_id,))
+    if known is None:
+        return None
+    record = _record(known)
+    if (
+        record.goal_id,
+        record.goal_revision,
+        record.evidence,
+        record.proposed_change,
+        record.affected_node_ids,
+        record.reviewer,
+    ) != identity:
+        raise ValueError("goal review operation identity was reused")
+    return record
+
+
+def _insert_review(
+    conn: sqlite3.Connection,
+    identity: _ReviewIdentity,
+    assessed_at: str,
+    operation_id: str | None,
+) -> int:
+    goal_id, revision, evidence, proposed_change, affected, reviewer = identity
+    cursor = conn.execute(
+        "INSERT INTO goal_reviews "
+        + "(goal_id, goal_revision, evidence, proposed_change, decision, "
+        + "affected_node_ids, reviewer, assessed_at, decided_at, decided_by, operation_id) "
+        + "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL, ?)",
+        (
+            goal_id,
+            revision,
+            evidence,
+            proposed_change,
+            None if affected is None else json.dumps(list(affected)),
+            reviewer,
+            assessed_at,
+            operation_id,
+        ),
+    )
+    if cursor.lastrowid is None:
+        raise RuntimeError("goal review insert did not return an id")
+    return cursor.lastrowid
 
 
 def request_goal_review(
@@ -85,28 +138,21 @@ def request_goal_review(
         proposed_change = _text(request.proposed_change, "proposed_change")
         reviewer = _text(request.reviewer, "reviewer")
         affected = validate_scope(conn, goal_id, request.affected_node_ids)
+        identity = (goal_id, revision, evidence, proposed_change, affected, reviewer)
+        operation_id = (
+            _text(request.operation_id, "operation_id")
+            if request.operation_id is not None
+            else None
+        )
+        if operation_id is not None:
+            known = _matching_operation(conn, operation_id, identity)
+            if known is not None:
+                return known
         latest = latest_goal_review(conn, goal_id)
         if latest is not None and latest.decision is GoalReviewDecision.PENDING:
             raise ValueError(f"goal {goal_id} already has a pending review")
         assessed_at = request.assessed_at or datetime.now(UTC).isoformat()
-        cursor = conn.execute(
-            "INSERT INTO goal_reviews "
-            + "(goal_id, goal_revision, evidence, proposed_change, decision, "
-            + "affected_node_ids, reviewer, assessed_at, decided_at, decided_by) "
-            + "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, NULL, NULL)",
-            (
-                goal_id,
-                revision,
-                evidence,
-                proposed_change,
-                None if affected is None else json.dumps(list(affected)),
-                reviewer,
-                assessed_at,
-            ),
-        )
-        if cursor.lastrowid is None:
-            raise RuntimeError("goal review insert did not return an id")
-        review_id = cursor.lastrowid
+        review_id = _insert_review(conn, identity, assessed_at, operation_id)
     row = fetchone(conn, "SELECT * FROM goal_reviews WHERE review_id = ?", (review_id,))
     if row is None:
         raise RuntimeError("goal review insert did not return a record")
@@ -177,12 +223,7 @@ def decide_goal_review(
 def _blocking_pending_review(
     conn: sqlite3.Connection, node_id: int, ancestor_ids: tuple[int, ...]
 ) -> GoalReviewRecord | None:
-    """Find a pending review, on any ancestor, whose scope covers node_id.
-
-    Mirrors READY_NODE_ADMISSION_CTE's ancestor semantics: an unbounded review
-    covers every descendant of its goal, and a bounded review covers exactly
-    its recorded affected_node_ids (validated to lie within the goal's scope).
-    """
+    """Match pending ancestor reviews by unbounded descendants or recorded node IDs."""
     if not ancestor_ids:
         return None
     placeholders = ",".join("?" for _ in ancestor_ids)

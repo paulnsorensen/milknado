@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
+import milknado.domains.graph._coordinator_schema as _coordinator_schema
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
 import milknado.domains.graph._group_schema as _group_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
@@ -232,16 +233,21 @@ MIGRATIONS: list[tuple[int, str]] = [
     (28, _group_schema.ADD_ATTEMPT_ID),
     (29, _group_schema.CREATE_GRAPH_ALTERNATIVES),
     (30, _group_schema.CREATE_GROUP_CLAIM_TRIGGER),
+    (31, _coordinator_schema.CREATE_PROVIDER_BINDINGS),
+    (32, _coordinator_schema.CREATE_TURN_EVENTS),
+    (33, _coordinator_schema.CREATE_UNKNOWN_TURN_INDEX),
+    (34, _group_schema.ADD_RESERVED_NODE_STATUS),
+    (35, _group_schema.ADD_RESERVED_NODE_RUN_ID),
+    (36, _goal_review_schema.ADD_REVIEW_OPERATION_ID),
+    (37, _goal_review_schema.CREATE_REVIEW_OPERATION_INDEX),
+    (38, _coordinator_schema.CREATE_DISPATCHES),
+    (39, _coordinator_schema.CREATE_ACTION_RECEIPTS),
+    (40, _coordinator_schema.CREATE_PLANS),
+    *_coordinator_schema.CORE_MIGRATIONS,
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
-
-# Fresh databases start at user_version=0, so migrate() always runs against them.
-# create_tables() covers most of the current schema but NOT node_reviews — step v2
-# is what creates that table, on old and fresh databases alike. Objects it does
-# create (e.g. nodes.archived_at) make the matching step redundant, so an
-# ALTER ... ADD COLUMN whose column is already present is skipped (still stamping
-# user_version) rather than failing with "duplicate column name".
+# Fresh databases run the ladder; existing ADD COLUMN targets are skipped.
 _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE)
 
 
@@ -743,12 +749,7 @@ def set_pid(conn: sqlite3.Connection, node_id: int, run_id: str, pid: int) -> No
 def set_worktree(
     conn: sqlite3.Connection, node_id: int, run_id: str, worktree_path: str, branch_name: str
 ) -> None:
-    """Attach worktree/branch to a node without a status transition, gated on the
-    fence (current run_id). Used by the executor when the node was already claimed
-    RUNNING by the dispatching parent: re-marking RUNNING would be an illegal
-    RUNNING -> RUNNING transition, so only the worktree metadata is written, and
-    only if this run still owns the node.
-    """
+    """Attach worktree metadata only while this run owns the node."""
     cur = conn.execute(
         "UPDATE nodes SET worktree_path = ?, branch_name = ? WHERE id = ? AND run_id = ?",
         (worktree_path, branch_name, node_id, run_id),

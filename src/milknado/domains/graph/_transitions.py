@@ -1,9 +1,4 @@
-"""Node status state-machine transitions for MikadoGraph.
-
-Free functions taking a connection, mirroring `_persistence.py` / `_mutations.py`.
-Every status change is validated against VALID_TRANSITIONS before any write, so
-an illegal move raises InvalidTransition rather than corrupting the row.
-"""
+"""Node status state-machine transitions for MikadoGraph."""
 
 from __future__ import annotations
 
@@ -22,6 +17,7 @@ from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_CTE,
     READY_NODE_ADMISSION_FILTER,
 )
+from milknado.domains.graph._group_reservation import claim_reservation_allows
 from milknado.domains.graph._sqlite_rows import fetchone
 
 _NO_OPEN_WORKERS = (
@@ -68,7 +64,12 @@ def _apply_transition(
     cur = conn.execute(sql, params)
     if owns_transaction:
         conn.commit()
-    if cur.rowcount == 0:
+    changed = (
+        cur.rowcount
+        if cur.rowcount >= 0
+        else cast(int, conn.execute("SELECT changes()").fetchone()[0])
+    )
+    if changed == 0:
         if lost_fence_is_noop:
             return False
         if admission_guard:
@@ -133,7 +134,8 @@ def mark_running(
         + "worktree_path = ?, branch_name = ?, run_id = ? WHERE id = ? AND status = ? AND "
         + READY_NODE_ADMISSION_FILTER
         + " AND "
-        + _NO_OPEN_WORKERS_ALIASED,
+        + _NO_OPEN_WORKERS_ALIASED
+        + " AND NOT EXISTS (SELECT 1 FROM execution_groups WHERE active_node_id = n.id)",
         (NodeStatus.RUNNING.value, worktree_path, branch_name, run_id, node_id, current.value),
         admission_guard=True,
     )
@@ -152,10 +154,6 @@ def mark_pending(conn: sqlite3.Connection, node_id: int) -> None:
         (NodeStatus.PENDING.value, node_id, current.value),
     )
 
-
-# --- Atomic optimistic claim / reclaim / fence ---------------------------------
-# Claims hold SQLite's writer lock across the capacity count and guarded UPDATE.
-# Other fenced transitions rely on their conditional UPDATE for cross-process safety.
 
 _CLAIMABLE = ("pending", "failed", "blocked")
 
@@ -186,12 +184,17 @@ def claim_node(
     concurrency_limit: int,
     *,
     pid: int | None = None,
+    group_reservation: bool = False,
 ) -> bool:
     """Claim a task under SQLite's writer lock, with its dispatch PID fence."""
     owns_transaction = not conn.in_transaction
     if owns_transaction:
         _ = conn.execute("BEGIN IMMEDIATE")
     try:
+        if not claim_reservation_allows(conn, node_id, run_id, group_reservation):
+            if owns_transaction:
+                conn.commit()
+            return False
         node = fetchone(
             conn,
             READY_NODE_ADMISSION_CTE

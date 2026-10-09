@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import cast
 from uuid import uuid4
 
-from milknado.domains.coordinator.model import CoordinatorSession, EntityLink
+from milknado.domains.coordinator.model import CoordinatorSession, EntityLink, ProviderBinding
 from milknado.domains.graph import GoalReviewSubjectError, top_level_goal
 
 _LINK_KINDS = frozenset(
@@ -20,51 +20,6 @@ _LINK_KINDS = frozenset(
         "recovery",
     }
 )
-
-
-def create_coordinator_tables(conn: sqlite3.Connection) -> None:
-    """Create the coordinator store in the graph database."""
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_sessions (
-                id TEXT PRIMARY KEY,
-                goal_id INTEGER NOT NULL UNIQUE REFERENCES nodes(id) ON DELETE CASCADE,
-                provider TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_links (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                kind TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                UNIQUE (session_id, kind, entity_id)
-            )
-        """)
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_events (
-                seq INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                kind TEXT NOT NULL,
-                text TEXT NOT NULL,
-                entity_kind TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                duration_ms INTEGER,
-                created_at TEXT NOT NULL,
-                expires_at TEXT
-            )
-        """)
-        _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_coordinator_events_session "
-            + "ON coordinator_events(session_id, seq)"
-        )
-        _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_coordinator_events_expiry "
-            + "ON coordinator_events(expires_at) WHERE expires_at IS NOT NULL"
-        )
 
 
 def _session(row: tuple[str, int, str, str]) -> CoordinatorSession:
@@ -103,7 +58,6 @@ def start_coordinator(conn: sqlite3.Connection, goal_id: int, provider: str) -> 
     if not provider.strip():
         raise ValueError("provider must not be empty")
     _require_top_level_goal(conn, goal_id)
-    create_coordinator_tables(conn)
     with conn:
         _ = conn.execute(
             "INSERT OR IGNORE INTO coordinator_sessions (id, goal_id, provider, created_at) "
@@ -146,3 +100,44 @@ def links_for_session(conn: sqlite3.Connection, session_id: str) -> tuple[Entity
         ).fetchall(),
     )
     return tuple(EntityLink(str(row[0]), str(row[1])) for row in rows)
+
+
+def bind_provider_session(  # noqa: V103
+    conn: sqlite3.Connection, coordinator_id: str, binding: ProviderBinding
+) -> None:
+    if binding.scope_kind not in {"coordinator", "execution_group"}:
+        raise ValueError("invalid provider binding scope")
+    if binding.scope_kind == "coordinator" and binding.scope_id != coordinator_id:
+        raise ValueError("coordinator provider binding has wrong scope identity")
+    if not binding.scope_id or not binding.provider_session_id:
+        raise ValueError("provider binding identities must not be empty")
+    if binding.family not in {"claude", "codex"}:
+        raise ValueError("unsupported provider family")
+    with conn:
+        _ = conn.execute(
+            "INSERT INTO coordinator_provider_bindings "
+            + "(coordinator_id, scope_kind, scope_id, provider_family, provider_session_id) "
+            + "VALUES (?, ?, ?, ?, ?)",
+            (
+                coordinator_id,
+                binding.scope_kind,
+                binding.scope_id,
+                binding.family,
+                binding.provider_session_id,
+            ),
+        )
+
+
+def provider_bindings_for_session(
+    conn: sqlite3.Connection, coordinator_id: str
+) -> tuple[ProviderBinding, ...]:
+    rows = cast(
+        list[tuple[str, str, str, str]],
+        conn.execute(
+            "SELECT scope_kind, scope_id, provider_family, provider_session_id "
+            + "FROM coordinator_provider_bindings WHERE coordinator_id = ? "
+            + "ORDER BY CASE scope_kind WHEN 'coordinator' THEN 0 ELSE 1 END, scope_id",
+            (coordinator_id,),
+        ).fetchall(),
+    )
+    return tuple(ProviderBinding(*row) for row in rows)

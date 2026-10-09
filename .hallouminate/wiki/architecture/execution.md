@@ -497,6 +497,51 @@ The full gate remains pending behind the selection-writer freeze barrier.[^fixtu
 
 [^fixture-implemented]: `task38_explicit_fixture_cure`, `task38_recovery_review`, and `task38_explicit_fixture_taste` handbacks on 2026-09-13; `tests/test_session_lifecycle.py`, `tests/test_session_failure_paths.py`, and `tests/test_session_runtime.py` in `milknado-38-tree-left-shared-workspace-and-2`.
 
+
+
+### Coordinator action and reservation guards
+
+Coordinator commands require an exact durable coordinator, provider-family, and provider-session binding before reserving a receipt.[^pr518-action-binding]
+A display or discovery link does not authorize provider input.
+Provider binding is a separate lifecycle operation; discovery alone does not establish recovery or action authority.[^pr518-explicit-binding]
+Mixed-provider recovery keeps the coordinator family separate from the execution-group family.
+Do not infer an execution-group provider family from `CoordinatorSession.provider`; `GroupWorkspace` contains no family field.[^pr518-mixed-binding]
+The domain submission port uses identity properties and one submission method.
+The existing `RuntimeSession` implements that port without a separate wrapper or unused factory.[^pr518-live-port]
+Its method delegates to native admission and incarnation fencing.
+Uncertain submission keeps its durable receipt; retries do not submit the action again.[^pr518-action-replay]
+
+Reserved launches recheck prerequisites inside the transaction before claiming.
+Already-running retries retain their idempotent branch.[^pr518-reserved-launch]
+Launch failure retains reservation ownership while any same-node worker has no confirmed end record.
+Confirmed cleanup permits the normal failure path.[^pr518-reservation-cleanup]
+These checks preserve durable-before-submit ordering and ownership instead of relaxing them.
+
+[^pr518-action-binding]: src/milknado/domains/coordinator/commands.py:135-150; tests/coordinator/test_action_binding_guards.py:18-42.
+[^pr518-live-port]: src/milknado/domains/coordinator/commands.py:17-24,151-159; src/milknado/loop/sessions/_lifecycle.py:35-50.
+[^pr518-action-replay]: tests/coordinator/test_action_receipts.py:42-135.
+[^pr518-reserved-launch]: src/milknado/domains/graph/_execution_groups.py:191-205; tests/coordinator/test_reservation_guards.py:14-82.
+[^pr518-reservation-cleanup]: src/milknado/domains/graph/_group_reservation.py:89-118; tests/coordinator/test_reservation_guards.py:85-116.
+
+
+
+_Source: approved PR 518 guard and submission-port corrections · Updated: 2026-10-09._
+
+
+
+Launch failure records a terminal group-task result once no unresolved worker remains.
+Admission does not overwrite terminal results or skip a failed predecessor.[^pr518-terminal-group]
+This contract does not promise in-place relaunch.
+Graph forking creates an isolated alternative and drops external parent links.
+It is not a verified coordinator retry path.[^pr518-fork-limit]
+
+[^pr518-explicit-binding]: src/milknado/domains/coordinator/workflow.py:118-119; src/milknado/domains/coordinator/recovery.py:234-235; tests/coordinator/test_recovery.py:66-70; tests/coordinator/test_workflow.py:129-144.
+[^pr518-mixed-binding]: tests/coordinator/test_recovery.py:73-107; src/milknado/domains/graph/_group_models.py:7-10.
+[^pr518-terminal-group]: src/milknado/domains/graph/_group_reservation.py:33-43,89-118; tests/test_execution_groups.py:80-91; tests/coordinator/test_reservation_guards.py:109-115.
+[^pr518-fork-limit]: src/milknado/domains/graph/_group_fork.py:1-65.
+
+_Source: current-head PR 518 lifecycle feedback and existing source contracts · Updated: 2026-10-09._
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives

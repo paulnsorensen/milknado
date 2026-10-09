@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
+from milknado.domains.common import NodeKind
 from milknado.domains.planning.batching_bridge import (
     apply_batches_to_graph,
     run_batching,
@@ -65,6 +67,7 @@ class Planner:
         project_root: Path,
         *,
         spec_path: Path | None = None,
+        target_goal_id: int | None = None,
     ) -> PlanResult:
         spec_text = _read_spec(spec_path)
         crg, crg_ok = _safe_ensure_crg(self._crg, project_root)
@@ -101,6 +104,7 @@ class Planner:
             manifest,
             project_root,
             crg if crg_ok else None,
+            target_goal_id,
         )
         return PlanResult(
             success=process.exit_code == 0,
@@ -128,20 +132,35 @@ class Planner:
             spec_text=spec_text,
             prepend=self._prompt_prepend,
         )
-        context_path = project_root / ".milknado" / "planning-context.md"
-        context_path.parent.mkdir(parents=True, exist_ok=True)
-        _ = context_path.write_text(context, encoding="utf-8")
-        return context_path
+        context_dir = project_root / ".milknado"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="planning-context-",
+            suffix=".md",
+            dir=context_dir,
+            delete=False,
+        ) as context_file:
+            _ = context_file.write(context)
+            return Path(context_file.name)
 
     def _apply_manifest(
         self,
         manifest: PlanChangeManifest,
         project_root: Path,
         crg: CrgPort | None,
+        target_goal_id: int | None,
     ) -> tuple[BatchPlan, int]:
         plan = run_batching(manifest, crg, project_root)
-        existing_root = self._graph.get_root()
-        parent_id = existing_root.id if existing_root is not None else None
+        if target_goal_id is not None:
+            target = self._graph.get_node(target_goal_id)
+            if target is None or target.kind is not NodeKind.GOAL:
+                raise ValueError("planning target must be an existing goal")
+            parent_id = target_goal_id
+        else:
+            existing_root = self._graph.get_root()
+            parent_id = existing_root.id if existing_root is not None else None
         created = apply_batches_to_graph(
             self._graph,
             plan,

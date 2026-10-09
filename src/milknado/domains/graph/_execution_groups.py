@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import AbstractContextManager, closing
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
@@ -12,8 +11,23 @@ from uuid import uuid4
 
 from milknado.domains.common import NodeStatus
 from milknado.domains.graph._group_fork import clone_alternative
+from milknado.domains.graph._group_models import (
+    ExecutionGroup,
+    GroupPlan,
+    GroupWorkspace,
+    TaskAttempt,
+    TaskOutcome,
+)
 from milknado.domains.graph._group_policy import validate_membership, validate_task_prerequisites
+from milknado.domains.graph._group_reservation import (
+    admit_writer,
+    fail_reservation,
+    reserved_workspace,
+)
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
+from milknado.domains.graph.goal_review import GoalAdmission
+
+__all__ = ["ExecutionGroup", "ExecutionGroupStore", "GroupWorkspace", "TaskAttempt", "TaskOutcome"]
 
 
 class _GroupGraph(Protocol):
@@ -28,52 +42,10 @@ class _GroupGraph(Protocol):
 
     def group_notifications(self) -> AbstractContextManager[None]: ...
 
-    def claim_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
-    def release(self, node_id: int, run_id: str) -> bool: ...
-    def set_worktree(
-        self, node_id: int, run_id: str, worktree_path: str, branch_name: str
-    ) -> None: ...
+    def claim_group_node(self, node_id: int, run_id: str, *, now: str) -> bool: ...
+    def goal_admission(self, node_id: int) -> GoalAdmission: ...
     def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> bool: ...
     def mark_blocked_fenced(self, node_id: int, run_id: str) -> bool: ...
-
-
-@dataclass(frozen=True)
-class GroupWorkspace:
-    worktree_path: str
-    branch_name: str
-    provider_session_id: str
-
-
-@dataclass(frozen=True)
-class ExecutionGroup:
-    id: str
-    graph_id: str
-    worktree_path: str
-    branch_name: str
-    provider_session_id: str
-    source_group_id: str | None = None
-
-
-@dataclass(frozen=True)
-class TaskOutcome:
-    status: str
-    result: str
-
-
-@dataclass(frozen=True)
-class TaskAttempt:
-    group_id: str
-    node_id: int
-    run_id: str
-    attempt_id: str
-
-
-@dataclass(frozen=True)
-class _GroupPlan:
-    graph_id: str
-    tasks: tuple[int, ...]
-    workspace: GroupWorkspace
-    source_group_id: str | None = None
 
 
 class ExecutionGroupStore:
@@ -89,7 +61,7 @@ class ExecutionGroupStore:
         return conn
 
     @staticmethod
-    def _persist(conn: sqlite3.Connection, plan: _GroupPlan) -> ExecutionGroup:
+    def _persist(conn: sqlite3.Connection, plan: GroupPlan) -> ExecutionGroup:
         workspace = plan.workspace
         if not all(
             (
@@ -142,7 +114,7 @@ class ExecutionGroupStore:
     ) -> ExecutionGroup:
         with self._graph.synchronization_lock, closing(self._connect()) as conn, conn:
             _ = conn.execute("BEGIN IMMEDIATE")
-            return self._persist(conn, _GroupPlan(graph_id, tasks, workspace))
+            return self._persist(conn, GroupPlan(graph_id, tasks, workspace))
 
     def fork(self, source_group_id: str, workspace: GroupWorkspace) -> ExecutionGroup:
         with self._graph.synchronization_lock, closing(self._connect()) as conn, conn:
@@ -157,7 +129,7 @@ class ExecutionGroupStore:
             ):
                 raise ValueError("fork must have distinct workspace identities")
             graph_id, tasks = clone_alternative(conn, source.id, source.graph_id)
-            return self._persist(conn, _GroupPlan(graph_id, tasks, workspace, source.id))
+            return self._persist(conn, GroupPlan(graph_id, tasks, workspace, source.id))
 
     def get(self, group_id: str) -> ExecutionGroup | None:
         with closing(self._connect()) as conn:
@@ -187,47 +159,79 @@ class ExecutionGroupStore:
             )
         return tuple(cast(int, row[0]) for row in rows)
 
-    @staticmethod
-    def _admit_writer(
-        conn: sqlite3.Connection, group_id: str, node_id: int, run_id: str
-    ) -> tuple[TaskAttempt, GroupWorkspace]:
-        group = fetchone(
-            conn,
-            "SELECT active_run_id, worktree_path, branch_name, provider_session_id "
-            + "FROM execution_groups WHERE id = ?",
-            (group_id,),
+    def for_task(self, node_id: int) -> ExecutionGroup | None:
+        with closing(self._connect()) as conn:
+            row = fetchone(
+                conn,
+                "SELECT group_id FROM execution_group_tasks WHERE node_id = ?",
+                (node_id,),
+            )
+        return self.get(cast(str, row[0])) if row is not None else None
+
+    def active_attempt(self, group_id: str) -> TaskAttempt | None:
+        with closing(self._connect()) as conn:
+            row = fetchone(
+                conn,
+                "SELECT active_node_id, active_run_id, active_attempt_id "
+                + "FROM execution_groups WHERE id = ?",
+                (group_id,),
+            )
+        if row is None or row[2] is None:
+            return None
+        return TaskAttempt(group_id, cast(int, row[0]), cast(str, row[1]), cast(str, row[2]))
+
+    def reserve_task(self, group_id: str, node_id: int, run_id: str) -> TaskAttempt:
+        if not run_id:
+            raise ValueError("run identity must be nonempty")
+        with self._graph.synchronization_lock, closing(self._connect()) as conn, conn:
+            _ = conn.execute("BEGIN IMMEDIATE")
+            attempt, _ = admit_writer(conn, group_id, node_id, run_id)
+            return attempt
+
+    def launch_reserved_task(self, attempt: TaskAttempt) -> None:
+        with self._graph.synchronization_lock, self._graph.group_notifications():
+            conn = self._graph.group_connection
+            with conn:
+                _ = conn.execute("BEGIN IMMEDIATE")
+                workspace = reserved_workspace(conn, attempt)
+                if not self._graph.goal_admission(attempt.node_id).allowed:
+                    raise ValueError("goal review pauses task launch")
+                row = fetchone(
+                    conn, "SELECT status, run_id FROM nodes WHERE id = ?", (attempt.node_id,)
+                )
+                if row is not None and (row[0], row[1]) == ("running", attempt.attempt_id):
+                    return
+                validate_task_prerequisites(conn, attempt.group_id, attempt.node_id)
+                self._claim_task(conn, attempt, workspace)
+
+    def _claim_task(
+        self, conn: sqlite3.Connection, attempt: TaskAttempt, workspace: GroupWorkspace
+    ) -> None:
+        if not self._graph.claim_group_node(
+            attempt.node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
+        ):
+            raise ValueError("execution group task is not ready")
+        cursor = conn.execute(
+            "UPDATE nodes SET worktree_path = ?, branch_name = ? "
+            + "WHERE id = ? AND run_id = ? AND status = 'running'",
+            (
+                workspace.worktree_path,
+                workspace.branch_name,
+                attempt.node_id,
+                attempt.attempt_id,
+            ),
         )
-        if group is None:
-            raise ValueError("execution group does not exist")
-        if group[0] is not None:
-            raise ValueError("execution group already has an active writer")
-        member = fetchone(
-            conn,
-            "SELECT position, status FROM execution_group_tasks "
-            + "WHERE group_id = ? AND node_id = ?",
-            (group_id, node_id),
-        )
-        if member is None:
-            raise ValueError("task is not an execution group member")
-        if member[1] is not None:
-            raise ValueError("execution group task already completed")
-        validate_task_prerequisites(conn, group_id, node_id)
-        predecessor = fetchone(
-            conn,
-            "SELECT 1 FROM execution_group_tasks WHERE group_id = ? "
-            + "AND position < ? AND status IS NOT 'done' LIMIT 1",
-            (group_id, cast(int, member[0])),
-        )
-        if predecessor is not None:
-            raise ValueError("execution group predecessor has not completed")
-        attempt = TaskAttempt(group_id, node_id, run_id, uuid4().hex)
-        _ = conn.execute(
-            "UPDATE execution_groups SET active_node_id = ?, active_run_id = ?, "
-            + "active_attempt_id = ? WHERE id = ?",
-            (node_id, run_id, attempt.attempt_id, group_id),
-        )
-        workspace = GroupWorkspace(cast(str, group[1]), cast(str, group[2]), cast(str, group[3]))
-        return attempt, workspace
+        if cursor.rowcount != 1:
+            raise ValueError("execution group writer fence lost")
+
+    def fail_reserved_task(self, attempt: TaskAttempt, reason: str) -> None:
+        if not reason:
+            raise ValueError("launch failure reason must be nonempty")
+        with self._graph.synchronization_lock, self._graph.group_notifications():
+            conn = self._graph.group_connection
+            with conn:
+                _ = conn.execute("BEGIN IMMEDIATE")
+                fail_reservation(conn, attempt, reason)
 
     def start_task(self, group_id: str, node_id: int, run_id: str) -> TaskAttempt:  # noqa: V105
         if not run_id:
@@ -236,18 +240,8 @@ class ExecutionGroupStore:
             conn = self._graph.group_connection
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
-                attempt, workspace = self._admit_writer(conn, group_id, node_id, run_id)
-                if not self._graph.claim_node(
-                    node_id, attempt.attempt_id, now=datetime.now(UTC).isoformat()
-                ):
-                    raise ValueError("execution group task is not ready")
-                cursor = conn.execute(
-                    "UPDATE nodes SET worktree_path = ?, branch_name = ? "
-                    + "WHERE id = ? AND run_id = ? AND status = 'running'",
-                    (workspace.worktree_path, workspace.branch_name, node_id, attempt.attempt_id),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("execution group writer fence lost")
+                attempt, workspace = admit_writer(conn, group_id, node_id, run_id)
+                self._claim_task(conn, attempt, workspace)
                 return attempt
 
     def finish_task(self, attempt: TaskAttempt, outcome: TaskOutcome) -> None:  # noqa: V105
@@ -257,17 +251,7 @@ class ExecutionGroupStore:
             conn = self._graph.group_connection
             with conn:
                 _ = conn.execute("BEGIN IMMEDIATE")
-                writer = fetchone(
-                    conn,
-                    "SELECT active_node_id, active_run_id FROM execution_groups "
-                    + "WHERE id = ? AND active_attempt_id = ?",
-                    (attempt.group_id, attempt.attempt_id),
-                )
-                if writer is None or (writer[0], writer[1]) != (
-                    attempt.node_id,
-                    attempt.run_id,
-                ):
-                    raise ValueError("execution group writer fence lost")
+                _ = reserved_workspace(conn, attempt)
                 if outcome.status == "blocked":
                     landed = self._graph.mark_blocked_fenced(attempt.node_id, attempt.attempt_id)
                 else:
@@ -282,7 +266,8 @@ class ExecutionGroupStore:
                 )
                 _ = conn.execute(
                     "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
-                    + "active_attempt_id = NULL WHERE id = ? AND active_attempt_id = ?",
+                    + "active_attempt_id = NULL, active_node_status = NULL, "
+                    + "active_node_run_id = NULL WHERE id = ? AND active_attempt_id = ?",
                     (attempt.group_id, attempt.attempt_id),
                 )
 

@@ -3,6 +3,7 @@ from milknado.domains.coordinator.model import (
     ControlRecord,
     CoordinatorSession,
     EntityLink,
+    ProviderBinding,
 )
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "ControlRecord",
     "CoordinatorSession",
     "EntityLink",
+    "ProviderBinding",
 ]
