@@ -31,12 +31,14 @@ deposit channel, UNIQUE `(run_id, seq)` — closes #122).
 server both write the same db concurrently, so the busy window is explicit.
 `create_tables` runs on every open but short-circuits: a `sqlite_master` probe
 for the `nodes` table skips the `executescript` (one batch of `CREATE TABLE IF
-NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) once the db is initialized. The full
-schema — all `nodes` columns, `edges`, `file_ownership`, `plan_state`,
-`batch_plans`, `runs`, `run_messages`, and `idx_nodes_wiki_ref` — is declared
-inline in that one script with **no `ALTER TABLE` migration ladder**: a
-deliberate clean cut (pre-release "No Migration Code" rule), so the old
-`ensure_schema` additive-migration step was removed entirely. `close()` runs
+NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) once the db is initialized.
+
+The base script creates the main graph tables and indexes.
+Graph initialization also runs the graph-owned `MIGRATIONS` ladder.[^graph-current-setup]
+This forward-only setup creates current-schema objects on fresh databases.
+It does not authorize historical-data backfills or release-compatibility transformations.[^graph-no-backfill]
+
+`close()` runs
 `PRAGMA wal_checkpoint(TRUNCATE)` so a non-last-connection close folds the WAL
 tail into the main `.db` — without it a tool call's committed writes could be
 lost on container reclaim before the WAL checkpoints.
@@ -79,6 +81,27 @@ Lifecycle semantics live in [[execution]]; the repo invariants live here:
   cannot mask the owner's terminal row.
 - Connections are **not cross-thread**: the async worker thread and the
   detached runner each open their own graph for the terminal write.
+
+
+
+### Coordinator schema ownership
+
+Fresh graph initialization creates the complete current coordinator schema before session startup.[^pr518-core-schema]
+The ladder registers core sessions, links, events, and indexes in steps 41–46.
+The event definition includes `operation_hash`; later session startup does not add the column.[^pr518-core-schema]
+Moving the current definitions avoids an `ALTER` step against a table that does not yet exist.
+The change preserves existing keys, foreign keys, indexes, and journal identity.
+It adds no historical-data transformation or compatibility helper.
+Fresh-graph and reopen tests verify the column, required objects, and exact current schema version.[^pr518-schema-tests]
+
+[^graph-current-setup]: AGENTS.md:114-122; src/milknado/domains/graph/_persistence.py:261-301.
+[^graph-no-backfill]: AGENTS.md:109-122.
+[^pr518-core-schema]: src/milknado/domains/graph/_coordinator_schema.py:3-54; src/milknado/domains/graph/_persistence.py:243-249; src/milknado/domains/coordinator/persistence.py:58-79.
+[^pr518-schema-tests]: tests/coordinator/test_schema_setup.py:29-69.
+
+
+
+_Source: approved PR 518 correction and cited source/tests · Updated: 2026-10-09 · Supersedes: the stale no-migration-ladder claim._
 
 ## Module split
 

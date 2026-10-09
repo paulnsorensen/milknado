@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import TypedDict, cast
 
-import milknado.domains.graph._coordinator_recovery_schema as _coordinator_recovery_schema
+import milknado.domains.graph._coordinator_schema as _coordinator_schema
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
 import milknado.domains.graph._group_schema as _group_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
@@ -230,17 +230,21 @@ MIGRATIONS: list[tuple[int, str]] = [
     (28, _group_schema.ADD_ATTEMPT_ID),
     (29, _group_schema.CREATE_GRAPH_ALTERNATIVES),
     (30, _group_schema.CREATE_GROUP_CLAIM_TRIGGER),
-    (31, _coordinator_recovery_schema.CREATE_PROVIDER_BINDINGS),
-    (32, _coordinator_recovery_schema.CREATE_TURN_EVENTS),
-    (33, _coordinator_recovery_schema.CREATE_UNKNOWN_TURN_INDEX),
+    (31, _coordinator_schema.CREATE_PROVIDER_BINDINGS),
+    (32, _coordinator_schema.CREATE_TURN_EVENTS),
+    (33, _coordinator_schema.CREATE_UNKNOWN_TURN_INDEX),
     (34, _group_schema.ADD_RESERVED_NODE_STATUS),
     (35, _group_schema.ADD_RESERVED_NODE_RUN_ID),
     (36, _goal_review_schema.ADD_REVIEW_OPERATION_ID),
     (37, _goal_review_schema.CREATE_REVIEW_OPERATION_INDEX),
-    (38, "ALTER TABLE runs ADD COLUMN verification_status TEXT"),
-    (39, "ALTER TABLE runs ADD COLUMN verified_at TEXT"),
+    (38, _coordinator_schema.CREATE_DISPATCHES),
+    (39, _coordinator_schema.CREATE_ACTION_RECEIPTS),
+    (40, _coordinator_schema.CREATE_PLANS),
+    *_coordinator_schema.CORE_MIGRATIONS,
+    (48, "ALTER TABLE runs ADD COLUMN verification_status TEXT"),
+    (49, "ALTER TABLE runs ADD COLUMN verified_at TEXT"),
     (
-        40,
+        50,
         "CREATE TABLE IF NOT EXISTS coordinator_plan_proposals ("
         + "id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) "
         + "ON DELETE CASCADE, manifest_json TEXT NOT NULL, context_path TEXT NOT NULL, "

@@ -60,7 +60,7 @@ _SKIP_DIRS = frozenset(
 
 class CrgAdapter:
     def __init__(self, project_root: Path) -> None:
-        self._root: Path = project_root
+        self._root: Path = project_root.resolve()
         self._store: GraphStore | None = None
 
     def _crg_dir(self) -> Path:
@@ -117,13 +117,13 @@ class CrgAdapter:
             ) from exc
 
     def build_graph(self, project_root: Path) -> None:
-        self._root = project_root
+        self._root = project_root.resolve()
         self._store = None
         _ = self._run_crg("build")
         _ = self._get_store()
 
     def ensure_graph(self, project_root: Path) -> None:
-        self._root = project_root
+        self._root = project_root.resolve()
         self._store = None
         if not self._is_built():
             _ = self._run_crg("build")

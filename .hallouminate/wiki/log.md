@@ -50,3 +50,28 @@
 
 2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
 
+
+
+2026-10-08 · 58f3da859dc553e5 · merged · architecture/graph-read-port.md · Record retained local root-first snapshot hydration through public graph.get_nodes. Preserve descendant claim fields, pending publication, and schema ordering. All three frozen probes return the page at rank 1.
+2026-10-08 · ecca3a51b4180ee5 · merged · architecture/planning.md · Record retained local unique planning-context files and completed-operation replay. Supersede the shared filename claim; preserve pending publication and guard approval. All three frozen probes return the page at rank 1.
+
+
+
+2026-10-09 · 315896be240f9a95 · merged · architecture/graph.md · Record verified graph-owned coordinator setup. Supersede the stale no-ladder claim. Preserve current data and the no-backfill rule.
+2026-10-09 · 315896be240f9a95 · merged · architecture/execution.md · Record exact action bindings, the live submission port, and retained reservation ownership. Focused and full gates pass; publication follows dependency integration.
+
+- 2026-10-08 · `1f36991176fcae5d` · merged · `architecture/entry-points.md` · Record the released CRG FastMCP constraint and locked-install checks. All frozen retrieval probes pass.
+- 2026-10-08 · `1f36991176fcae5d` · new-page · `sources/code-review-graph.md` · Preserve PyPI metadata provenance and resolver evidence limits. Exact source retrieval ranks first.
+
+
+
+2026-10-08 · a292776dfa8bc0d7 · merged · architecture/entry-points.md · Use active voice for the executable declaration. Preserve names, targets, page identity, and dependency facts. All frozen retrieval probes pass.
+
+
+
+2026-10-09 · ff588573ffce3aa1 · merged · architecture/execution.md · Preserve mixed-provider bindings and terminal group-task failure contracts. Do not infer coordinator recovery from isolated graph alternatives. Current code-head gate and nine CI checks pass.
+
+
+
+2026-10-09 · e5c4cc23c2dcc72a · merged · architecture/graph-read-port.md · Record approved command boundaries and web receipt schema step47 after dependency integration. Full gate and121focused tests pass; publication remains pending. Frozen probes rank the page first.
+

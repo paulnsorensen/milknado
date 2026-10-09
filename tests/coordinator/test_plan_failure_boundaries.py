@@ -9,10 +9,7 @@ import pytest
 from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.common.protocols import CrgPort
 from milknado.domains.coordinator.model import CoordinatorSession
-from milknado.domains.coordinator.persistence import (
-    create_coordinator_tables,
-    start_coordinator,
-)
+from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
 from milknado.domains.coordinator.plans import (
     PlanProposalRecord,
@@ -47,7 +44,6 @@ def _planning_state(tmp_path: Path) -> tuple[MikadoGraph, CoordinatorPlanning, C
     graph = MikadoGraph(tmp_path / "graph.db")
     goal = graph.add_node("Deliver", spec=NodeSpec(kind=NodeKind.GOAL))
     conn = graph.group_connection
-    create_coordinator_tables(conn)
     session = start_coordinator(conn, goal.id, "codex")
     return graph, CoordinatorPlanning(graph, conn), session
 

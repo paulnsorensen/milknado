@@ -4,35 +4,30 @@ import hashlib
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast
+from typing import Protocol, cast
 
 import msgspec
 
 from milknado.domains.common import SessionInput
-from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.journal import append_control_event, operation_identity
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.graph import TaskAttempt
-from milknado.loop.sessions import RuntimeSession, submit_runtime_action
+
+
+class _ActionSession(Protocol):
+    @property
+    def family(self) -> str: ...
+
+    @property
+    def provider_session_id(self) -> str: ...
+
+    def submit_action(self, action: SessionInput) -> str: ...
 
 
 @dataclass(frozen=True)
 class DispatchHandoff:
     attempt: TaskAttempt
     state: str
-
-
-def create_dispatch_table(conn: sqlite3.Connection) -> None:
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_dispatches (
-                attempt_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                group_id TEXT NOT NULL,
-                node_id INTEGER NOT NULL,
-                run_id TEXT NOT NULL,
-                state TEXT NOT NULL
-            )
-        """)
 
 
 def owned_dispatch_state(conn: sqlite3.Connection, session_id: str, attempt: TaskAttempt) -> str:
@@ -66,9 +61,8 @@ def record_control_once(conn: sqlite3.Connection, session_id: str, event: Contro
         known = cast(
             tuple[int] | None,
             conn.execute(
-                "SELECT 1 FROM coordinator_events WHERE session_id = ? AND kind = ? "
-                + "AND entity_kind = ? AND entity_id = ? AND status = ?",
-                (session_id, event.kind, event.entity_kind, event.entity_id, event.status),
+                "SELECT 1 FROM coordinator_events WHERE session_id = ? AND operation_hash = ?",
+                (session_id, operation_identity(event)),
             ).fetchone(),
         )
         if known is None:
@@ -88,20 +82,6 @@ class CoordinatorAction:
     input: SessionInput
 
 
-def _create_action_table(conn: sqlite3.Connection) -> None:
-    with conn:
-        _ = conn.execute("""
-            CREATE TABLE IF NOT EXISTS coordinator_action_receipts (
-                command_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) ON DELETE CASCADE,
-                provider_session_id TEXT NOT NULL,
-                action_hash TEXT NOT NULL,
-                state TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
-
 def _record_action_event(
     conn: sqlite3.Connection, session_id: str, command: CoordinatorAction, state: str
 ) -> None:
@@ -117,28 +97,12 @@ def _record_action_event(
     )
 
 
-def submit_coordinator_action(  # noqa: V103
+def _reserve_action_receipt(
     conn: sqlite3.Connection,
     session: CoordinatorSession,
-    runtime_session: RuntimeSession,
+    identity: str,
     command: CoordinatorAction,
-) -> CoordinatorActionReceipt:
-    if not command.command_id:
-        raise ValueError("command identity must not be empty")
-    if runtime_session.identity.family != session.provider:
-        raise ValueError("provider does not match coordinator session")
-    _create_action_table(conn)
-    identity = runtime_session.identity.session_id
-    linked = cast(
-        tuple[int] | None,
-        conn.execute(
-            "SELECT 1 FROM coordinator_links WHERE session_id = ? "
-            + "AND kind = 'provider_session' AND entity_id = ?",
-            (session.id, identity),
-        ).fetchone(),
-    )
-    if linked is None:
-        raise ValueError("provider session is not owned by coordinator")
+) -> tuple[bool, str]:
     fingerprint = hashlib.sha256(msgspec.json.encode(command.input)).hexdigest()
     with conn:
         cursor = conn.execute(
@@ -159,14 +123,37 @@ def submit_coordinator_action(  # noqa: V103
         raise RuntimeError("coordinator command has no durable receipt")
     if row[:3] != (session.id, identity, fingerprint):
         raise ValueError("command identity was reused for another action")
-    if cursor.rowcount == 0:
-        _record_action_event(conn, session.id, command, row[3])
-        return CoordinatorActionReceipt(command.command_id, identity, row[3])
-    result = submit_runtime_action(identity, command.input, runtime_session)
-    with conn:
-        _ = conn.execute(
-            "UPDATE coordinator_action_receipts SET state = ? WHERE command_id = ?",
-            (result.state, command.command_id),
-        )
-    _record_action_event(conn, session.id, command, result.state)
-    return CoordinatorActionReceipt(command.command_id, identity, result.state)
+    return cursor.rowcount == 1, row[3]
+
+
+def submit_coordinator_action(  # noqa: V103
+    conn: sqlite3.Connection,
+    session: CoordinatorSession,
+    runtime_session: _ActionSession,
+    command: CoordinatorAction,
+) -> CoordinatorActionReceipt:
+    if not command.command_id:
+        raise ValueError("command identity must not be empty")
+    if runtime_session.family != session.provider:
+        raise ValueError("provider does not match coordinator session")
+    identity = runtime_session.provider_session_id
+    linked = cast(
+        tuple[int] | None,
+        conn.execute(
+            "SELECT 1 FROM coordinator_provider_bindings WHERE coordinator_id = ? "
+            + "AND provider_family = ? AND provider_session_id = ?",
+            (session.id, runtime_session.family, identity),
+        ).fetchone(),
+    )
+    if linked is None:
+        raise ValueError("provider session is not owned by coordinator")
+    created, state = _reserve_action_receipt(conn, session, identity, command)
+    if created:
+        state = runtime_session.submit_action(command.input)
+        with conn:
+            _ = conn.execute(
+                "UPDATE coordinator_action_receipts SET state = ? WHERE command_id = ?",
+                (state, command.command_id),
+            )
+    _record_action_event(conn, session.id, command, state)
+    return CoordinatorActionReceipt(command.command_id, identity, state)

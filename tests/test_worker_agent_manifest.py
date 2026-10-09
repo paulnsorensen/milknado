@@ -35,3 +35,18 @@ def test_worker_agent_uses_installed_plugin_mcp_namespace() -> None:
     assert f"{PLUGIN_MCP_PREFIX}milknado_deposit_result" in tools
     assert f"{PLUGIN_MCP_PREFIX}milknado_node_verify" in tools
     assert f"{PLUGIN_MCP_PREFIX}milknado_track_follow_up" in tools
+
+
+def test_worker_agent_grants_tilth_file_tools() -> None:
+    """A session can deny the built-in file tools and route file work to the
+    tilth MCP server. The worker must still have a read, search, and write
+    path there, plus ToolSearch to load the deferred tilth schemas.
+    """
+    tools = _worker_tools()
+    for name in (
+        "ToolSearch",
+        "mcp__tilth__tilth_read",
+        "mcp__tilth__tilth_search",
+        "mcp__tilth__tilth_write",
+    ):
+        assert name in tools, f"worker allowlist must grant {name}"

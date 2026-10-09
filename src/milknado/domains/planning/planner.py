@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import NodeKind
@@ -175,10 +176,18 @@ class Planner:
             spec_text=spec_text,
             prepend=self._prompt_prepend,
         )
-        context_path = project_root / ".milknado" / "planning-context.md"
-        context_path.parent.mkdir(parents=True, exist_ok=True)
-        _ = context_path.write_text(context, encoding="utf-8")
-        return context_path
+        context_dir = project_root / ".milknado"
+        context_dir.mkdir(parents=True, exist_ok=True)
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix="planning-context-",
+            suffix=".md",
+            dir=context_dir,
+            delete=False,
+        ) as context_file:
+            _ = context_file.write(context)
+            return Path(context_file.name)
 
     def _apply_manifest(
         self,

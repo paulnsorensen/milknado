@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import cast
 
 import msgspec
@@ -8,8 +7,7 @@ import msgspec
 from milknado.domains.coordinator.recovery import CoordinatorRecovery
 
 
-@dataclass(frozen=True, slots=True)
-class RecoveryItem:
+class RecoveryItem(msgspec.Struct, frozen=True):
     entity_kind: str
     entity_id: str
     provider_family: str  # noqa: V107
@@ -18,21 +16,20 @@ class RecoveryItem:
     outcome: str
 
 
-@dataclass(frozen=True, slots=True)
-class UnknownTurnItem:
+class UnknownTurnItem(msgspec.Struct, frozen=True):
     provider_family: str  # noqa: V107
     provider_session_id: str
     turn_id: str
 
 
-@dataclass(frozen=True, slots=True)
-class RecoveryCommandResult:
+class RecoveryCommandResult(msgspec.Struct, frozen=True):
     session_id: str
     receipts: tuple[RecoveryItem, ...]
     unknown_turns: tuple[UnknownTurnItem, ...]
 
 
 def receipt_payload(result: object) -> object:
+    payload: object = result
     match result:
         case CoordinatorRecovery():
             payload = RecoveryCommandResult(

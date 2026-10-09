@@ -160,7 +160,11 @@ def test_plan_receipt_serializes_context_path_and_replays(tmp_path: Path) -> Non
 
 def test_recovery_receipt_serializes_worktree_path_and_replays(tmp_path: Path) -> None:
     class ProviderStub:
+        def __init__(self) -> None:
+            self.calls = 0
+
         def recover(self, identity: ProviderIdentity, cwd: Path) -> RecoveryOutcome:
+            self.calls += 1
             assert identity == ProviderIdentity("codex", "provider-1")
             assert cwd == tmp_path
             return "resumed"
@@ -170,7 +174,8 @@ def test_recovery_receipt_serializes_worktree_path_and_replays(tmp_path: Path) -
             raise AssertionError(f"No group needs restoration: {group.id}")
 
     graph = MikadoGraph(tmp_path / "graph.db")
-    recovery = RecoveryRuntime(graph.groups, tmp_path, ProviderStub(), WorktreeStub())
+    provider = ProviderStub()
+    recovery = RecoveryRuntime(graph.groups, tmp_path, provider, WorktreeStub())
     control = CoordinatorControl(graph, tmp_path, CoordinatorServices(recovery_runtime=recovery))
     session_id, _ = _session(control)
     link_entity(graph.group_connection, session_id, "provider_session", "provider-1")
@@ -185,7 +190,9 @@ def test_recovery_receipt_serializes_worktree_path_and_replays(tmp_path: Path) -
     receipts = cast(list[dict[str, object]], cast(dict[str, object], first.result)["receipts"])
     assert receipts[0]["worktree_path"] == str(tmp_path)
     assert receipts[0]["outcome"] == "resumed"
+    assert provider.calls == 1
     assert control.send_coordinator_command(session_id, command) == first
+    assert provider.calls == 1
     graph.close()
 
 

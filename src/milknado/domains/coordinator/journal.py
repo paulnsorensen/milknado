@@ -1,10 +1,13 @@
 # ruff: noqa: RUF100
 from __future__ import annotations
 
+import hashlib
 import re
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from typing import cast
+
+import msgspec
 
 from milknado.domains.coordinator.model import ControlEvent, ControlRecord
 
@@ -49,10 +52,29 @@ def _redact_quoted(value: str) -> str:
     return "".join(parts)
 
 
-def _redact(value: str) -> str:
+def redact_control_text(value: str) -> str:
     quoted = _redact_quoted(value)
     headers = _AUTH_HEADER.sub(lambda match: match.group(1) + "[REDACTED]", quoted)
     return _SECRET.sub(lambda match: (match.group(1) or "") + "[REDACTED]", headers)
+
+
+_OPERATION_KINDS = frozenset(
+    {
+        "planning_decision",
+        "graph_revision",
+        "approval",
+        "run_transition",
+        "execution_group",
+        "command",
+    }
+)
+
+
+def operation_identity(event: ControlEvent) -> str | None:
+    if event.kind not in _OPERATION_KINDS or not event.entity_kind or not event.entity_id:
+        return None
+    identity = (event.kind, event.entity_kind, event.entity_id, event.status)
+    return hashlib.sha256(msgspec.json.encode(identity)).hexdigest()
 
 
 def _utc(now: datetime | None) -> datetime:
@@ -97,7 +119,7 @@ def append_control_event(  # noqa
     if event.duration_ms is not None and event.duration_ms < 0:
         raise ValueError("duration_ms must not be negative")
     timestamp = _utc(now)
-    text = "[tool payload elided]" if event.kind == "tool" else _redact(event.text)
+    text = "[tool payload elided]" if event.kind == "tool" else redact_control_text(event.text)
     if len(text.encode("utf-8")) > _MAX_EVENT_BYTES:
         raise ValueError("control event exceeds the 64 KiB limit")
     expires_at = (timestamp + diagnostic_ttl).isoformat() if event.kind == "diagnostic" else None
@@ -109,18 +131,20 @@ def append_control_event(  # noqa
         cursor = conn.execute(
             "INSERT INTO coordinator_events "
             + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, "
-            + "duration_ms, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            + "duration_ms, created_at, expires_at, operation_hash) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 session_id,
                 event.kind,
                 text,
-                _redact(event.entity_kind),
-                _redact(event.entity_id),
-                _redact(event.tool_name),
-                _redact(event.status),
+                redact_control_text(event.entity_kind),
+                redact_control_text(event.entity_id),
+                redact_control_text(event.tool_name),
+                redact_control_text(event.status),
                 event.duration_ms,
                 timestamp.isoformat(),
                 expires_at,
+                operation_identity(event),
             ),
         )
     assert cursor.lastrowid is not None
@@ -148,16 +172,36 @@ def control_history(  # noqa
 
 
 def snapshot_control_history(
-    conn: sqlite3.Connection, session_id: str, *, now: datetime | None = None
-) -> tuple[ControlRecord, ...]:
+    conn: sqlite3.Connection, session_id: str, cursor: int, *, now: datetime | None = None
+) -> tuple[tuple[ControlRecord, ...], tuple[ControlRecord, ...], int]:
     timestamp = _utc(now).isoformat()
-    rows = cast(
+    columns = "seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, created_at"
+    recent_rows = cast(
         list[tuple[int, str, str, str, str, str, str, int | None, str]],
         conn.execute(
-            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, "
-            + "created_at FROM coordinator_events WHERE session_id = ? "
+            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND seq > ? "
+            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
+            (session_id, cursor, timestamp),
+        ).fetchall(),
+    )
+    recovery_rows = cast(
+        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        conn.execute(
+            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND kind = 'recovery' "
             + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
             (session_id, timestamp),
         ).fetchall(),
     )
-    return tuple(_record(row) for row in rows)
+    if recent_rows:
+        latest = recent_rows[-1][0]
+    else:
+        row = cast(
+            tuple[int | None],
+            conn.execute(
+                "SELECT MAX(seq) FROM coordinator_events WHERE session_id = ? "
+                + "AND (expires_at IS NULL OR expires_at > ?)",
+                (session_id, timestamp),
+            ).fetchone(),
+        )
+        latest = row[0] if row[0] is not None else cursor
+    return tuple(map(_record, recent_rows)), tuple(map(_record, recovery_rows)), latest

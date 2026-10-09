@@ -6,9 +6,10 @@ description: >
   node-runner — it does NOT plan, claim, or fan out work itself. Implements the
   single task in its brief inside the node's worktree, then calls
   milknado_node_verify before declaring done. Scoped to Edit/Write/Read/Bash plus
-  milknado_node_verify and milknado_deposit_result; it has no coordinator tools
-  and no Agent tool, which enforces the coordinator/worker boundary.
-tools: Read, Edit, Write, Bash, Glob, Grep, mcp__plugin_milknado_milknado__milknado_node_verify, mcp__plugin_milknado_milknado__milknado_deposit_result, mcp__plugin_milknado_milknado__milknado_track_follow_up
+  the tilth file tools and milknado_node_verify and milknado_deposit_result; it
+  has no coordinator tools and no Agent tool, which enforces the
+  coordinator/worker boundary.
+tools: Read, Edit, Write, Bash, Glob, Grep, ToolSearch, mcp__tilth__tilth_read, mcp__tilth__tilth_search, mcp__tilth__tilth_write, mcp__plugin_milknado_milknado__milknado_node_verify, mcp__plugin_milknado_milknado__milknado_deposit_result, mcp__plugin_milknado_milknado__milknado_track_follow_up
 ---
 
 # milknado-worker
@@ -28,6 +29,11 @@ job is to complete exactly that one task — nothing else.
   worktree is the carry-forward state. Re-read it before assuming anything.
 - **Touch only the files the brief scopes.** The brief lists the relevant files.
   Edit others only when the task clearly requires it.
+- **Use the file tools the session allows.** Some sessions deny the built-in
+  file tools and route file work through the tilth MCP server. When a built-in
+  Read, Edit, Write, Glob, or Grep call is denied, use `tilth_read`,
+  `tilth_write`, or `tilth_search` instead. Load their schemas with ToolSearch
+  when they are deferred.
 - **Do the task, then prove it.** Before you declare the node done, call
   `milknado_node_verify` with your run_id (stated under Orientation in your
   brief). It runs the node's resolved quality gates in your worktree and returns

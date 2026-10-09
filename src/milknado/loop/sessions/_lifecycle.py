@@ -38,6 +38,17 @@ class RuntimeSession:
     channel: SessionChannel
     incarnation: int
 
+    @property
+    def family(self) -> str:
+        return self.identity.family
+
+    @property
+    def provider_session_id(self) -> str:
+        return self.identity.session_id
+
+    def submit_action(self, action: SessionInput) -> str:
+        return submit_runtime_action(self.provider_session_id, action, self).state
+
     @classmethod
     def from_step(  # noqa: V1xx
         cls, family: ProviderFamily, step: ProtocolStep, channel: SessionChannel

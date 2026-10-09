@@ -36,11 +36,7 @@ from milknado.domains.coordinator.model import (
     CoordinatorSession,
     CoordinatorSessionSummary,
 )
-from milknado.domains.coordinator.persistence import (
-    create_coordinator_tables,
-    get_coordinator,
-    list_coordinator_sessions,
-)
+from milknado.domains.coordinator.persistence import get_coordinator, list_coordinator_sessions
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
@@ -81,7 +77,6 @@ class CoordinatorControl:
 
     def list_coordinator_sessions(self) -> tuple[CoordinatorSessionSummary, ...]:
         with self._graph.synchronization_lock:
-            create_coordinator_tables(self._conn)
             return list_coordinator_sessions(self._conn)
 
     def decide_goal_review(
@@ -99,30 +94,30 @@ class CoordinatorControl:
                 "start_goal requires an empty session ID; other commands require a session ID"
             )
         with self._graph.synchronization_lock:
-            create_coordinator_tables(self._conn)
             if session_id and get_coordinator(self._conn, session_id) is None:
                 raise KeyError(session_id)
             fingerprint = hashlib.sha256(msgspec.json.encode(command)).hexdigest()
             existing = self._reserve(session_id, command.command_id, fingerprint)
             if existing is not None:
                 return existing
-            try:
-                status, result = self._execute(session_id, command)
-            except (ValueError, PermissionError, ControllerAuthorizationError) as error:
-                status, result = "rejected", str(error)
+            if not isinstance(command, (PlanGoal, DecidePlanProposal)):
+                return self._execute_reserved(session_id, command)
+        return self._execute_reserved(session_id, command)
+
+    def _execute_reserved(
+        self, session_id: str, command: CoordinatorCommand
+    ) -> CoordinatorCommandReceipt:
+        try:
+            status, result = self._execute(session_id, command)
+        except (ValueError, PermissionError, ControllerAuthorizationError) as error:
+            status, result = "rejected", str(error)
+        with self._graph.synchronization_lock:
             return self._complete(session_id, command, status, result)
 
     def _reserve(
         self, session_id: str, command_id: str, fingerprint: str
     ) -> CoordinatorCommandReceipt | None:
         with self._conn:
-            _ = self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS coordinator_web_receipts (
-                    command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-                    command_hash TEXT NOT NULL, status TEXT NOT NULL,
-                    result_json TEXT NOT NULL
-                )
-            """)
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO coordinator_web_receipts "
                 + "(command_id, session_id, command_hash, status, result_json) "
@@ -193,8 +188,9 @@ class CoordinatorControl:
         workflow = CoordinatorWorkflow(self._graph, self._conn)
         if isinstance(command, StartGoal):
             return "accepted", workflow.start_goal(command.description, command.provider)
-        session = get_coordinator(self._conn, session_id)
-        assert session is not None
+        with self._graph.synchronization_lock:
+            session = get_coordinator(self._conn, session_id)
+            assert session is not None
         match command:
             case PlanGoal() | CreateGroup() | DispatchTask() | RecordRevision():
                 return self._workflow_command(workflow, session, command)
