@@ -28,6 +28,30 @@ def test_empty_goal_and_plan_do_not_write_coordinator_state(tmp_path: Path) -> N
     graph.close()
 
 
+@pytest.mark.parametrize("provider", ("", " \t "))
+def test_empty_provider_does_not_create_goal_or_coordinator(tmp_path: Path, provider: str) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        with pytest.raises(ValueError, match="goal description"):
+            _ = workflow.start_goal(" ", provider)
+        with pytest.raises(ValueError, match="provider must not be empty"):
+            _ = workflow.start_goal("Goal", provider)
+        assert graph.get_all_nodes() == []
+        assert conn.execute("SELECT COUNT(*) FROM coordinator_sessions").fetchone() == (0,)
+    graph.close()
+
+
+def test_start_goal_preserves_nonempty_provider(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        provider = " custom/provider "
+        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", provider)
+        assert session.provider == provider
+        assert conn.execute("SELECT provider FROM coordinator_sessions").fetchone() == (provider,)
+    graph.close()
+
+
 def test_foreign_group_task_and_incompatible_retry_keep_original_group(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     with closing(sqlite3.connect(graph.db_path)) as conn:

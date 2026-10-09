@@ -64,6 +64,8 @@ class CoordinatorWorkflow:  # noqa: V102
     def start_goal(self, description: str, provider: str) -> CoordinatorSession:  # noqa: V105
         if not description.strip():
             raise ValueError("goal description must not be empty")
+        if not provider.strip():
+            raise ValueError("provider must not be empty")
         goal = self._graph.add_node(description, spec=NodeSpec(kind=NodeKind.GOAL))
         return start_coordinator(self._conn, goal.id, provider)
 
