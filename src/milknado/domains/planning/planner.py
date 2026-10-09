@@ -144,12 +144,10 @@ class Planner:
     def apply_proposal(
         self,
         proposal: PlanProposal,
-        project_root: Path,
         *,
         target_goal_id: int,
         prepared_plan: BatchPlan,
     ) -> PlanResult:
-        _ = project_root
         created_count = self._apply_plan(proposal.manifest, prepared_plan, target_goal_id)
         return PlanResult(
             True,

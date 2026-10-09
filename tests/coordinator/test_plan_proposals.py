@@ -16,7 +16,7 @@ from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import DecidePlanProposal, PlanGoal, StartGoal
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, graph_revision
 from milknado.domains.planning import (
     Planner,
     PlanProposal,
@@ -55,12 +55,10 @@ def _planner(graph: MikadoGraph, root: Path) -> Planner:
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
-            assert project_root == root
             _ = prepared_plan
             self.applied += 1
             _ = graph.add_node("Implement task", target_goal_id)
@@ -237,12 +235,11 @@ def test_interrupted_apply_fails_closed_after_reopen(tmp_path: Path) -> None:
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
-            _ = (proposal, project_root, prepared_plan)
+            _ = (proposal, prepared_plan)
             _ = graph.add_node("Partial task", target_goal_id)
             raise RuntimeError("worker stopped during apply")
 
@@ -294,12 +291,11 @@ def test_competing_approvals_on_separate_connections_apply_once(tmp_path: Path) 
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
-            _ = (project_root, target_goal_id, prepared_plan)
+            _ = (target_goal_id, prepared_plan)
             entered.set()
             assert release.wait(5)
             return PlanResult(True, 0, proposal.context_path)
@@ -310,12 +306,11 @@ def test_competing_approvals_on_separate_connections_apply_once(tmp_path: Path) 
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
-            _ = (project_root, target_goal_id, prepared_plan)
+            _ = (target_goal_id, prepared_plan)
             self.applied = True
             return PlanResult(True, 0, proposal.context_path)
 
@@ -377,13 +372,12 @@ def test_other_connection_can_write_while_plan_is_prepared(tmp_path: Path) -> No
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
         ) -> PlanResult:
             return delegate.apply_proposal(
-                proposal, project_root, target_goal_id=target_goal_id, prepared_plan=prepared_plan
+                proposal, target_goal_id=target_goal_id, prepared_plan=prepared_plan
             )
 
     control = CoordinatorControl(
@@ -422,7 +416,6 @@ def test_other_connection_cannot_write_during_plan_apply(tmp_path: Path) -> None
         def apply_proposal(
             self,
             proposal: PlanProposal,
-            project_root: Path,
             *,
             target_goal_id: int,
             prepared_plan: BatchPlan,
@@ -430,7 +423,7 @@ def test_other_connection_cannot_write_during_plan_apply(tmp_path: Path) -> None
             entered.set()
             assert release.wait(5)
             return delegate.apply_proposal(
-                proposal, project_root, target_goal_id=target_goal_id, prepared_plan=prepared_plan
+                proposal, target_goal_id=target_goal_id, prepared_plan=prepared_plan
             )
 
     control = CoordinatorControl(
@@ -461,6 +454,19 @@ def test_other_connection_cannot_write_during_plan_apply(tmp_path: Path) -> None
         "External",
     ]
     other_graph.close()
+    graph.close()
+
+
+def test_graph_revision_preserves_caller_transaction(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    conn = graph.group_connection
+    initial = graph_revision(conn)
+    _ = conn.execute("BEGIN")
+    _ = conn.execute("UPDATE graph_revision SET revision = revision + 1 WHERE id = 1")
+    assert graph_revision(conn) == initial + 1
+    assert conn.in_transaction
+    conn.rollback()
+    assert graph_revision(conn) == initial
     graph.close()
 
 

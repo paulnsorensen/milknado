@@ -41,7 +41,6 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
         task = graph.add_node("Implement", session.goal_id, files=("src/a.py",))
-        workflow.record_plan(session, "plan-1", "accepted")
         group = workflow.create_group(
             session, "main", (task.id,), GroupWorkspace("/tmp/group-a", "group-a", "provider-a")
         )
@@ -57,13 +56,11 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
     with closing(sqlite3.connect(graph.db_path)) as conn:
         links = links_for_session(conn, session.id)
         assert [(link.kind, link.entity_id) for link in links] == [
-            ("planning_decision", "plan-1"),
             ("execution_group", group.id),
             ("provider_session", "provider-a"),
             ("run", "run-a"),
         ]
         assert [event.kind for event in control_history(conn, session.id)] == [
-            "planning_decision",
             "execution_group",
             "run_transition",
             "run_transition",

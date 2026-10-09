@@ -9,11 +9,10 @@ from milknado.domains.coordinator.persistence import link_entity
 from milknado.domains.coordinator.plans import (
     PlanProposalRecord,
     get_proposal,
-    graph_revision,
     save_proposal,
     transition_proposal,
 )
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, graph_revision
 from milknado.domains.planning import Planner, record_batch_snapshot
 
 
@@ -81,7 +80,6 @@ class CoordinatorPlanning:
             if current:
                 result = planner.apply_proposal(
                     proposal,
-                    project_root,
                     target_goal_id=session.goal_id,
                     prepared_plan=prepared_plan,
                 )

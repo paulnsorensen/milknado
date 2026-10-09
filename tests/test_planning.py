@@ -405,9 +405,7 @@ def test_proposal_preparation_does_not_mutate_graph(
         prepared = planner.prepare_proposal(proposal, tmp_path)
     assert prepared == plan
     assert tmp_graph.get_children(goal.id) == []
-    result = planner.apply_proposal(
-        proposal, tmp_path, target_goal_id=goal.id, prepared_plan=prepared
-    )
+    result = planner.apply_proposal(proposal, target_goal_id=goal.id, prepared_plan=prepared)
     assert result.nodes_created == 1
     assert [node.description for node in tmp_graph.get_children(goal.id)] == ["1. Implement"]
 

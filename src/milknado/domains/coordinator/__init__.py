@@ -12,13 +12,18 @@ from milknado.domains.coordinator.model import (
     EntityLink,
     ProviderBinding,
 )
-from milknado.domains.coordinator.projection import CoordinatorSnapshot
+from milknado.domains.coordinator.projection import (
+    CoordinatorSnapshot,
+    CoordinatorStatus,
+    read_coordinator_status,
+)
 
 __all__ = [
     "CoordinatorCommand",
     "CoordinatorCommandReceipt",
     "CoordinatorControl",
     "CoordinatorSnapshot",
+    "CoordinatorStatus",
     "CoordinatorServices",
     "ControlEvent",
     "ControlRecord",
@@ -26,5 +31,6 @@ __all__ = [
     "EntityLink",
     "ProviderBinding",
     "ReviewDecisionPort",
+    "read_coordinator_status",
     "StartGoal",
 ]

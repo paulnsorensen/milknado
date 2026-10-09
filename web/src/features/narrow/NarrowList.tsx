@@ -3,7 +3,7 @@
 // explicit "Open node" bar for the selected node.
 import type { FormEvent, ReactElement } from 'react';
 import { useState, useSyncExternalStore } from 'react';
-import { getState, pushNotice, setSelection, subscribe } from '../../app/store';
+import { effectiveGraph, getState, pushNotice, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { formatRunTotals } from '../../shared/runTotals';
 import { toGraphNodes } from '../../app/wire';
@@ -27,7 +27,8 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
   const [jumpValue, setJumpValue] = useState('');
   const { StatusBadge, StatusStrip, OutlineTree, Button } = Milknado;
 
-  const nodes = state.snapshot?.graph ? toGraphNodes(state.snapshot.graph) : [];
+  const graph = effectiveGraph(state);
+  const nodes = graph ? toGraphNodes(graph) : [];
   const totals = formatRunTotals(state.snapshot);
   const selectedNode = nodes.find((node) => node.id === state.selection) ?? null;
   const owner = state.capabilities?.host_owner.available ?? false;

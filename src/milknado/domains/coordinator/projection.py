@@ -24,6 +24,36 @@ from milknado.loop.sessions import runtime_capabilities
 
 
 @dataclass(frozen=True, slots=True)
+class CoordinatorStatus:
+    goal_id: int
+    provider: str
+    status: str
+    recovery: str | None
+
+
+def read_coordinator_status(conn: sqlite3.Connection) -> tuple[CoordinatorStatus, ...]:
+    exists = cast(
+        tuple[int] | None,
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_sessions'"
+        ).fetchone(),
+    )
+    if exists is None:
+        return ()
+    rows = cast(
+        list[tuple[int, str, str, str | None]],
+        conn.execute(
+            "SELECT c.goal_id, c.provider, n.status, "
+            + "(SELECT status FROM coordinator_events WHERE session_id = c.id "
+            + "AND kind = 'recovery' ORDER BY seq DESC LIMIT 1) "
+            + "FROM coordinator_sessions AS c JOIN nodes AS n ON n.id = c.goal_id "
+            + "ORDER BY c.created_at DESC LIMIT 10"
+        ).fetchall(),
+    )
+    return tuple(CoordinatorStatus(*row) for row in rows)
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderTurnState:
     provider_family: str  # noqa: V107
     provider_session_id: str

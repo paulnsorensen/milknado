@@ -9,6 +9,7 @@ from milknado.domains.graph._execution_groups import (
 )
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._goal_review_scope import top_level_goal
+from milknado.domains.graph._plan_transaction import graph_revision
 from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph._transitions import ConcurrencyLimitReached, HostCapacityFull
 from milknado.domains.graph._worker_persistence import WorkerRecord
@@ -104,6 +105,7 @@ __all__ = [
     "GoalReviewSubjectError",
     "top_level_goal",
     "new_command_id",
+    "graph_revision",
     "ArtifactSnapshot",
     "GraphSnapshot",
     "NodeDetailResponse",

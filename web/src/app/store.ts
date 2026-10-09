@@ -61,6 +61,10 @@ export function getState(): StoreState {
   return state;
 }
 
+export function effectiveGraph(store: StoreState): WireGraphSnapshot | null {
+  return store.coordinatorGraph ?? store.snapshot?.graph ?? null;
+}
+
 export function subscribe(listener: Listener): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

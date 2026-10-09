@@ -13,8 +13,7 @@ class CoordinatorSession:
     created_at: str
 
 
-@dataclass(frozen=True)
-class CoordinatorSessionSummary:
+class CoordinatorSessionSummary(msgspec.Struct, frozen=True):
     id: str
     goal_id: int
     provider: str

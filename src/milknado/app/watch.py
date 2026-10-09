@@ -10,7 +10,7 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Protocol, cast
+from typing import BinaryIO, Protocol
 
 from milknado.app.run import (
     ActiveRunSnapshot,
@@ -21,6 +21,7 @@ from milknado.app.run import (
 )
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.domains.common import SessionInput
+from milknado.domains.coordinator import read_coordinator_status
 from milknado.domains.graph import (
     DurableRun,
     GraphSnapshot,
@@ -130,30 +131,13 @@ class WatchSnapshotSource:
 
     def coordinator_status(self) -> str:
         with closing(connect_readonly(self.db_path)) as conn:
-            exists = cast(
-                tuple[int] | None,
-                conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                    + "AND name = 'coordinator_sessions'"
-                ).fetchone(),
-            )
-            if exists is None:
-                return "No coordinator session is recorded."
-            rows = cast(
-                list[tuple[str, int, str, str, str | None]],
-                conn.execute(
-                    "SELECT c.id, c.goal_id, c.provider, n.status, "
-                    + "(SELECT status FROM coordinator_events WHERE session_id = c.id "
-                    + "AND kind = 'recovery' ORDER BY seq DESC LIMIT 1) "
-                    + "FROM coordinator_sessions AS c JOIN nodes AS n ON n.id = c.goal_id "
-                    + "ORDER BY c.created_at DESC LIMIT 10"
-                ).fetchall(),
-            )
-        if not rows:
+            statuses = read_coordinator_status(conn)
+        if not statuses:
             return "No coordinator session is recorded."
         return "\n".join(
-            f"Goal {goal_id} · {provider} · {status} · recovery: {recovery or 'not recorded'}"
-            for _, goal_id, provider, status, recovery in rows
+            f"Goal {item.goal_id} · {item.provider} · {item.status} "
+            + f"· recovery: {item.recovery or 'not recorded'}"
+            for item in statuses
         )
 
     def close(self) -> None:

@@ -85,9 +85,6 @@ class CoordinatorWorkflow:  # noqa: V102
     ) -> PlanProposalRecord:
         return self._planning.decide_plan(session, planner, project_root, proposal_id, decision)
 
-    def record_plan(self, session: CoordinatorSession, plan_id: str, status: str) -> None:
-        self._planning.record_plan(session, plan_id, status)
-
     def create_group(  # noqa: V105
         self,
         session: CoordinatorSession,
