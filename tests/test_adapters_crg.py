@@ -115,6 +115,53 @@ class TestIsStale:
         assert adapter._is_stale() is False  # pyright: ignore[reportPrivateUsage]
 
 
+@patch("milknado.adapters.crg.subprocess.run")
+def test_constructor_resolves_relative_root(
+    mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    adapter = CrgAdapter(Path("repo"))
+    _ = adapter._run_crg("build")  # pyright: ignore[reportPrivateUsage]
+
+    mock_run.assert_called_once_with(
+        ["code-review-graph", "build", "--repo", str(repo)],
+        cwd=repo,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("method", ["build_graph", "ensure_graph"])
+def test_root_reassignment_resolves_relative_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("milknado.adapters.crg.GraphStore"),
+        patch("milknado.adapters.crg.subprocess.run") as mock_run,
+    ):
+        adapter = CrgAdapter(tmp_path)
+        if method == "build_graph":
+            adapter.build_graph(Path("repo"))
+        else:
+            adapter.ensure_graph(Path("repo"))
+
+    mock_run.assert_called_once_with(
+        ["code-review-graph", "build", "--repo", str(repo)],
+        cwd=repo,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+
+
 class TestEnsureGraph:
     @patch("milknado.adapters.crg.GraphStore")
     @patch("milknado.adapters.crg.subprocess.run")

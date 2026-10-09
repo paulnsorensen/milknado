@@ -30,3 +30,10 @@ CREATE_UNKNOWN_TURN_INDEX = (
     "(coordinator_id, provider_family, provider_session_id, turn_id) "
     "WHERE status = 'unknown'"
 )
+
+CREATE_WEB_RECEIPTS = (
+    "CREATE TABLE IF NOT EXISTS coordinator_web_receipts ("
+    "command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "
+    "command_hash TEXT NOT NULL, status TEXT NOT NULL, "
+    "result_json TEXT NOT NULL)"
+)

@@ -92,9 +92,12 @@ async def _events(
 ) -> AsyncGenerator[dict[str, str]]:
     session_id, cursor = position
     snapshot = initial
+    projected = msgspec.structs.replace(initial, events=(), cursor=0)
     while not await request.is_disconnected():
-        if snapshot.events:
+        current = msgspec.structs.replace(snapshot, events=(), cursor=0)
+        if snapshot.events or current != projected:
             cursor = snapshot.cursor
+            projected = current
             yield {"event": "coordinator", "data": msgspec.json.encode(snapshot).decode()}
         await sleep(0.5)
         snapshot = cast(

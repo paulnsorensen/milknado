@@ -50,3 +50,7 @@
 
 2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
 
+
+
+2026-10-08 · 58f3da859dc553e5 · merged · architecture/graph-read-port.md · Record retained local root-first snapshot hydration through public graph.get_nodes. Preserve descendant claim fields, pending publication, and schema ordering. All three frozen probes return the page at rank 1.
+

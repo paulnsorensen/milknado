@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from typing import Literal, cast
+
+import msgspec
 
 from milknado.domains.common import MikadoNode
 from milknado.domains.coordinator.journal import snapshot_control_history
@@ -18,20 +19,24 @@ from milknado.domains.coordinator.persistence import (
     links_for_session,
     provider_bindings_for_session,
 )
-from milknado.domains.graph import ExecutionGroup, GoalReviewRecord, MikadoGraph, RunRecord
+from milknado.domains.graph import (
+    ExecutionGroup,
+    GoalReviewRecord,
+    MikadoGraph,
+    RunRecord,
+    subtree_post_order,
+)
 from milknado.loop.sessions import runtime_capabilities
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderTurnState:
+class ProviderTurnState(msgspec.Struct, frozen=True):
     provider_family: str  # noqa: V107
     provider_session_id: str
     turn_id: str
     status: str
 
 
-@dataclass(frozen=True, slots=True)
-class CoordinatorSnapshot:
+class CoordinatorSnapshot(msgspec.Struct, frozen=True):
     session: CoordinatorSession
     goal: MikadoNode
     nodes: tuple[MikadoNode, ...]
@@ -50,16 +55,12 @@ class CoordinatorSnapshot:
 
 
 def _goal_nodes(graph: MikadoGraph, goal_id: int) -> tuple[MikadoNode, ...]:
-    pending = [goal_id]
-    nodes: list[MikadoNode] = []
-    while pending:
-        node_id = pending.pop()
-        node = graph.get_node(node_id)
-        if node is None:
-            raise ValueError("coordinator graph node does not exist")
-        nodes.append(node)
-        pending.extend(child.id for child in graph.get_children(node_id))
-    return tuple(nodes)
+    root = graph.get_node(goal_id)
+    if root is None:
+        raise ValueError("coordinator graph node does not exist")
+    ordered = reversed(subtree_post_order(graph.get_children_map(), root))
+    node_ids = dict.fromkeys(node.id for node in ordered)
+    return tuple(graph.get_nodes(node_ids))
 
 
 def _turns(conn: sqlite3.Connection, session_id: str) -> tuple[ProviderTurnState, ...]:
@@ -99,7 +100,7 @@ def _project_snapshot(
         raise KeyError(session_id)
     nodes = _goal_nodes(graph, session.goal_id)
     links = links_for_session(conn, session_id)
-    events = snapshot_control_history(conn, session_id)
+    events, recovery, latest = snapshot_control_history(conn, session_id, cursor)
     capabilities = runtime_capabilities(cast(Literal["claude", "codex"], session.provider))
     return CoordinatorSnapshot(
         session=session,
@@ -126,10 +127,10 @@ def _project_snapshot(
         ),
         provider_bindings=provider_bindings_for_session(conn, session_id),
         provider_turns=_turns(conn, session_id),
-        recovery=tuple(event for event in events if event.kind == "recovery"),
+        recovery=recovery,
         capability_floor={str(name): str(support) for name, support in capabilities.floor.items()},
         native_actions=tuple(sorted(capabilities.native_actions)),
         unsupported_actions=tuple(sorted(capabilities.unsupported_actions)),
-        events=tuple(event for event in events if event.seq > cursor),
-        cursor=events[-1].seq if events else cursor,
+        events=events,
+        cursor=latest,
     )

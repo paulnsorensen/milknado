@@ -240,6 +240,7 @@ MIGRATIONS: list[tuple[int, str]] = [
     (35, _group_schema.ADD_RESERVED_NODE_RUN_ID),
     (36, _goal_review_schema.ADD_REVIEW_OPERATION_ID),
     (37, _goal_review_schema.CREATE_REVIEW_OPERATION_INDEX),
+    (38, _coordinator_recovery_schema.CREATE_WEB_RECEIPTS),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

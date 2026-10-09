@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal
+from typing import Annotated, Literal
 
 import msgspec
 
 from milknado.domains.common import SessionInput
 from milknado.domains.graph import GoalReviewDecision
+
+_SQLiteIdentifier = Annotated[int, msgspec.Meta(ge=-(2**63), le=2**63 - 1)]
 
 
 class StartGoal(
@@ -28,7 +29,7 @@ class CreateGroup(
 ):
     command_id: str
     graph_id: str
-    tasks: tuple[int, ...]
+    tasks: tuple[_SQLiteIdentifier, ...]
     worktree_path: str
     branch_name: str
     provider_session_id: str
@@ -90,7 +91,7 @@ class RecordRevision(
 ):
     command_id: str
     revision_id: str
-    affected_node_ids: tuple[int, ...]
+    affected_node_ids: tuple[_SQLiteIdentifier, ...]
 
 
 class RequestGoalReview(
@@ -151,8 +152,7 @@ CoordinatorCommand = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class CoordinatorCommandReceipt:
+class CoordinatorCommandReceipt(msgspec.Struct, frozen=True):
     command_id: str
     session_id: str
     status: Literal["accepted", "unavailable", "unsupported", "rejected", "unconfirmed"]

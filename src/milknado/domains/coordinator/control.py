@@ -92,23 +92,24 @@ class CoordinatorControl:
             existing = self._reserve(session_id, command.command_id, fingerprint)
             if existing is not None:
                 return existing
-            try:
-                status, result = self._execute(session_id, command)
-            except (ValueError, PermissionError, ControllerAuthorizationError) as error:
-                status, result = "rejected", str(error)
+            if not isinstance(command, PlanGoal):
+                return self._execute_reserved(session_id, command)
+        return self._execute_reserved(session_id, command)
+
+    def _execute_reserved(
+        self, session_id: str, command: CoordinatorCommand
+    ) -> CoordinatorCommandReceipt:
+        try:
+            status, result = self._execute(session_id, command)
+        except (ValueError, PermissionError, ControllerAuthorizationError) as error:
+            status, result = "rejected", str(error)
+        with self._graph.synchronization_lock:
             return self._complete(session_id, command, status, result)
 
     def _reserve(
         self, session_id: str, command_id: str, fingerprint: str
     ) -> CoordinatorCommandReceipt | None:
         with self._conn:
-            _ = self._conn.execute("""
-                CREATE TABLE IF NOT EXISTS coordinator_web_receipts (
-                    command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
-                    command_hash TEXT NOT NULL, status TEXT NOT NULL,
-                    result_json TEXT NOT NULL
-                )
-            """)
             cursor = self._conn.execute(
                 "INSERT OR IGNORE INTO coordinator_web_receipts "
                 + "(command_id, session_id, command_hash, status, result_json) "
@@ -179,8 +180,9 @@ class CoordinatorControl:
         workflow = CoordinatorWorkflow(self._graph, self._conn)
         if isinstance(command, StartGoal):
             return "accepted", workflow.start_goal(command.description, command.provider)
-        session = get_coordinator(self._conn, session_id)
-        assert session is not None
+        with self._graph.synchronization_lock:
+            session = get_coordinator(self._conn, session_id)
+            assert session is not None
         match command:
             case PlanGoal() | CreateGroup() | DispatchTask() | RecordRevision():
                 return self._workflow_command(workflow, session, command)
@@ -189,7 +191,7 @@ class CoordinatorControl:
             case RequestGoalReview():
                 return "accepted", self._request_review(workflow, session, command)
             case DecideGoalReview():
-                return self._decide_review(session, command)
+                return decide_coordinator_review(self._graph, self._services, session, command)
             case RuntimeAction() | Recover():
                 return self._runtime_command(session, command)
 
@@ -270,11 +272,6 @@ class CoordinatorControl:
             operation_id=command.command_id,
         )
         return workflow.review_goal_change(session, request)
-
-    def _decide_review(
-        self, session: CoordinatorSession, command: DecideGoalReview
-    ) -> tuple[Literal["accepted", "unavailable"], object]:
-        return decide_coordinator_review(self._graph, self._services, session, command)
 
     def _runtime_command(
         self, session: CoordinatorSession, command: RuntimeAction | Recover
