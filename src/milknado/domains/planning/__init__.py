@@ -4,10 +4,12 @@ from milknado.domains.planning.manifest import (
     MANIFEST_VERSION,
     PlanChangeManifest,
     decode_manifest,
+    manifest_to_dict,
     parse_manifest_from_output,
 )
 from milknado.domains.planning.planner import (
     Planner,
+    PlanProposal,
     PlanResult,
 )
 from milknado.domains.planning.ports import (
@@ -24,6 +26,7 @@ from milknado.domains.planning.telemetry import record_batch_snapshot
 __all__ = [
     "MANIFEST_VERSION",
     "PlanChangeManifest",
+    "PlanProposal",
     "PlanResult",
     "Planner",
     "PlanningPorts",
@@ -32,6 +35,7 @@ __all__ = [
     "apply_batches_to_graph",
     "build_planning_context",
     "decode_manifest",
+    "manifest_to_dict",
     "parse_manifest_from_output",
     "record_batch_snapshot",
     "derive_goal",

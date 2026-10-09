@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.testclient import TestClient
 
 from milknado.cli.web import _host_dependencies
+from milknado.domains.batching import BatchPlan
 from milknado.domains.common import CONTROLLER_MASTER_ENV, MilknadoConfig, SessionInput
 from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
@@ -21,7 +22,7 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.graph import GoalReviewDecision, MikadoGraph
-from milknado.domains.planning import PlanResult
+from milknado.domains.planning import PlanChangeManifest, Planner, PlanProposal, PlanResult
 from milknado.web import LaunchToken, WebCommands, create_app
 from milknado.web.commands import GraphEditCommands
 from milknado.web.routes.coordinator import _events
@@ -31,6 +32,9 @@ from tests.web.support import FixtureSnapshotSource, headers
 class CoordinatorStub:
     def __init__(self) -> None:
         self.commands: list[tuple[str, object]] = []
+
+    def list_coordinator_sessions(self) -> list[dict[str, str]]:
+        return [{"id": "session-1", "description": "Deliver"}]
 
     def read_coordinator_snapshot(self, session_id: str, cursor: int) -> dict[str, object]:
         if session_id != "session-1":
@@ -52,6 +56,82 @@ def test_coordinator_routes_require_login_and_validate_cursor() -> None:
     assert client.get("/api/coordinators/session-1/snapshot?cursor=3").json()["cursor"] == 3
     assert client.get("/api/coordinators/session-1/snapshot?cursor=-1").status_code == 400
     assert client.get("/api/coordinators/foreign/snapshot").status_code == 404
+    assert client.get("/api/coordinators").json() == [
+        {"id": "session-1", "description": "Deliver"}
+    ]
+
+
+def test_plan_approval_api_requires_login_and_applies_once(tmp_path: Path) -> None:
+    class PlannerStub:
+        def propose(self, goal: str, project_root: Path, *, target_goal_id: int) -> PlanProposal:
+            assert (goal, project_root) == ("Deliver", tmp_path)
+            assert target_goal_id > 0
+            manifest = PlanChangeManifest("milknado.plan.v2", goal, goal, None, (), ())
+            return PlanProposal(manifest, tmp_path / "context.md")
+
+        def prepare_proposal(self, proposal: PlanProposal, project_root: Path) -> BatchPlan:
+            _ = (proposal, project_root)
+            return BatchPlan((), (), "OPTIMAL")
+
+        def apply_proposal(
+            self,
+            proposal: PlanProposal,
+            *,
+            target_goal_id: int,
+            prepared_plan: BatchPlan,
+        ) -> PlanResult:
+            _ = prepared_plan
+            _ = graph.add_node("Applied task", target_goal_id)
+            return PlanResult(True, 0, proposal.context_path, nodes_created=1)
+
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(
+        graph, tmp_path, CoordinatorServices(planner=cast(Planner, cast(object, PlannerStub())))
+    )
+    login = LaunchToken("test-token")
+    client = TestClient(
+        create_app(FixtureSnapshotSource(), WebCommands(coordinator=control), login),
+        base_url="http://127.0.0.1",
+    )
+    start_body = {
+        "kind": "start_goal",
+        "command_id": "start",
+        "description": "Deliver",
+        "provider": "codex",
+    }
+    assert (
+        client.post("/api/coordinators/commands", json=start_body, headers=headers()).status_code
+        == 401
+    )
+    client.cookies.set(login.cookie_name, login.value)
+    session = client.post("/api/coordinators/commands", json=start_body, headers=headers()).json()[
+        "result"
+    ]
+    route = f"/api/coordinators/{session['id']}/commands"
+    proposed = client.post(
+        route, json={"kind": "plan_goal", "command_id": "plan-1"}, headers=headers()
+    )
+    assert proposed.status_code == 200
+    assert proposed.json()["result"]["status"] == "pending"
+    assert graph.get_children(session["goal_id"]) == []
+    decision = {
+        "kind": "decide_plan_proposal",
+        "command_id": "approve",
+        "proposal_id": "plan-1",
+        "decision": "accepted",
+    }
+    assert (
+        client.post(route, json=decision, headers=headers()).json()["result"]["status"]
+        == "applied"
+    )
+    assert len(graph.get_children(session["goal_id"])) == 1
+    decision["command_id"] = "approve-again"
+    assert (
+        client.post(route, json=decision, headers=headers()).json()["result"]["status"]
+        == "applied"
+    )
+    assert len(graph.get_children(session["goal_id"])) == 1
+    graph.close()
 
 
 def test_coordinator_stream_rejects_invalid_cursor_and_missing_session() -> None:
@@ -73,6 +153,7 @@ def test_coordinator_routes_report_unavailable_port() -> None:
     app = create_app(FixtureSnapshotSource(), WebCommands(), login)
     client = TestClient(app, base_url="http://127.0.0.1")
     client.cookies.set(login.cookie_name, login.value)
+    assert client.get("/api/coordinators").status_code == 409
     session = "/api/coordinators/session-1"
     responses = (
         client.get(f"{session}/snapshot"),
@@ -188,12 +269,11 @@ def test_production_host_connects_planner_without_provider_transport(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class PlannerStub:
-        def launch(
-            self, goal: str, project_root: Path, *, target_goal_id: int | None = None
-        ) -> PlanResult:
+        def propose(self, goal: str, project_root: Path, *, target_goal_id: int) -> PlanProposal:
             assert (goal, project_root) == ("Deliver", tmp_path)
-            assert target_goal_id is not None
-            return PlanResult(True, 0, tmp_path / "context.md", nodes_created=0)
+            assert target_goal_id > 0
+            manifest = PlanChangeManifest("milknado.plan.v2", goal, goal, None, (), ())
+            return PlanProposal(manifest, tmp_path / "context.md")
 
     planner = PlannerStub()
     monkeypatch.setattr("milknado.app.plan.build_planner", lambda *_: planner)

@@ -5,7 +5,7 @@ from typing import Literal, cast
 
 import msgspec
 
-from milknado.domains.common import MikadoNode
+from milknado.domains.common import MikadoEdge, MikadoNode
 from milknado.domains.coordinator.journal import snapshot_control_history
 from milknado.domains.coordinator.model import (
     ControlRecord,
@@ -18,6 +18,7 @@ from milknado.domains.coordinator.persistence import (
     links_for_session,
     provider_bindings_for_session,
 )
+from milknado.domains.coordinator.plans import PlanProposalRecord, list_proposals
 from milknado.domains.graph import (
     ExecutionGroup,
     GoalReviewRecord,
@@ -26,6 +27,35 @@ from milknado.domains.graph import (
     subtree_post_order,
 )
 from milknado.loop.sessions import runtime_capabilities
+
+
+class CoordinatorStatus(msgspec.Struct, frozen=True):
+    goal_id: int
+    provider: str
+    status: str
+    recovery: str | None
+
+
+def read_coordinator_status(conn: sqlite3.Connection) -> tuple[CoordinatorStatus, ...]:
+    exists = cast(
+        tuple[int] | None,
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'coordinator_sessions'"
+        ).fetchone(),
+    )
+    if exists is None:
+        return ()
+    rows = cast(
+        list[tuple[int, str, str, str | None]],
+        conn.execute(
+            "SELECT c.goal_id, c.provider, n.status, "
+            + "(SELECT status FROM coordinator_events WHERE session_id = c.id "
+            + "AND kind = 'recovery' ORDER BY seq DESC LIMIT 1) "
+            + "FROM coordinator_sessions AS c JOIN nodes AS n ON n.id = c.goal_id "
+            + "ORDER BY c.created_at DESC LIMIT 10"
+        ).fetchall(),
+    )
+    return tuple(CoordinatorStatus(*row) for row in rows)
 
 
 class ProviderTurnState(msgspec.Struct, frozen=True):
@@ -39,10 +69,12 @@ class CoordinatorSnapshot(msgspec.Struct, frozen=True):
     session: CoordinatorSession
     goal: MikadoNode
     nodes: tuple[MikadoNode, ...]
+    edges: tuple[MikadoEdge, ...]
     links: tuple[EntityLink, ...]
     groups: tuple[ExecutionGroup, ...]
     runs: tuple[RunRecord, ...]
     reviews: tuple[GoalReviewRecord, ...]
+    proposals: tuple[PlanProposalRecord, ...]  # noqa: V107
     provider_bindings: tuple[ProviderBinding, ...]  # noqa: V107
     provider_turns: tuple[ProviderTurnState, ...]  # noqa: V107
     recovery: tuple[ControlRecord, ...]
@@ -97,6 +129,12 @@ def _project_snapshot(
     if session is None:
         raise KeyError(session_id)
     nodes = _goal_nodes(graph, session.goal_id)
+    node_ids = {node.id for node in nodes}
+    edges = tuple(
+        edge
+        for edge in graph.get_graph_snapshot().edges
+        if edge.parent_id in node_ids and edge.child_id in node_ids
+    )
     links = links_for_session(conn, session_id)
     events, recovery, latest = snapshot_control_history(conn, session_id, cursor)
     capabilities = runtime_capabilities(cast(Literal["claude", "codex"], session.provider))
@@ -104,6 +142,7 @@ def _project_snapshot(
         session=session,
         goal=nodes[0],
         nodes=nodes,
+        edges=edges,
         links=links,
         groups=tuple(
             group
@@ -123,6 +162,7 @@ def _project_snapshot(
             if link.kind == "approval"
             if (review := graph.get_goal_review(int(link.entity_id))) is not None
         ),
+        proposals=list_proposals(conn, session_id),
         provider_bindings=provider_bindings_for_session(conn, session_id),
         provider_turns=_turns(conn, session_id),
         recovery=recovery,

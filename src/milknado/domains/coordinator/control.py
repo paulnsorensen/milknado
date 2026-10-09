@@ -19,6 +19,7 @@ from milknado.domains.coordinator.control_models import (
     CoordinatorCommandReceipt,
     CreateGroup,
     DecideGoalReview,
+    DecidePlanProposal,
     DispatchTask,
     FailLaunch,
     FinishTask,
@@ -30,8 +31,12 @@ from milknado.domains.coordinator.control_models import (
     StartGoal,
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
-from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
-from milknado.domains.coordinator.persistence import get_coordinator
+from milknado.domains.coordinator.model import (
+    ControlEvent,
+    CoordinatorSession,
+    CoordinatorSessionSummary,
+)
+from milknado.domains.coordinator.persistence import get_coordinator, list_coordinator_sessions
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
@@ -41,6 +46,7 @@ from milknado.domains.coordinator.recovery import recover_coordinator
 from milknado.domains.coordinator.review_decisions import (
     decide_coordinator_review,
     decide_goal_review,
+    request_coordinator_review,
 )
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
@@ -48,7 +54,6 @@ from milknado.domains.graph import (
     ControllerAuthorizationError,
     GoalReviewDecisionRequest,
     GoalReviewRecord,
-    GoalReviewRequest,
     GroupWorkspace,
     MikadoGraph,
     TaskAttempt,
@@ -69,6 +74,10 @@ class CoordinatorControl:
 
     def read_coordinator_snapshot(self, session_id: str, cursor: int) -> CoordinatorSnapshot:
         return read_coordinator_snapshot(self._graph, self._conn, session_id, cursor)
+
+    def list_coordinator_sessions(self) -> tuple[CoordinatorSessionSummary, ...]:
+        with self._graph.synchronization_lock:
+            return list_coordinator_sessions(self._conn)
 
     def decide_goal_review(
         self, request: GoalReviewDecisionRequest, *, decided_by: str
@@ -91,7 +100,7 @@ class CoordinatorControl:
             existing = self._reserve(session_id, command.command_id, fingerprint)
             if existing is not None:
                 return existing
-            if not isinstance(command, PlanGoal):
+            if not isinstance(command, (PlanGoal, DecidePlanProposal)):
                 return self._execute_reserved(session_id, command)
         return self._execute_reserved(session_id, command)
 
@@ -185,10 +194,20 @@ class CoordinatorControl:
         match command:
             case PlanGoal() | CreateGroup() | DispatchTask() | RecordRevision():
                 return self._workflow_command(workflow, session, command)
+            case DecidePlanProposal():
+                if self._services.planner is None:
+                    return "unavailable", "Planner is not connected."
+                return "accepted", workflow.decide_plan(
+                    session,
+                    self._services.planner,
+                    self._root,
+                    command.proposal_id,
+                    command.decision,
+                )
             case AttemptCommand() | FailLaunch() | FinishTask():
                 return "accepted", self._attempt_command(workflow, session, command)
             case RequestGoalReview():
-                return "accepted", self._request_review(workflow, session, command)
+                return "accepted", request_coordinator_review(workflow, session, command)
             case DecideGoalReview():
                 return decide_coordinator_review(self._graph, self._services, session, command)
             case RuntimeAction() | Recover():
@@ -251,26 +270,6 @@ class CoordinatorControl:
             ),
         )
         return None
-
-    def _request_review(
-        self,
-        workflow: CoordinatorWorkflow,
-        session: CoordinatorSession,
-        command: RequestGoalReview,
-    ) -> object:
-        reviewer = command.reviewer.strip()
-        if not reviewer:
-            raise ValueError("reviewer identity is required")
-        request = GoalReviewRequest(
-            session.goal_id,
-            command.goal_revision,
-            command.evidence,
-            command.proposed_change,
-            command.affected_node_ids,
-            reviewer=reviewer,
-            operation_id=command.command_id,
-        )
-        return workflow.review_goal_change(session, request)
 
     def _runtime_command(
         self, session: CoordinatorSession, command: RuntimeAction | Recover

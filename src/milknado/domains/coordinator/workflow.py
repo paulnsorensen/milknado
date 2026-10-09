@@ -13,7 +13,8 @@ from milknado.domains.coordinator.commands import (
 )
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import link_entity, start_coordinator
-from milknado.domains.coordinator.plans import begin_plan, finish_plan
+from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
+from milknado.domains.coordinator.plans import PlanProposalRecord
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
     ExecutionGroup,
@@ -24,13 +25,14 @@ from milknado.domains.graph import (
     TaskAttempt,
     TaskOutcome,
 )
-from milknado.domains.planning import Planner, PlanResult
+from milknado.domains.planning import Planner
 
 
 class CoordinatorWorkflow:  # noqa: V102
     def __init__(self, graph: MikadoGraph, conn: sqlite3.Connection) -> None:
         self._graph: MikadoGraph = graph
         self._conn: sqlite3.Connection = conn
+        self._planning: CoordinatorPlanning = CoordinatorPlanning(graph, conn)
 
     def _event_once(self, session: CoordinatorSession, event: ControlEvent) -> None:
         record_control_once(self._conn, session.id, event)
@@ -69,34 +71,20 @@ class CoordinatorWorkflow:  # noqa: V102
         goal = self._graph.add_node(description, spec=NodeSpec(kind=NodeKind.GOAL))
         return start_coordinator(self._conn, goal.id, provider)
 
-    def plan_goal(  # noqa: V105
+    def plan_goal(
         self, session: CoordinatorSession, planner: Planner, project_root: Path, operation_id: str
-    ) -> PlanResult:
-        with self._graph.synchronization_lock:
-            fresh, result = begin_plan(self._conn, session.id, operation_id)
-            goal = self._graph.get_node(session.goal_id) if fresh else None
-            if fresh and goal is None:
-                raise ValueError("coordinator goal does not exist")
-        if goal is not None:
-            result = planner.launch(goal.description, project_root, target_goal_id=session.goal_id)
-        with self._graph.synchronization_lock:
-            if result is None:
-                raise RuntimeError("planning operation has no result")
-            if fresh:
-                finish_plan(self._conn, operation_id, result)
-            self.record_plan(session, operation_id, "accepted" if result.success else "failed")
-        return result
+    ) -> PlanProposalRecord:
+        return self._planning.plan_goal(session, planner, project_root, operation_id)
 
-    def record_plan(self, session: CoordinatorSession, plan_id: str, status: str) -> None:
-        if not plan_id:
-            raise ValueError("plan identity must not be empty")
-        link_entity(self._conn, session.id, "planning_decision", plan_id)
-        self._event_once(
-            session,
-            ControlEvent(
-                kind="planning_decision", entity_kind="plan", entity_id=plan_id, status=status
-            ),
-        )
+    def decide_plan(  # noqa: PLR0913 - approval needs session, planner, root, and decision
+        self,
+        session: CoordinatorSession,
+        planner: Planner,
+        project_root: Path,
+        proposal_id: str,
+        decision: str,
+    ) -> PlanProposalRecord:
+        return self._planning.decide_plan(session, planner, project_root, proposal_id, decision)
 
     def create_group(  # noqa: V105
         self,

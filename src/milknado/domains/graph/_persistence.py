@@ -8,7 +8,7 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TypedDict, cast
 
 import milknado.domains.graph._coordinator_schema as _coordinator_schema
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
@@ -41,9 +41,6 @@ __all__ = [
     "set_run_pid",
     "start_run",
 ]
-
-if TYPE_CHECKING:
-    from milknado.domains.batching import BatchPlan
 
 _logger = logging.getLogger(__name__)
 
@@ -244,9 +241,19 @@ MIGRATIONS: list[tuple[int, str]] = [
     (39, _coordinator_schema.CREATE_ACTION_RECEIPTS),
     (40, _coordinator_schema.CREATE_PLANS),
     *_coordinator_schema.CORE_MIGRATIONS,
+    (48, "ALTER TABLE runs ADD COLUMN verification_status TEXT"),
+    (49, "ALTER TABLE runs ADD COLUMN verified_at TEXT"),
+    (
+        50,
+        "CREATE TABLE IF NOT EXISTS coordinator_plan_proposals ("
+        + "id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES coordinator_sessions(id) "
+        + "ON DELETE CASCADE, manifest_json TEXT NOT NULL, context_path TEXT NOT NULL, "
+        + "graph_revision INTEGER NOT NULL, status TEXT NOT NULL)",
+    ),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)
+
 # Fresh databases run the ladder; existing ADD COLUMN targets are skipped.
 _ADD_COLUMN_RE = re.compile(r"ALTER TABLE (\w+) ADD COLUMN (\w+)", re.IGNORECASE)
 
@@ -436,7 +443,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
             error           TEXT,
             timeout_seconds INTEGER,
             detail          TEXT,
-            rebased         INTEGER
+            rebased         INTEGER,
+            verification_status TEXT,
+            verified_at     TEXT
         );
         CREATE TABLE IF NOT EXISTS run_sessions (
             run_id      TEXT PRIMARY KEY REFERENCES runs(run_id) ON DELETE CASCADE,
@@ -608,34 +617,6 @@ def set_github_bind_attempt(
 def clear_github_bind_attempt(conn: sqlite3.Connection, goal_id: int) -> None:
     _ = conn.execute("DELETE FROM github_bind_attempts WHERE goal_id = ?", (goal_id,))
     conn.commit()
-
-
-def record_batch_plan(conn: sqlite3.Connection, plan: BatchPlan) -> int:
-    spread_payload = [
-        {"symbol_name": item.symbol.name, "symbol_file": item.symbol.file, "spread": item.spread}
-        for item in plan.spread_report
-    ]
-    max_spread = max((item.spread for item in plan.spread_report), default=0)
-    oversized_count = sum(1 for b in plan.batches if b.oversized)
-    now = datetime.now(UTC).isoformat()
-    cur = conn.execute(
-        "INSERT INTO batch_plans "
-        + "(created_at, solver_status, batch_count, oversized_count, max_spread, spread_json) "
-        + "VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            now,
-            plan.solver_status,
-            len(plan.batches),
-            oversized_count,
-            max_spread,
-            json.dumps(spread_payload),
-        ),
-    )
-    conn.commit()
-    plan_id = cur.lastrowid
-    if plan_id is None:  # pragma: no cover - defensive: plain INSERT always sets lastrowid
-        raise RuntimeError("record_batch_plan INSERT did not return lastrowid")
-    return plan_id
 
 
 def get_latest_batch_plan(conn: sqlite3.Connection) -> BatchPlanRecord | None:

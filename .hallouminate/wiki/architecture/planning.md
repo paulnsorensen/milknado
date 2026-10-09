@@ -12,7 +12,7 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 1. **Build context** — `build_planning_context` (`context.py`) assembles a markdown
    prompt: goal, compact CRG architecture overview, the existing Mikado graph state, a
    batching-policy note, the v2 manifest schema + instructions, and (optionally) the spec
-   text. Each retained local PR #518 launch writes a unique
+   text. Each launch writes a unique
    `<root>/.milknado/planning-context-*.md` file.[^goal-context]
 2. **Run the agent** — `build_planning_subprocess` (in `domains/common/agent_argv`)
    builds the argv; the agent runs as a subprocess with stdout piped.
@@ -27,6 +27,35 @@ graph as nodes. It is the front half of the engine; the batching slice is the ba
 
 `replan_with_delta` is just `launch` with a delta goal — resume is handled by the context
 builder detecting existing nodes, not by a separate code path.
+
+## Coordinator proposal review
+
+The browser coordinator stores a validated `PlanGoal` manifest as a pending proposal.
+It applies the proposal only after human approval.
+The proposal panel shows changes, dependencies, relationships, and durable status.
+Rejection leaves the graph unchanged.[^1]
+
+The coordinator captures the graph revision before it reads planning input.
+A graph change during planning prevents proposal storage.
+Approval marks the proposal `applying`, then checks its revision inside the graph-owned SQLite write transaction.
+That transaction covers every batch graph write.
+Stale proposals do not apply.
+Interrupted application requires manual recovery.[^2]
+
+Every proposal database phase and planning journal write uses the graph synchronization lock.
+Snapshot readers use the same lock and shared SQLite connection.
+An unlocked connection context can otherwise roll back another approval's graph transaction.
+External proposal generation, batch preparation, and telemetry remain outside synchronization.[^shared-planning]
+The shared-connection regression checks retained nodes, applied status, and the accepted journal after reopening the database.[^shared-planning-test]
+
+The ordinary CLI still calls `Planner.launch` and applies its validated manifest immediately.
+Do not use that path for browser coordinator approval.[^3]
+
+[^1]: src/milknado/domains/coordinator/planning_workflow.py:24-50; web/src/features/coordinator/CoordinatorPresentation.tsx:7-33.
+[^2]: src/milknado/domains/coordinator/planning_workflow.py:60-86,88-109; src/milknado/domains/graph/_plan_transaction.py:19-28.
+[^3]: src/milknado/domains/planning/planner.py:70-125; src/milknado/app/plan.py:248-257.
+[^shared-planning]: src/milknado/domains/coordinator/control.py:96-115; src/milknado/domains/coordinator/planning_workflow.py:27-50,60-122; src/milknado/domains/coordinator/projection.py:112-122.
+[^shared-planning-test]: tests/coordinator/test_shared_planning_transactions.py:100-139,84-97.
 
 ## The manifest (`manifest.py`)
 
@@ -75,10 +104,10 @@ shape decisions:
 Goal planning context isolation preserves each goal's review context across distinct planner launches.[^goal-context]
 Each real `Planner.launch` writes a new retained context file.
 Another launch cannot overwrite that file through the planner's former shared filename.[^goal-context]
-A completed coordinator planning replay returns its stored `PlanResult.context_path` without starting another planner.[^goal-context-replay]
+A completed coordinator proposal replay returns its stored manifest and context path without starting another planner.[^goal-context-replay]
 
-These facts describe retained local corrections for PR #518.
-Publication and guard approval remain pending.
+PR #518's context isolation repair is merged.
+This proposal behavior describes the PR #520 implementation.
 
 ## Bridge into batching (`batching_bridge.py`)
 
@@ -134,7 +163,7 @@ fixes both. See `history/review-lessons.md` § "Review scope: diff-scoped review
 inherited encapsulation smell" and
 [easy-cheese#110](https://github.com/paulnsorensen/easy-cheese/issues/110).
 
-[^goal-context]: `src/milknado/domains/planning/planner.py:121-146` in the retained local PR #518 correction.
-[^goal-context-replay]: `src/milknado/domains/coordinator/workflow.py:70-83`; `src/milknado/domains/coordinator/plans.py:14-66` in the retained local PR #518 correction.
+[^goal-context]: src/milknado/domains/planning/planner.py:179-190.
+[^goal-context-replay]: src/milknado/domains/coordinator/planning_workflow.py:27-35; src/milknado/domains/coordinator/plans.py:20-53.
 
-_Source: PR #518 retained local planning-context correction, pending publication · Updated: 2026-10-08 · Supersedes: the shared planning-context.md filename claim._
+_Source: merged PR #518 and current PR #520 source/tests · Updated: 2026-10-09 · Supersedes: shared context filenames and unlocked proposal persistence._

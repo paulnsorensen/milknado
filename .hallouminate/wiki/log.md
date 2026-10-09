@@ -75,3 +75,10 @@
 
 2026-10-09 · e5c4cc23c2dcc72a · merged · architecture/graph-read-port.md · Record approved command boundaries and web receipt schema step47 after dependency integration. Full gate and121focused tests pass; publication remains pending. Frozen probes rank the page first.
 
+
+
+2026-10-09 · af98dc7afde7e31f23701e40364ce0626a1150f891c75a417252e796e2bbd71c · merged · architecture/planning.md, architecture/graph.md · Record serialized proposal database phases and current schema steps. Replace stale pending PR 518 and PlanResult replay claims. Six exact/natural retrieval checks pass; initial exact probes are frozen before final provenance revision, not before the first draft. Source is the current reviewed repair tree; PR 520 publication remains pending.
+
+
+2026-10-09 · af98dc7afde7e31f23701e40364ce0626a1150f891c75a417252e796e2bbd71c · merged · architecture/planning.md · Remove ephemeral publication status from the behavior description. A planning retrieval probe returns the page first. Index reconciliation remains queued; no complete index freshness is claimed.
+

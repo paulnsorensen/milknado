@@ -9,6 +9,7 @@ import pytest
 
 from milknado.domains.coordinator.journal import control_history
 from milknado.domains.coordinator.persistence import links_for_session
+from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import GoalReviewRequest, GroupWorkspace, MikadoGraph
@@ -99,7 +100,7 @@ def test_empty_goal_and_plan_do_not_write_coordinator_state(tmp_path: Path) -> N
         assert graph.get_all_nodes() == []
         session = workflow.start_goal("Goal", "codex")
         with pytest.raises(ValueError, match="plan identity"):
-            workflow.record_plan(session, "", "accepted")
+            CoordinatorPlanning(graph, conn).record_plan(session, "", "accepted")
         assert links_for_session(conn, session.id) == ()
         assert control_history(conn, session.id) == ()
     graph.close()

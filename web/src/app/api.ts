@@ -12,9 +12,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T | null> {
+async function request<T>(method: string, path: string, body?: unknown,
+  options: { signal?: AbortSignal; noticeIsCurrent?: () => boolean } = {}): Promise<T | null> {
   const response = await fetch(path, {
     method,
+    signal: options.signal,
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -24,7 +26,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   if (response.status === 409) {
     const payload = (await response.json().catch(() => ({}))) as { reason?: string; error?: string };
-    pushNotice(payload.reason ?? payload.error ?? 'The server rejected the request.');
+    if (options.noticeIsCurrent?.() ?? true) {
+      pushNotice(payload.reason ?? payload.error ?? 'The server rejected the request.');
+    }
     return null;
   }
   if (!response.ok) {
@@ -36,12 +40,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await response.json()) as T;
 }
 
-export function get<T>(path: string): Promise<T | null> {
-  return request<T>('GET', path);
+export function get<T>(path: string, signal?: AbortSignal, noticeIsCurrent?: () => boolean): Promise<T | null> {
+  return request<T>('GET', path, undefined, { signal, noticeIsCurrent });
 }
 
-export function post<T>(path: string, body?: unknown): Promise<T | null> {
-  return request<T>('POST', path, body ?? {});
+export function post<T>(path: string, body?: unknown, noticeIsCurrent?: () => boolean): Promise<T | null> {
+  return request<T>('POST', path, body ?? {}, { noticeIsCurrent });
 }
 
 export function patch<T>(path: string, body: unknown): Promise<T | null> {

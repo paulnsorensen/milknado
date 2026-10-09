@@ -1,150 +1,75 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
 from typing import cast
 
-import msgspec
 import pytest
 
-from milknado.domains.coordinator.plans import begin_plan, finish_plan
+from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
+from milknado.domains.coordinator.plans import get_proposal, transition_proposal
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.planning import PlanResult
+from milknado.domains.planning import PlanChangeManifest, Planner, PlanProposal
 
 
-def test_plan_reservation_rejects_missing_identity_and_cross_owner(tmp_path: Path) -> None:
+class _PlannerStub:
+    def __init__(self) -> None:
+        self.calls: int = 0
+
+    def propose(self, goal: str, project_root: Path, *, target_goal_id: int) -> PlanProposal:
+        assert target_goal_id > 0
+        self.calls += 1
+        manifest = PlanChangeManifest("milknado.plan.v2", goal, goal, None, (), ())
+        return PlanProposal(manifest, project_root / "context.md")
+
+
+def test_proposal_replays_without_replanning_and_rejects_foreign_owner(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
-    conn = graph.group_connection
-    workflow = CoordinatorWorkflow(graph, conn)
-    owner = workflow.start_goal("Owner", "codex")
-    other = workflow.start_goal("Other", "codex")
-
-    with pytest.raises(ValueError, match="identity"):
-        _ = begin_plan(conn, owner.id, "")
-    assert conn.execute("SELECT COUNT(*) FROM coordinator_plans").fetchone()[:] == (0,)
-
-    assert begin_plan(conn, owner.id, "plan-1") == (True, None)
-    with pytest.raises(ValueError, match="another coordinator"):
-        _ = begin_plan(conn, other.id, "plan-1")
-    assert conn.execute(
-        "SELECT session_id, result_json FROM coordinator_plans WHERE operation_id = 'plan-1'"
-    ).fetchone()[:] == (owner.id, None)
-    graph.close()
-
-
-def test_plan_completion_is_write_once_and_replays_result(tmp_path: Path) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
-    conn = graph.group_connection
-    session = CoordinatorWorkflow(graph, conn).start_goal("Deliver", "codex")
-    assert begin_plan(conn, session.id, "plan-1") == (True, None)
-    with pytest.raises(ValueError, match="no durable result"):
-        _ = begin_plan(conn, session.id, "plan-1")
-
-    result = PlanResult(True, 0, tmp_path / "context.md", nodes_created=2)
-    finish_plan(conn, "plan-1", result)
-    assert begin_plan(conn, session.id, "plan-1") == (False, result)
-    stored = cast(
-        tuple[str] | None,
-        conn.execute(
-            "SELECT result_json FROM coordinator_plans WHERE operation_id = 'plan-1'"
-        ).fetchone(),
-    )
-    with pytest.raises(ValueError, match="already recorded"):
-        finish_plan(conn, "plan-1", PlanResult(False, 1, None))
-    unchanged = cast(
-        tuple[str] | None,
-        conn.execute(
-            "SELECT result_json FROM coordinator_plans WHERE operation_id = 'plan-1'"
-        ).fetchone(),
-    )
-    assert unchanged == stored
-    graph.close()
-
-
-def test_foreign_and_unfinished_plan_retries_keep_receipt(tmp_path: Path) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
+    planner = _PlannerStub()
     with closing(sqlite3.connect(graph.db_path)) as conn:
         workflow = CoordinatorWorkflow(graph, conn)
         owner = workflow.start_goal("Owner", "codex")
         foreign = workflow.start_goal("Foreign", "codex")
-        assert begin_plan(conn, owner.id, "operation-1") == (True, None)
+        planning = CoordinatorPlanning(graph, conn)
+        first = planning.plan_goal(owner, cast(Planner, cast(object, planner)), tmp_path, "plan-1")
+        assert first.status == "pending"
+        assert first.context_path == str(tmp_path / "context.md")
+        assert planner.calls == 1
+        assert (
+            planning.plan_goal(owner, cast(Planner, cast(object, planner)), tmp_path, "plan-1")
+            == first
+        )
         with pytest.raises(ValueError, match="another coordinator"):
-            _ = begin_plan(conn, foreign.id, "operation-1")
-        with pytest.raises(ValueError, match="no durable result"):
-            _ = begin_plan(conn, owner.id, "operation-1")
-        assert conn.execute(
-            "SELECT session_id, result_json FROM coordinator_plans WHERE operation_id = ?",
-            ("operation-1",),
-        ).fetchone() == (owner.id, None)
-    graph.close()
-
-
-def test_duplicate_plan_completion_preserves_first_result(tmp_path: Path) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
-    with closing(sqlite3.connect(graph.db_path)) as conn:
-        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
-        assert begin_plan(conn, session.id, "operation-1") == (True, None)
-        first = PlanResult(True, 0, tmp_path / "context.json")
-        finish_plan(conn, "operation-1", first)
-        with pytest.raises(ValueError, match="already recorded"):
-            finish_plan(conn, "operation-1", PlanResult(False, 1))
-        assert begin_plan(conn, session.id, "operation-1") == (False, first)
-    graph.close()
-
-
-def test_plan_result_receipt_keeps_all_fields_and_null_defaults(tmp_path: Path) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
-    with closing(sqlite3.connect(graph.db_path)) as conn:
-        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
-        populated = PlanResult(True, 0, tmp_path / "context.json", 4, 3, 2, "solved", 1, 0)
-        for operation_id, result in (("populated", populated), ("defaults", PlanResult(False, 7))):
-            assert begin_plan(conn, session.id, operation_id) == (True, None)
-            finish_plan(conn, operation_id, result)
-            assert begin_plan(conn, session.id, operation_id) == (False, result)
-        row = cast(
-            tuple[str] | None,
-            conn.execute(
-                "SELECT result_json FROM coordinator_plans WHERE operation_id = 'populated'"
-            ).fetchone(),
-        )
-        assert row is not None
-        assert json.loads(row[0]) == {
-            "success": True,
-            "exit_code": 0,
-            "context_path": str(tmp_path / "context.json"),
-            "nodes_created": 4,
-            "batch_count": 3,
-            "oversized_count": 2,
-            "solver_status": "solved",
-            "change_count": 1,
-            "mega_batch_change_count": 0,
-        }
-        row = cast(
-            tuple[str] | None,
-            conn.execute(
-                "SELECT result_json FROM coordinator_plans WHERE operation_id = 'defaults'"
-            ).fetchone(),
-        )
-        assert row is not None
-        assert json.loads(row[0])["context_path"] is None
-        assert json.loads(row[0])["mega_batch_change_count"] is None
-    graph.close()
-
-
-def test_plan_retry_rejects_malformed_saved_field(tmp_path: Path) -> None:
-    graph = MikadoGraph(tmp_path / "graph.db")
-    with closing(sqlite3.connect(graph.db_path)) as conn:
-        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
-        assert begin_plan(conn, session.id, "operation-1") == (True, None)
-        finish_plan(conn, "operation-1", PlanResult(True, 0))
-        with conn:
-            _ = conn.execute(
-                "UPDATE coordinator_plans SET result_json = "
-                + "json_set(result_json, '$.success', 'yes') WHERE operation_id = 'operation-1'"
+            _ = planning.plan_goal(
+                foreign, cast(Planner, cast(object, planner)), tmp_path, "plan-1"
             )
-        with pytest.raises(msgspec.ValidationError, match="success"):
-            _ = begin_plan(conn, session.id, "operation-1")
+        with pytest.raises(ValueError, match="another coordinator"):
+            _ = planning.decide_plan(
+                foreign, cast(Planner, cast(object, planner)), tmp_path, "plan-1", "rejected"
+            )
+        assert get_proposal(conn, "plan-1") == first
+    with closing(sqlite3.connect(graph.db_path)) as reopened:
+        assert get_proposal(reopened, "plan-1") == first
+    assert planner.calls == 1
+    graph.close()
+
+
+def test_proposal_transition_is_write_once_and_preserves_manifest(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    planner = cast(Planner, cast(object, _PlannerStub()))
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        session = CoordinatorWorkflow(graph, conn).start_goal("Goal", "codex")
+        planning = CoordinatorPlanning(graph, conn)
+        pending = planning.plan_goal(session, planner, tmp_path, "plan-1")
+        rejected = transition_proposal(conn, pending.id, "pending", "rejected")
+        assert rejected.status == "rejected"
+        assert rejected.manifest == pending.manifest
+        assert planning.decide_plan(session, planner, tmp_path, pending.id, "rejected") == rejected
+        with pytest.raises(ValueError, match="already decided"):
+            _ = planning.decide_plan(session, planner, tmp_path, pending.id, "accepted")
+        with pytest.raises(ValueError, match="state changed"):
+            _ = transition_proposal(conn, pending.id, "pending", "applied")
+        assert get_proposal(conn, pending.id) == rejected
     graph.close()

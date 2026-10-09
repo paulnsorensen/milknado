@@ -93,15 +93,20 @@ Moving the current definitions avoids an `ALTER` step against a table that does 
 The change preserves existing keys, foreign keys, indexes, and journal identity.
 It adds no historical-data transformation or compatibility helper.
 Fresh-graph and reopen tests verify the column, required objects, and exact current schema version.[^pr518-schema-tests]
+Step 47 creates web command receipts without a session foreign key, so start commands can reserve receipts before sessions exist.
+Steps 48–49 add run verification fields.
+Step 50 creates coordinator plan proposals with a session foreign key, manifest, context path, revision, and status.[^pr520-current-schema]
+These steps create current-schema objects. They do not transform older release data.
 
 [^graph-current-setup]: AGENTS.md:114-122; src/milknado/domains/graph/_persistence.py:261-301.
 [^graph-no-backfill]: AGENTS.md:109-122.
-[^pr518-core-schema]: src/milknado/domains/graph/_coordinator_schema.py:3-54; src/milknado/domains/graph/_persistence.py:243-249; src/milknado/domains/coordinator/persistence.py:58-79.
+[^pr518-core-schema]: src/milknado/domains/graph/_coordinator_schema.py:3-61; src/milknado/domains/graph/_persistence.py:240-252.
+[^pr520-current-schema]: src/milknado/domains/graph/_coordinator_schema.py:47-61; src/milknado/domains/graph/_persistence.py:244-252; tests/coordinator/test_web_receipt_schema.py.
 [^pr518-schema-tests]: tests/coordinator/test_schema_setup.py:29-69.
 
 
 
-_Source: approved PR 518 correction and cited source/tests · Updated: 2026-10-09 · Supersedes: the stale no-migration-ladder claim._
+_Source: merged PRs #518–519 and current PR #520 schema source/tests · Updated: 2026-10-09 · Supersedes: stale schema ownership and version claims._
 
 ## Module split
 

@@ -9,7 +9,6 @@ from milknado.domains.coordinator.control_models import StartGoal
 from milknado.domains.coordinator.model import CoordinatorSession
 from milknado.domains.coordinator.projection import ProviderTurnState
 from milknado.domains.coordinator.receipt_results import (
-    PlanCommandResult,
     RecoveryCommandResult,
     RecoveryItem,
     UnknownTurnItem,
@@ -22,7 +21,6 @@ from milknado.domains.coordinator.recovery import (
     UnknownTurn,
 )
 from milknado.domains.graph import MikadoGraph
-from milknado.domains.planning import PlanResult
 
 
 def test_receipt_and_snapshot_are_frozen_boundary_schemas(tmp_path: Path) -> None:
@@ -51,15 +49,13 @@ def test_nested_receipt_results_keep_json_fields() -> None:
     item = RecoveryItem("run", "run-1", "codex", "provider", "/tmp/worktree", "ready")
     unknown = UnknownTurnItem("codex", "provider", "turn")
     recovery = RecoveryCommandResult("session", (item,), (unknown,))
-    plan = PlanCommandResult(True, 0, None, 1, 2, 0, "optimal", 3, None)
 
-    for value in (plan, item, unknown, recovery):
+    for value in (item, unknown, recovery):
         assert isinstance(value, msgspec.Struct)
         assert type(value).__struct_config__.frozen
         with pytest.raises(AttributeError):
             setattr(value, msgspec.structs.fields(type(value))[0].name, None)
 
-    assert msgspec.json.decode(msgspec.json.encode(plan))["nodes_created"] == 1
     assert msgspec.json.decode(msgspec.json.encode(recovery)) == {
         "session_id": "session",
         "receipts": [
@@ -82,19 +78,7 @@ def test_nested_receipt_results_keep_json_fields() -> None:
     }
 
 
-def test_receipt_payload_preserves_plan_fields_and_fallback(tmp_path: Path) -> None:
-    plan = PlanResult(True, 0, tmp_path / "context.json", 4, 3, 2, "solved", 1, 0)
-    assert receipt_payload(plan) == {
-        "success": True,
-        "exit_code": 0,
-        "context_path": str(tmp_path / "context.json"),
-        "nodes_created": 4,
-        "batch_count": 3,
-        "oversized_count": 2,
-        "solver_status": "solved",
-        "change_count": 1,
-        "mega_batch_change_count": 0,
-    }
+def test_receipt_payload_preserves_fallback_and_none() -> None:
     assert receipt_payload({"values": (1, 2), "active": True}) == {
         "values": [1, 2],
         "active": True,

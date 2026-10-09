@@ -17,14 +17,10 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
 )
-from milknado.domains.coordinator import CoordinatorSession, ProviderBinding
+from milknado.domains.coordinator import ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
 from milknado.domains.coordinator.journal import control_history
-from milknado.domains.coordinator.persistence import (
-    bind_provider_session,
-    link_entity,
-    links_for_session,
-)
+from milknado.domains.coordinator.persistence import bind_provider_session, links_for_session
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
@@ -42,7 +38,6 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
         task = graph.add_node("Implement", session.goal_id, files=("src/a.py",))
-        workflow.record_plan(session, "plan-1", "accepted")
         group = workflow.create_group(
             session, "main", (task.id,), GroupWorkspace("/tmp/group-a", "group-a", "provider-a")
         )
@@ -58,13 +53,11 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
     with closing(sqlite3.connect(graph.db_path)) as conn:
         links = links_for_session(conn, session.id)
         assert [(link.kind, link.entity_id) for link in links] == [
-            ("planning_decision", "plan-1"),
             ("execution_group", group.id),
             ("provider_session", "provider-a"),
             ("run", "run-a"),
         ]
         assert [event.kind for event in control_history(conn, session.id)] == [
-            "planning_decision",
             "execution_group",
             "run_transition",
             "run_transition",
@@ -126,30 +119,25 @@ def test_unbounded_goal_change_pauses_all_work(tmp_path: Path) -> None:
     graph.close()
 
 
-def _approval_runtime(
-    conn: sqlite3.Connection, session: CoordinatorSession, project_root: Path
-) -> tuple[RuntimeSession, SessionChannel, SessionInput]:
-    bind_provider_session(
-        conn, session.id, ProviderBinding("coordinator", session.id, "codex", "provider-1")
-    )
-    channel = SessionChannel()
-    channel.start(SessionContext(family="codex", cwd=str(project_root)), ("approve",))
-    channel.publish(
-        SessionEvent(kind="permission", text="write?", event_id="p-1", state="requested")
-    )
-    incarnation = channel.capture_incarnation()
-    assert incarnation is not None
-    runtime = RuntimeSession(ProviderSessionIdentity("codex", "provider-1"), channel, incarnation)
-    action = SessionInput(action="approve", request_id=channel.view().permissions[0].event_id)
-    return runtime, channel, action
-
-
 def test_approval_action_is_queued_once_with_durable_receipt(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     with closing(sqlite3.connect(graph.db_path)) as conn:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
-        runtime, channel, action = _approval_runtime(conn, session, tmp_path)
+        bind_provider_session(
+            conn, session.id, ProviderBinding("coordinator", session.id, "codex", "provider-1")
+        )
+        channel = SessionChannel()
+        channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("approve",))
+        channel.publish(
+            SessionEvent(kind="permission", text="write?", event_id="p-1", state="requested")
+        )
+        incarnation = channel.capture_incarnation()
+        assert incarnation is not None
+        runtime = RuntimeSession(
+            ProviderSessionIdentity("codex", "provider-1"), channel, incarnation
+        )
+        action = SessionInput(action="approve", request_id=channel.view().permissions[0].event_id)
         command = CoordinatorAction("command-1", action)
         first = submit_coordinator_action(conn, session, runtime, command)
         second = submit_coordinator_action(conn, session, runtime, command)
@@ -214,26 +202,38 @@ def test_planner_attaches_manifest_to_reviewed_goal_not_first_root(tmp_path: Pat
             "codex",
             PlanningPorts(_PlanningProcess()),
         )
-        result = workflow.plan_goal(second, planner, tmp_path, "plan-second")
-        assert result.success
+        proposal = workflow.plan_goal(second, planner, tmp_path, "plan-second")
+        assert proposal.status == "pending"
+        assert not any(node.kind is NodeKind.TASK for node in graph.get_all_nodes())
+        approved = workflow.decide_plan(second, planner, tmp_path, proposal.id, "accepted")
+        assert approved.status == "applied"
         task = next(node for node in graph.get_all_nodes() if node.kind is NodeKind.TASK)
         assert task.parent_id == second.goal_id
         assert task.parent_id != first.goal_id
     graph.close()
 
 
-def _fail_first_plan_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    original = link_entity
-    failed = False
-
-    def fail_once(target: sqlite3.Connection, session_id: str, kind: str, entity_id: str) -> None:
-        nonlocal failed
-        if kind == "planning_decision" and not failed:
-            failed = True
-            raise sqlite3.OperationalError("injected plan link failure")
-        original(target, session_id, kind, entity_id)
-
-    monkeypatch.setattr("milknado.domains.coordinator.workflow.link_entity", fail_once)
+def test_action_rejects_same_family_foreign_session(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        owner = workflow.start_goal("Owner", "codex")
+        foreign = workflow.start_goal("Foreign", "codex")
+        bind_provider_session(
+            conn, owner.id, ProviderBinding("coordinator", owner.id, "codex", "provider-owner")
+        )
+        channel = SessionChannel()
+        channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("steer",))
+        incarnation = channel.capture_incarnation()
+        assert incarnation is not None
+        runtime = RuntimeSession(
+            ProviderSessionIdentity("codex", "provider-owner"), channel, incarnation
+        )
+        command = CoordinatorAction("foreign-action", SessionInput(action="steer", text="change"))
+        with pytest.raises(ValueError, match="provider session"):
+            _ = submit_coordinator_action(conn, foreign, runtime, command)
+        assert channel.drain() == ()
+    graph.close()
 
 
 class _CountingPlanningProcess(_PlanningProcess):
@@ -261,9 +261,7 @@ class _CountingPlanningProcess(_PlanningProcess):
         return PlanningProcessResult(0, "```json\n" + json.dumps(payload) + "\n```")
 
 
-def test_planning_operations_reuse_result_and_keep_distinct_history(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_planning_operations_reuse_proposals_without_applying(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     with closing(sqlite3.connect(graph.db_path)) as conn:
         workflow = CoordinatorWorkflow(graph, conn)
@@ -275,23 +273,17 @@ def test_planning_operations_reuse_result_and_keep_distinct_history(
             "codex",
             PlanningPorts(process),
         )
-        _fail_first_plan_link(monkeypatch)
-        with pytest.raises(sqlite3.OperationalError, match="injected"):
-            _ = workflow.plan_goal(session, planner, tmp_path, "plan-1")
+        first = workflow.plan_goal(session, planner, tmp_path, "plan-1")
         retried = workflow.plan_goal(session, planner, tmp_path, "plan-1")
-        assert retried.success and process.calls == 1
-        _ = workflow.plan_goal(session, planner, tmp_path, "plan-2")
+        second = workflow.plan_goal(session, planner, tmp_path, "plan-2")
+        assert first == retried
+        assert first.id != second.id
         assert process.calls == 2
-        decisions = [
-            event.entity_id
-            for event in control_history(conn, session.id)
-            if event.kind == "planning_decision"
-        ]
-        assert decisions == ["plan-1", "plan-2"]
+        assert graph.get_children(session.goal_id) == []
     with closing(sqlite3.connect(graph.db_path)) as reopened:
         cached = CoordinatorWorkflow(graph, reopened).plan_goal(
             session, planner, tmp_path, "plan-1"
         )
-        assert cached == retried
+        assert cached == first
         assert process.calls == 2
     graph.close()

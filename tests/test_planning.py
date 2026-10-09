@@ -23,6 +23,7 @@ from milknado.cli.plan import (
 )
 from milknado.domains.batching import Batch, BatchPlan, FileChange, NewRelationship, SymbolRef
 from milknado.domains.batching.change import ChangeDependency, HashAnchors
+from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.common.config import MilknadoConfig, default_config
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning.context import build_planning_context
@@ -33,7 +34,7 @@ from milknado.domains.planning.manifest import (
     parse_manifest_from_dict,
     parse_manifest_from_output,
 )
-from milknado.domains.planning.planner import Planner, PlanResult
+from milknado.domains.planning.planner import Planner, PlanProposal, PlanResult
 from milknado.domains.planning.ports import PlanningPorts, PlanningProcessResult
 
 
@@ -382,6 +383,31 @@ class TestBuildPlanningContext:
     def test_sections_separated(self, tmp_graph: MikadoGraph, mock_crg: MagicMock) -> None:
         ctx = build_planning_context("goal", mock_crg, tmp_graph)
         assert ctx.count("# ") >= 5  # goal, arch, structural, graph, batching, instructions
+
+
+def test_proposal_preparation_does_not_mutate_graph(
+    tmp_path: Path, tmp_graph: MikadoGraph, mock_crg: MagicMock
+) -> None:
+    goal = tmp_graph.add_node("Deliver", spec=NodeSpec(kind=NodeKind.GOAL))
+    manifest = parse_manifest_from_dict(
+        {
+            "manifest_version": "milknado.plan.v2",
+            "goal": "Deliver",
+            "goal_summary": "Deliver",
+            "changes": [{"id": "c1", "path": "src/a.py", "description": "Implement"}],
+        }
+    )
+    assert manifest is not None
+    proposal = PlanProposal(manifest, tmp_path / "context.md")
+    plan = BatchPlan((Batch(0, ("c1",), ()),), (), "OPTIMAL")
+    planner = Planner(tmp_graph, mock_crg, "claude", _ports())
+    with patch("milknado.domains.planning.planner.run_batching", return_value=plan):
+        prepared = planner.prepare_proposal(proposal, tmp_path)
+    assert prepared == plan
+    assert tmp_graph.get_children(goal.id) == []
+    result = planner.apply_proposal(proposal, target_goal_id=goal.id, prepared_plan=prepared)
+    assert result.nodes_created == 1
+    assert [node.description for node in tmp_graph.get_children(goal.id)] == ["1. Implement"]
 
 
 class TestPlanner:

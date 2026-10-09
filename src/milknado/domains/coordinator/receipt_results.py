@@ -5,19 +5,6 @@ from typing import cast
 import msgspec
 
 from milknado.domains.coordinator.recovery import CoordinatorRecovery
-from milknado.domains.planning import PlanResult
-
-
-class PlanCommandResult(msgspec.Struct, frozen=True):
-    success: bool
-    exit_code: int
-    context_path: str | None
-    nodes_created: int
-    batch_count: int
-    oversized_count: int
-    solver_status: str
-    change_count: int
-    mega_batch_change_count: int | None
 
 
 class RecoveryItem(msgspec.Struct, frozen=True):
@@ -44,18 +31,6 @@ class RecoveryCommandResult(msgspec.Struct, frozen=True):
 def receipt_payload(result: object) -> object:
     payload: object = result
     match result:
-        case PlanResult():
-            payload = PlanCommandResult(
-                result.success,
-                result.exit_code,
-                str(result.context_path) if result.context_path is not None else None,
-                result.nodes_created,
-                result.batch_count,
-                result.oversized_count,
-                result.solver_status,
-                result.change_count,
-                result.mega_batch_change_count,
-            )
         case CoordinatorRecovery():
             payload = RecoveryCommandResult(
                 result.session.id,

@@ -6,6 +6,7 @@ import os
 import sqlite3
 import stat
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from milknado.app.run import (
 )
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.domains.common import SessionInput
+from milknado.domains.coordinator import read_coordinator_status
 from milknado.domains.graph import (
     DurableRun,
     GraphSnapshot,
@@ -125,6 +127,17 @@ class WatchSnapshotSource:
             request.page,
             request.limit,
             request.session_event_page,
+        )
+
+    def coordinator_status(self) -> str:
+        with closing(connect_readonly(self.db_path)) as conn:
+            statuses = read_coordinator_status(conn)
+        if not statuses:
+            return "No coordinator session is recorded."
+        return "\n".join(
+            f"Goal {item.goal_id} · {item.provider} · {item.status} "
+            + f"· recovery: {item.recovery or 'not recorded'}"
+            for item in statuses
         )
 
     def close(self) -> None:
@@ -247,6 +260,15 @@ class AttachedWatchSource:
 
     def subscribe(self, listener: Callable[[ExecutionSnapshot], None]) -> Callable[[], None]:
         return self.source.subscribe(listener)
+
+    def coordinator_status(self) -> str:
+        status = getattr(self.source, "coordinator_status", None)
+        if not callable(status):
+            return "Coordinator status is unavailable."
+        result = status()
+        if not isinstance(result, str):
+            raise TypeError("coordinator status must be text")
+        return result
 
     def close(self) -> None:
         close = getattr(self.source, "close", None)

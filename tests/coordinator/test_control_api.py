@@ -38,6 +38,9 @@ def test_commands_are_durable_and_reject_changed_payloads(tmp_path: Path) -> Non
     reopened = MikadoGraph(path)
     control = CoordinatorControl(reopened, tmp_path)
     assert control.send_coordinator_command("", start) == first
+    assert [(item.id, item.description) for item in control.list_coordinator_sessions()] == [
+        (session_id, "Deliver")
+    ]
     unavailable = control.send_coordinator_command(session_id, Recover("recover-1"))
     assert unavailable.status == "unavailable"
     assert control.send_coordinator_command(session_id, Recover("recover-1")) == unavailable
@@ -64,14 +67,37 @@ def test_snapshot_orders_events_and_links_group_run(tmp_path: Path) -> None:
         session_id, DispatchTask("dispatch-1", group_id, task.id, "run-1")
     )
     assert run.status == "accepted"
+    graph.runs.start("run-1", task.id, "/l", "2026-01-01T00:00:00+00:00", 600)
+    graph.runs.record_verification("run-1", True, "2026-01-01T00:00:05+00:00")
     snapshot = control.read_coordinator_snapshot(session_id, 0)
     assert [event.seq for event in snapshot.events] == sorted(
         event.seq for event in snapshot.events
     )
     assert {link.kind for link in snapshot.links} >= {"execution_group", "run", "provider_session"}
     assert snapshot.groups[0].id == group_id
+    assert snapshot.runs[0]["verification_status"] == "accepted"
+    assert snapshot.runs[0]["verified_at"] == "2026-01-01T00:00:05+00:00"
     assert snapshot.cursor == snapshot.events[-1].seq
     assert control.read_coordinator_snapshot(session_id, snapshot.cursor).events == ()
+    graph.close()
+
+
+def test_snapshot_includes_non_parent_goal_dependency(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    control = CoordinatorControl(graph, tmp_path)
+    receipt = control.send_coordinator_command("", StartGoal("start", "Deliver", "codex"))
+    session_id = cast(str, _result(receipt)["id"])
+    goal_id = cast(int, _result(receipt)["goal_id"])
+    first = graph.add_node("First", goal_id)
+    second = graph.add_node("Second", goal_id)
+    _ = graph.add_edge(first.id, second.id)
+
+    snapshot = control.read_coordinator_snapshot(session_id, 0)
+    assert {(edge.parent_id, edge.child_id) for edge in snapshot.edges} == {
+        (goal_id, first.id),
+        (goal_id, second.id),
+        (first.id, second.id),
+    }
     graph.close()
 
 

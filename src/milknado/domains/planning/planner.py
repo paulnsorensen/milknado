@@ -41,6 +41,12 @@ class PlanResult:
     mega_batch_change_count: int | None = None
 
 
+@dataclass(frozen=True)
+class PlanProposal:
+    manifest: PlanChangeManifest
+    context_path: Path
+
+
 class Planner:
     def __init__(
         self,
@@ -118,6 +124,44 @@ class Planner:
             mega_batch_change_count=plan.mega_batch_change_count,
         )
 
+    def propose(self, goal: str, project_root: Path, *, target_goal_id: int) -> PlanProposal:
+        if self._graph.get_node(target_goal_id) is None:
+            raise ValueError("planning target does not exist")
+        crg, crg_ok = _safe_ensure_crg(self._crg, project_root)
+        context_path = self._write_context(goal, project_root, crg if crg_ok else None, None)
+        process = self._ports.process.run_agent(context_path, self._planning_agent, project_root)
+        manifest = parse_manifest_from_output(process.stdout)
+        if process.exit_code != 0 or manifest is None:
+            raise ValueError("planner did not produce a valid proposal")
+        validation_error = self._run_validation_hook(manifest, project_root, context_path)
+        if validation_error:
+            raise ValueError(f"planner proposal failed validation: {validation_error}")
+        return PlanProposal(manifest, context_path)
+
+    def prepare_proposal(self, proposal: PlanProposal, project_root: Path) -> BatchPlan:
+        crg, crg_ok = _safe_ensure_crg(self._crg, project_root)
+        return run_batching(proposal.manifest, crg if crg_ok else None, project_root)
+
+    def apply_proposal(
+        self,
+        proposal: PlanProposal,
+        *,
+        target_goal_id: int,
+        prepared_plan: BatchPlan,
+    ) -> PlanResult:
+        created_count = self._apply_plan(proposal.manifest, prepared_plan, target_goal_id)
+        return PlanResult(
+            True,
+            0,
+            proposal.context_path,
+            created_count,
+            len(prepared_plan.batches),
+            sum(batch.oversized for batch in prepared_plan.batches),
+            prepared_plan.solver_status,
+            len(proposal.manifest.changes),
+            prepared_plan.mega_batch_change_count,
+        )
+
     def _write_context(
         self,
         goal: str,
@@ -153,6 +197,13 @@ class Planner:
         target_goal_id: int | None,
     ) -> tuple[BatchPlan, int]:
         plan = run_batching(manifest, crg, project_root)
+        created_count = self._apply_plan(manifest, plan, target_goal_id)
+        record_batch_snapshot(project_root, manifest, plan)
+        return plan, created_count
+
+    def _apply_plan(
+        self, manifest: PlanChangeManifest, plan: BatchPlan, target_goal_id: int | None
+    ) -> int:
         if target_goal_id is not None:
             target = self._graph.get_node(target_goal_id)
             if target is None or target.kind is not NodeKind.GOAL:
@@ -161,14 +212,8 @@ class Planner:
         else:
             existing_root = self._graph.get_root()
             parent_id = existing_root.id if existing_root is not None else None
-        created = apply_batches_to_graph(
-            self._graph,
-            plan,
-            manifest,
-            parent_id=parent_id,
-        )
-        record_batch_snapshot(project_root, manifest, plan)
-        return plan, len(created)
+        created = apply_batches_to_graph(self._graph, plan, manifest, parent_id=parent_id)
+        return len(created)
 
     def replan_with_delta(
         self,

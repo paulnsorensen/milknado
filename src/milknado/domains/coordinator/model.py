@@ -13,6 +13,14 @@ class CoordinatorSession:
     created_at: str
 
 
+class CoordinatorSessionSummary(msgspec.Struct, frozen=True):
+    id: str
+    goal_id: int
+    provider: str
+    created_at: str
+    description: str
+
+
 @dataclass(frozen=True)
 class EntityLink:
     kind: str

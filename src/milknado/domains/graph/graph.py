@@ -21,6 +21,7 @@ import milknado.domains.graph._goal_claims as _goal_claims
 import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._mutations as _mutations
 import milknado.domains.graph._persistence as _persistence
+import milknado.domains.graph._plan_transaction as _plan_transaction
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._rebalance as _rebalance
 import milknado.domains.graph._review_interrupts as _review_interrupts
@@ -102,6 +103,9 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     @property
     def group_connection(self) -> sqlite3.Connection:
         return self._conn
+
+    def plan_transaction(self, expected_revision: int) -> AbstractContextManager[bool]:
+        return _plan_transaction.plan_transaction(self._conn, self._lock, expected_revision)
 
     def group_notifications(self) -> AbstractContextManager[None]:
         return self._pipeline.defer_after()

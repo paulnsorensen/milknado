@@ -10,6 +10,7 @@ from textual.binding import Binding, BindingType
 from typing_extensions import override
 
 from milknado.app.run import ExecutionSnapshot
+from milknado.app.run_overlays import HelpScreen
 from milknado.app.run_source import NodeSnapshotRequest
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource
@@ -63,6 +64,7 @@ class WatchApp(ExecutionSnapshotApp):
         ("q", "quit_all", "Quit"),
         Binding("ctrl+c,ctrl+q", "quit_all", show=False, priority=True),
         ("e", "focus_events", "Events"),
+        ("c", "coordinator_status", "Coordinator"),
         ("enter", "open_detail", "Open"),
         ("x", "focus_changes", "Changes"),
         Binding("up,k", "previous_run", show=False),
@@ -98,6 +100,16 @@ class WatchApp(ExecutionSnapshotApp):
         close = getattr(self.source, "close", None)
         if callable(close):
             _ = close()
+
+    def action_coordinator_status(self) -> None:  # noqa: V105 - Textual binding action
+        status = getattr(self.controller.source, "coordinator_status", None)
+        body = status() if callable(status) else "Coordinator status is unavailable."
+        control = (
+            "Read-only observer. Attach to the owner for safe session input."
+            if self.read_only
+            else "Press i for owner-validated session input."
+        )
+        _ = self.push_screen(HelpScreen(f"Coordinator\n{body}\n{control}"))
 
     def poll(self) -> None:
         self.show_snapshot(self.source.snapshot())

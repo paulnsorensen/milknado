@@ -26,7 +26,7 @@ from milknado.domains.coordinator.recovery import (
     RecoveryRuntime,
 )
 from milknado.domains.graph import ExecutionGroup, GoalReviewDecision, MikadoGraph
-from milknado.domains.planning import Planner, PlanResult
+from milknado.domains.planning import PlanChangeManifest, Planner, PlanProposal
 
 
 def _session(control: CoordinatorControl) -> tuple[str, int]:
@@ -139,13 +139,11 @@ def test_projection_cursor_matches_node_state_across_external_commit(
 
 def test_plan_receipt_serializes_context_path_and_replays(tmp_path: Path) -> None:
     class PlannerStub:
-        def launch(
-            self, goal: str, project_root: Path, *, target_goal_id: int | None = None
-        ) -> PlanResult:
-            assert goal == "Deliver"
-            assert project_root == tmp_path
-            assert target_goal_id is not None
-            return PlanResult(True, 0, tmp_path / "context.md", nodes_created=2)
+        def propose(self, goal: str, project_root: Path, *, target_goal_id: int) -> PlanProposal:
+            assert (goal, project_root) == ("Deliver", tmp_path)
+            assert target_goal_id > 0
+            manifest = PlanChangeManifest("milknado.plan.v2", goal, goal, None, (), ())
+            return PlanProposal(manifest, tmp_path / "context.md")
 
     graph = MikadoGraph(tmp_path / "graph.db")
     control = CoordinatorControl(

@@ -57,6 +57,8 @@ class _RecoveryGraph:
             "timeout_seconds": 300,
             "detail": None,
             "rebased": None,
+            "verification_status": None,
+            "verified_at": None,
         }
         self.finish_succeeds: bool = finish_succeeds
         self.runs: _RecoveryRuns = _RecoveryRuns(self)

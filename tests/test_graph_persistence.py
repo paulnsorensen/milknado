@@ -337,6 +337,25 @@ class TestRunsRepo:
         assert row is not None
         assert row["rebased"] is True
 
+    def test_completion_verifier_receipt_tracks_latest_verdict(self, graph: MikadoGraph) -> None:
+        node_id = self._node(graph)
+        graph.runs.start("verified", node_id, "/l", "2026-01-01T00:00:00+00:00", 600)
+        run = graph.runs.get("verified")
+        assert run is not None and run["verification_status"] is None
+        graph.runs.record_verification("verified", False, "2026-01-01T00:00:10+00:00")
+        run = graph.runs.get("verified")
+        assert run is not None and run["verification_status"] == "rejected"
+        graph.runs.record_verification("verified", True, "2026-01-01T00:00:20+00:00")
+        run = graph.runs.get("verified")
+        assert run is not None
+        assert (run["verification_status"], run["verified_at"]) == (
+            "accepted",
+            "2026-01-01T00:00:20+00:00",
+        )
+        graph.runs.finish("verified", RunResult("done", 0, False, "2026-01-01T00:00:30+00:00"))
+        with pytest.raises(RunFenceLostError):
+            graph.runs.record_verification("verified", False, "2026-01-01T00:00:40+00:00")
+
     def test_finish_run_does_not_clobber_terminal_status(self, graph: MikadoGraph) -> None:
         """First terminal write wins: a late worker finish landing after the run
         was already finalized (e.g. cancel's takeover write) must not flip the

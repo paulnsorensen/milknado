@@ -5,6 +5,7 @@
 import type { ReactElement } from 'react';
 import { useState } from 'react';
 import { setSelection } from '../../app/store';
+import { CoordinatorCockpit } from '../coordinator/CoordinatorCockpit';
 import { NarrowDetail } from './NarrowDetail';
 import { NarrowList } from './NarrowList';
 import { useNarrowViewport } from './useNarrowViewport';
@@ -25,9 +26,12 @@ export function NarrowLayout(): ReactElement {
     setView('detail');
   }
 
-  if (view === 'detail') {
-    return <NarrowDetail onBack={() => setView('list')} />;
-  }
-
-  return <NarrowList onOpen={openNode} />;
+  return (
+    <>
+      <CoordinatorCockpit />
+      {view === 'detail'
+        ? <NarrowDetail onBack={() => setView('list')} />
+        : <NarrowList onOpen={openNode} />}
+    </>
+  );
 }
