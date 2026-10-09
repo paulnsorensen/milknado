@@ -161,7 +161,7 @@ def test_plan_receipt_serializes_context_path_and_replays(tmp_path: Path) -> Non
 def test_recovery_receipt_serializes_worktree_path_and_replays(tmp_path: Path) -> None:
     class ProviderStub:
         def __init__(self) -> None:
-            self.calls = 0
+            self.calls: int = 0
 
         def recover(self, identity: ProviderIdentity, cwd: Path) -> RecoveryOutcome:
             self.calls += 1

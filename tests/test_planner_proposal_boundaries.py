@@ -11,7 +11,11 @@ from milknado.domains.common import NodeKind, NodeSpec
 from milknado.domains.common.protocols import CrgPort
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.planning import Planner, PlanProposal, decode_manifest
-from milknado.domains.planning.ports import PlanningPorts, PlanningProcessResult
+from milknado.domains.planning.ports import (
+    PlanningPorts,
+    PlanningProcessPort,
+    PlanningProcessResult,
+)
 
 
 @final
@@ -39,7 +43,7 @@ class _UnavailableCrg:
         raise RuntimeError("CRG unavailable")
 
 
-def _planner(graph: MikadoGraph, process: _Process) -> Planner:
+def _planner(graph: MikadoGraph, process: PlanningProcessPort) -> Planner:
     return Planner(
         graph,
         cast(CrgPort, cast(object, _UnavailableCrg())),
@@ -60,13 +64,26 @@ def _manifest() -> dict[str, object]:
 
 
 def test_proposal_requires_existing_target_before_external_process(tmp_path: Path) -> None:
+    class NeverCalledProcess:
+        def run_agent(
+            self, context_path: Path, command: str, project_root: Path
+        ) -> PlanningProcessResult:
+            _ = (context_path, command, project_root)
+            raise AssertionError("invalid target reached external process")
+
+        def run_validation(
+            self, command: str, payload: dict[str, object], project_root: Path
+        ) -> PlanningProcessResult:
+            _ = (command, payload, project_root)
+            raise AssertionError("invalid target reached external validation")
+
     graph = MikadoGraph(tmp_path / "graph.db")
-    process = _Process(PlanningProcessResult(0, "unused"))
-
     with pytest.raises(ValueError, match="planning target does not exist"):
-        _ = _planner(graph, process).propose("Deliver", tmp_path, target_goal_id=999_999)
+        _ = _planner(graph, NeverCalledProcess()).propose(
+            "Deliver", tmp_path, target_goal_id=999_999
+        )
 
-    assert not (tmp_path / ".milknado" / "planning-context.md").exists()
+    assert list((tmp_path / ".milknado").glob("planning-context-*.md")) == []
     assert graph.get_all_nodes() == []
     graph.close()
 

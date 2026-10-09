@@ -37,7 +37,7 @@ class _WaitingProcess:
         self.started.set()
         if not self.release.wait(timeout=5):
             raise TimeoutError("planner did not resume")
-        manifest = {
+        manifest: dict[str, object] = {
             "manifest_version": "milknado.plan.v2",
             "goal": "Deliver",
             "goal_summary": "Deliver",
@@ -51,6 +51,26 @@ class _WaitingProcess:
     ) -> PlanningProcessResult:
         _ = (command, payload, project_root)
         return PlanningProcessResult(0)
+
+
+def _assert_pending_receipt(db_path: Path, command_id: str) -> None:
+    with sqlite3.connect(db_path) as conn:
+        receipt = cast(
+            tuple[str] | None,
+            conn.execute(
+                "SELECT status FROM coordinator_web_receipts WHERE command_id = ?",
+                (command_id,),
+            ).fetchone(),
+        )
+        proposal_count = cast(
+            tuple[int] | None,
+            conn.execute(
+                "SELECT COUNT(*) FROM coordinator_plan_proposals WHERE id = ?",
+                (command_id,),
+            ).fetchone(),
+        )
+    assert receipt == ("unconfirmed",)
+    assert proposal_count == (0,)
 
 
 def test_snapshot_completes_while_planner_waits_and_retry_runs_once(tmp_path: Path) -> None:
@@ -67,20 +87,7 @@ def test_snapshot_completes_while_planner_waits_and_retry_runs_once(tmp_path: Pa
             first = pool.submit(control.send_coordinator_command, session_id, command)
             assert process.started.wait(timeout=2)
             try:
-                with sqlite3.connect(graph.db_path) as conn:
-                    receipt = cast(
-                        tuple[str] | None,
-                        conn.execute(
-                            "SELECT status FROM coordinator_web_receipts WHERE command_id = ?",
-                            (command.command_id,),
-                        ).fetchone(),
-                    )
-                    proposal_count = conn.execute(
-                        "SELECT COUNT(*) FROM coordinator_plan_proposals WHERE id = ?",
-                        (command.command_id,),
-                    ).fetchone()
-                assert receipt == ("unconfirmed",)
-                assert proposal_count == (0,)
+                _assert_pending_receipt(graph.db_path, command.command_id)
                 snapshot = pool.submit(control.read_coordinator_snapshot, session_id, 0)
                 assert snapshot.result(timeout=1).goal.description == "Deliver"
                 retry = control.send_coordinator_command(session_id, command)

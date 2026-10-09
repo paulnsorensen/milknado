@@ -121,6 +121,18 @@ def test_decided_proposal_refuses_conflicting_decision(
     graph.close()
 
 
+def test_unknown_proposal_status_cannot_be_accepted_as_pending(tmp_path: Path) -> None:
+    graph, planning, session = _planning_state(tmp_path)
+    original = _proposal(graph, session)
+    stored = transition_proposal(graph.group_connection, original.id, "pending", "unexpected")
+
+    with pytest.raises(ValueError, match="plan proposal state changed"):
+        _ = planning.decide_plan(session, _planner(graph), tmp_path, original.id, "accepted")
+
+    assert get_proposal(graph.group_connection, original.id) == stored
+    graph.close()
+
+
 def test_empty_plan_identity_does_not_write_history(tmp_path: Path) -> None:
     graph, planning, session = _planning_state(tmp_path)
     with pytest.raises(ValueError, match="plan identity must not be empty"):

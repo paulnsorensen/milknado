@@ -209,7 +209,7 @@ class CoordinatorControl:
             case RequestGoalReview():
                 return "accepted", request_coordinator_review(workflow, session, command)
             case DecideGoalReview():
-                return self._decide_review(session, command)
+                return decide_coordinator_review(self._graph, self._services, session, command)
             case RuntimeAction() | Recover():
                 return self._runtime_command(session, command)
 
@@ -270,11 +270,6 @@ class CoordinatorControl:
             ),
         )
         return None
-
-    def _decide_review(
-        self, session: CoordinatorSession, command: DecideGoalReview
-    ) -> tuple[Literal["accepted", "unavailable"], object]:
-        return decide_coordinator_review(self._graph, self._services, session, command)
 
     def _runtime_command(
         self, session: CoordinatorSession, command: RuntimeAction | Recover
