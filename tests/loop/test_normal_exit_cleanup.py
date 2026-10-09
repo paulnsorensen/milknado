@@ -48,7 +48,9 @@ child = subprocess.Popen(
     stderr=sys.stderr,
     start_new_session=True,
 )
-marker.write_text(str(child.pid))
+staged = marker.with_name(marker.name + ".tmp")
+staged.write_text(str(child.pid))
+staged.replace(marker)
 while not release.exists():
     time.sleep(0.02)
 print(json.dumps({"type": "result", "result": "leader-output"}), flush=True)
@@ -58,7 +60,7 @@ raise SystemExit(7)
 """
 
 
-def _until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 30) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():

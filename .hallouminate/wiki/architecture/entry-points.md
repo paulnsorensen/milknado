@@ -1,6 +1,7 @@
 # Entry Points — CLI & MCP Server
 
-Milknado ships two executables, both declared in `pyproject.toml` `[project.scripts]`:
+Entry Points — CLI & MCP Server defines Milknado's two executable interfaces.
+The `[project.scripts]` section in `pyproject.toml` declares both executables:
 
 - `milknado` → `milknado.cli:app` — a Typer CLI for humans.
 - `milknado-mcp` → `milknado.mcp.server:main` — a FastMCP **stdio** server for agent
@@ -117,6 +118,19 @@ FastMCP evaluates MCP tool return annotations through Pydantic when decorators r
 [^typed-dict-dependency]: `pyproject.toml:9,21-22`; PR #325 commit `5889c635a07627461d6acab44a92adb6ae90ff17`
 
 _Source: PR #325 affinage · Updated: 2026-07-25 · Supersedes: none_
+
+### Dependency compatibility
+
+Milknado's MCP server and CRG adapter share the FastMCP dependency.
+PyPI's code-review-graph package metadata requires FastMCP below version 4 for release 2.3.9.[^crg-metadata]
+PR 515 therefore uses `fastmcp>=3.4.8,<4` and keeps every other requested dependency floor.[^pr-515-constraint]
+Regenerate `uv.lock` after manifest changes. Verify the locked install and run `just check-llm` before publication.[^pr-515-lock]
+
+[^crg-metadata]: [code-review-graph package metadata](../sources/code-review-graph.md), verified 2026-10-08.
+[^pr-515-constraint]: `pyproject.toml:12-13`; PR #515 dependency resolution repair.
+[^pr-515-lock]: `uv.lock`; `.github/workflows/codeql.yml:39`; successful locked install and project gate on 2026-10-08.
+
+_Source: PR #515 verified dependency repair and PyPI metadata · Updated: 2026-10-08 · Supersedes: none_
 
 ## stdio gotcha
 

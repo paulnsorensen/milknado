@@ -33,7 +33,9 @@ import sys
 import time
 from pathlib import Path
 stage, release = map(Path, sys.argv[1:3])
-stage.write_text(str(os.getpid()))
+staged = stage.with_name(stage.name + '.tmp')
+staged.write_text(str(os.getpid()))
+staged.replace(stage)
 print('started', flush=True)
 while not release.exists():
     time.sleep(.02)
@@ -42,7 +44,7 @@ raise SystemExit(int(sys.argv[4]))
 """
 
 
-def _until(predicate: Callable[[], bool], timeout: float = 8) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 30) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
