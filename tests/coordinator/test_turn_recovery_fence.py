@@ -13,21 +13,23 @@ from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecov
 from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 from milknado.domains.coordinator.control_models import Recover, StartGoal, StartTurn
-from milknado.domains.coordinator.control_services import TurnRuntimeRequest
+from milknado.domains.coordinator.control_services import (
+    TurnRunResult,
+    TurnRuntimeRequest,
+    TurnRuntimeResult,
+)
 from milknado.domains.coordinator.recovery import (
     ProviderIdentity,
     RecoveryOutcome,
     RecoveryRuntime,
 )
 from milknado.domains.graph import ExecutionGroup, MikadoGraph, WorkerEvidenceStore
-from milknado.loop._agent import AgentResult
-from milknado.loop.sessions import RuntimeResult
 
 
 class Runtime:
-    def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
         request.hooks.identity("thread")
-        return RuntimeResult(AgentResult(0, session_id="thread", terminal_confirmed=False))
+        return TurnRuntimeResult(TurnRunResult("thread", False))
 
 
 class Provider:

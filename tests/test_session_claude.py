@@ -603,7 +603,7 @@ def test_tool_result_keeps_original_name_without_exposing_output(tmp_path: Path)
     )
 
 
-def test_tool_results_preserve_content_and_pending_prompt_identity(tmp_path: Path) -> None:
+def test_tool_results_redact_content_and_preserve_pending_prompt_identity(tmp_path: Path) -> None:
     session = _session(tmp_path)
     started = session.start("go")
     echoed = session.receive(

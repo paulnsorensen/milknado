@@ -13,7 +13,7 @@ from milknado.domains.graph import (
     TaskAttempt,
 )
 from milknado.domains.planning import Planner
-from milknado.loop.sessions import ProviderSessionIdentity, RuntimeResult, RuntimeSession
+from milknado.loop.sessions import RuntimeSession
 
 
 class ReviewDecisionPort(Protocol):
@@ -34,17 +34,35 @@ class TurnRuntimeHooks:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnIdentity:
+    family: str
+    session_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRunResult:
+    session_id: str | None
+    terminal_confirmed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TurnRuntimeResult:
+    run: TurnRunResult | None
+    recovery_turn_confirmed: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class TurnRuntimeRequest:
     provider: str
     prompt: str
     group: ExecutionGroup | None
-    identity: ProviderSessionIdentity | None
+    identity: TurnIdentity | None
     hooks: TurnRuntimeHooks
     attempt: TaskAttempt | None = None
 
 
 class TurnRuntimePort(Protocol):
-    def run(self, request: TurnRuntimeRequest) -> RuntimeResult: ...
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult: ...
 
 
 @dataclass(frozen=True, slots=True)

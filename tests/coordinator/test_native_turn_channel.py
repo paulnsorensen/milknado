@@ -24,6 +24,7 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import (
     TurnPreflightError,
+    TurnRunResult,
     TurnRuntimeHooks,
     TurnRuntimeRequest,
 )
@@ -95,7 +96,7 @@ def test_native_turn_registers_active_channel_and_protected_spawn(
             TurnRuntimeHooks("turn", identities.append, events.append),
         )
     )
-    assert result.run is not None and result.run.session_id == "thread"
+    assert result.run == TurnRunResult("thread", True)
     assert identities == ["thread"]
     assert any(event.kind == "assistant" and event.text == "Streamed answer" for event in events)
     assert adapter.runtime_session("thread") is None

@@ -12,9 +12,7 @@ from milknado.domains.coordinator.persistence import (
     links_for_session,
     provider_bindings_for_session,
 )
-from milknado.domains.coordinator.recovery_receipts import (
-    record_recovery_receipt as _record_receipt,
-)
+from milknado.domains.coordinator.recovery_receipts import record_recovery_receipt
 from milknado.domains.graph import ExecutionGroup, ExecutionGroupStore
 
 RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
@@ -222,16 +220,9 @@ def _resolve_sessions(
                 raise ValueError("execution group worktree identity is invalid")
             resolved.append(_ResolvedSession(binding, identity, path, group))
         expected.discard(("provider_session", identity.session_id))
-        expected.discard(("execution_group", binding.scope_id))
     if expected:
-        raise ValueError("coordinator has unbound provider or execution group links")
+        raise ValueError("coordinator has unbound provider session links")
     return tuple(resolved)
-
-
-def record_turn_recovery(
-    conn: sqlite3.Connection, session_id: str, receipt: RecoveryReceipt
-) -> RecoveryReceipt:
-    return _record_receipt(conn, session_id, receipt)
 
 
 def recover_coordinator(  # noqa: V103
@@ -259,7 +250,7 @@ def recover_coordinator(  # noqa: V103
         if group is not None
     }
     receipts = tuple(
-        _record_receipt(
+        record_recovery_receipt(
             conn,
             session_id,
             RecoveryReceipt(
@@ -276,7 +267,7 @@ def recover_coordinator(  # noqa: V103
     )
     bound_groups = {item.binding.scope_id for item in resolved if item.group is not None}
     receipts += tuple(
-        _record_receipt(
+        record_recovery_receipt(
             conn,
             session_id,
             RecoveryReceipt(

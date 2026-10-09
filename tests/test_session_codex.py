@@ -664,7 +664,7 @@ def test_missing_delta_item_id_is_not_silently_rendered(tmp_path: Path) -> None:
         ("item/fileChange/outputDelta", "tool"),
     ),
 )
-def test_real_codex_delta_frames_preserve_reasoning_and_tool_output(
+def test_real_codex_delta_frames_keep_assistant_text_and_redact_tool_output(
     tmp_path: Path, method: str, kind: SessionKind
 ) -> None:
     session = CodexSession(("codex",), tmp_path)
@@ -684,7 +684,7 @@ def test_real_codex_delta_frames_preserve_reasoning_and_tool_output(
     )
 
 
-def test_real_mcp_progress_frame_preserves_tool_output(tmp_path: Path) -> None:
+def test_real_mcp_progress_frame_redacts_tool_output(tmp_path: Path) -> None:
     session = CodexSession(("codex",), tmp_path)
 
     streamed = session.receive(

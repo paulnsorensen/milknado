@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Thread
 from typing import cast
 
+import msgspec
 import pytest
 from typing_extensions import override
 
@@ -21,7 +22,13 @@ from milknado.domains.coordinator.control_models import (
     StartGoal,
     StartTurn,
 )
-from milknado.domains.coordinator.control_services import TurnRuntimeHooks, TurnRuntimeRequest
+from milknado.domains.coordinator.control_services import (
+    TurnIdentity,
+    TurnRunResult,
+    TurnRuntimeHooks,
+    TurnRuntimeRequest,
+    TurnRuntimeResult,
+)
 from milknado.domains.coordinator.persistence import provider_bindings_for_session
 from milknado.domains.coordinator.recovery import (
     ProviderIdentity,
@@ -34,17 +41,17 @@ from milknado.loop.sessions import (
     ProviderSessionIdentity,
     RecoveryReceipt,
     RuntimeRequest,
-    RuntimeResult,
 )
+from milknado.loop.sessions import RuntimeResult as NativeRuntimeResult
 
 
 class TurnRuntime:
     def __init__(self, graph: MikadoGraph, *, terminal: bool = True) -> None:
         self.graph: MikadoGraph = graph
         self.terminal: bool = terminal
-        self.calls: list[ProviderSessionIdentity | None] = []
+        self.calls: list[TurnIdentity | None] = []
 
-    def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
         assert request.provider == "codex" and request.prompt == "Work"
         assert request.group is None or Path(request.group.worktree_path).is_absolute()
         acquired: list[bool] = []
@@ -60,14 +67,8 @@ class TurnRuntime:
         self.calls.append(request.identity)
         provider_id = request.identity.session_id if request.identity else "provider-confirmed"
         request.hooks.identity(provider_id)
-        recovery = (
-            RecoveryReceipt(request.identity, "resumed", self.terminal)
-            if request.identity
-            else None
-        )
-        return RuntimeResult(
-            AgentResult(0, session_id=provider_id, terminal_confirmed=self.terminal), recovery
-        )
+        recovery = self.terminal if request.identity else None
+        return TurnRuntimeResult(TurnRunResult(provider_id, self.terminal), recovery)
 
 
 def _started(
@@ -85,11 +86,14 @@ def test_coordinator_first_turn_binds_provider_then_resumes_with_receipt(tmp_pat
     control, session_id, _ = _started(graph, tmp_path, runtime)
     first = control.send_coordinator_command(session_id, StartTurn("turn-1", "Work"))
     assert first.status == "accepted"
+    assert msgspec.json.encode(first.result) == (
+        b'{"provider_session_id":"provider-confirmed","turn_id":"turn-1"}'
+    )
     assert control.send_coordinator_command(session_id, StartTurn("turn-1", "Work")) == first
     assert runtime.calls == [None]
     second = control.send_coordinator_command(session_id, StartTurn("turn-2", "Work"))
     assert second.status == "accepted"
-    assert runtime.calls[1] == ProviderSessionIdentity("codex", "provider-confirmed")
+    assert runtime.calls[1] == TurnIdentity("codex", "provider-confirmed")
     snapshot = control.read_coordinator_snapshot(session_id, 0)
     assert [
         (item.scope_kind, item.provider_session_id) for item in snapshot.provider_bindings
@@ -218,9 +222,16 @@ def test_native_turn_adapter_uses_configured_command_and_exact_resume(
 ) -> None:
     requests: list[RuntimeRequest] = []
 
-    def execute(request: RuntimeRequest) -> RuntimeResult:
+    def execute(request: RuntimeRequest) -> NativeRuntimeResult:
         requests.append(request)
-        return RuntimeResult(AgentResult(0, session_id="thread", terminal_confirmed=True))
+        if request.spec.prompt == "No run":
+            return NativeRuntimeResult(None)
+        recovery = (
+            RecoveryReceipt(request.resume.identity, "resumed", True) if request.resume else None
+        )
+        return NativeRuntimeResult(
+            AgentResult(0, session_id="thread", terminal_confirmed=True), recovery
+        )
 
     monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", execute)
     adapter = NativeCoordinatorTurns(
@@ -233,14 +244,19 @@ def test_native_turn_adapter_uses_configured_command_and_exact_resume(
         ),
     )
     hooks = TurnRuntimeHooks("turn", lambda _identity: None, lambda _event: None)
-    _ = adapter.run(TurnRuntimeRequest("codex", "Work", None, None, hooks))
-    identity = ProviderSessionIdentity("codex", "thread")
-    _ = adapter.run(TurnRuntimeRequest("codex", "Work", None, identity, hooks))
+    first = adapter.run(TurnRuntimeRequest("codex", "Work", None, None, hooks))
+    identity = TurnIdentity("codex", "thread")
+    resumed = adapter.run(TurnRuntimeRequest("codex", "Work", None, identity, hooks))
+    absent = adapter.run(TurnRuntimeRequest("codex", "No run", None, None, hooks))
+    assert first == TurnRuntimeResult(TurnRunResult("thread", True))
+    assert resumed == TurnRuntimeResult(TurnRunResult("thread", True), True)
+    assert absent == TurnRuntimeResult(None)
     assert [request.spec.cmd for request in requests] == [
         ["codex", "exec", "--sandbox", "workspace-write"]
-    ] * 2
+    ] * 3
     assert requests[0].resume is None
-    assert requests[1].resume is not None and requests[1].resume.identity == identity
+    assert requests[1].resume is not None
+    assert requests[1].resume.identity == ProviderSessionIdentity("codex", "thread")
     assert requests[1].spec.cwd == tmp_path
 
 
@@ -296,9 +312,9 @@ def test_first_native_turn_rejects_effective_cwd_override(
 ) -> None:
     requests: list[RuntimeRequest] = []
 
-    def capture(request: RuntimeRequest) -> RuntimeResult:
+    def capture(request: RuntimeRequest) -> NativeRuntimeResult:
         requests.append(request)
-        return RuntimeResult(AgentResult(0))
+        return NativeRuntimeResult(AgentResult(0))
 
     monkeypatch.setattr("milknado.adapters.coordinator_turns.start_or_resume", capture)
     adapter = NativeCoordinatorTurns(
@@ -355,7 +371,7 @@ def test_known_identity_has_submitted_evidence_before_provider_runs(tmp_path: Pa
 
     class EvidenceRuntime(TurnRuntime):
         @override
-        def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+        def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
             if request.identity is not None:
                 snapshot = control.read_coordinator_snapshot(session_id, 0)
                 assert (
@@ -382,7 +398,7 @@ def test_runtime_exception_keeps_launch_fenced_until_worker_is_verified(tmp_path
 
     class FailedRuntime(TurnRuntime):
         @override
-        def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+        def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
             request.hooks.identity("thread")
             raise OSError("worker exit is not verified")
 
@@ -401,15 +417,15 @@ def test_runtime_exception_keeps_launch_fenced_until_worker_is_verified(tmp_path
 
 
 class ScriptedRuntime:
-    def __init__(self, script: Callable[[TurnRuntimeRequest], RuntimeResult]) -> None:
-        self.script: Callable[[TurnRuntimeRequest], RuntimeResult] = script
+    def __init__(self, script: Callable[[TurnRuntimeRequest], TurnRuntimeResult]) -> None:
+        self.script: Callable[[TurnRuntimeRequest], TurnRuntimeResult] = script
 
-    def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
         return self.script(request)
 
 
 def _scripted(
-    tmp_path: Path, script: Callable[[TurnRuntimeRequest], RuntimeResult]
+    tmp_path: Path, script: Callable[[TurnRuntimeRequest], TurnRuntimeResult]
 ) -> tuple[MikadoGraph, CoordinatorControl, str]:
     graph = MikadoGraph(tmp_path / "graph.db")
     control = CoordinatorControl(
@@ -419,9 +435,9 @@ def _scripted(
     return graph, control, cast(str, cast(dict[str, object], receipt.result)["id"])
 
 
-def _confirmed(request: TurnRuntimeRequest) -> RuntimeResult:
+def _confirmed(request: TurnRuntimeRequest) -> TurnRuntimeResult:
     request.hooks.identity("provider")
-    return RuntimeResult(AgentResult(0, session_id="provider", terminal_confirmed=True))
+    return TurnRuntimeResult(TurnRunResult("provider", True))
 
 
 def test_turn_with_blank_prompt_is_rejected_before_launch(tmp_path: Path) -> None:
@@ -465,9 +481,9 @@ def test_turn_provider_must_match_existing_binding(tmp_path: Path) -> None:
 
 
 def test_empty_provider_identity_is_unavailable_and_binds_nothing(tmp_path: Path) -> None:
-    def blank_identity(request: TurnRuntimeRequest) -> RuntimeResult:
+    def blank_identity(request: TurnRuntimeRequest) -> TurnRuntimeResult:
         request.hooks.identity("")
-        return RuntimeResult(None)
+        return TurnRuntimeResult(None)
 
     graph, control, session_id = _scripted(tmp_path, blank_identity)
     receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
@@ -480,9 +496,9 @@ def test_empty_provider_identity_is_unavailable_and_binds_nothing(tmp_path: Path
 
 
 def test_permission_event_before_identity_is_unavailable(tmp_path: Path) -> None:
-    def early_permission(request: TurnRuntimeRequest) -> RuntimeResult:
+    def early_permission(request: TurnRuntimeRequest) -> TurnRuntimeResult:
         request.hooks.event(SessionEvent(kind="permission", text="Approve", event_id="ask"))
-        return RuntimeResult(None)
+        return TurnRuntimeResult(None)
 
     graph, control, session_id = _scripted(tmp_path, early_permission)
     receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
@@ -494,7 +510,7 @@ def test_permission_event_before_identity_is_unavailable(tmp_path: Path) -> None
 
 
 def test_turn_without_run_result_is_unavailable(tmp_path: Path) -> None:
-    graph, control, session_id = _scripted(tmp_path, lambda _request: RuntimeResult(None))
+    graph, control, session_id = _scripted(tmp_path, lambda _request: TurnRuntimeResult(None))
     receipt = control.send_coordinator_command(session_id, StartTurn("turn", "Work"))
     assert (receipt.status, receipt.result) == (
         "unavailable",
@@ -504,10 +520,10 @@ def test_turn_without_run_result_is_unavailable(tmp_path: Path) -> None:
 
 
 def test_resumed_turn_must_keep_bound_session(tmp_path: Path) -> None:
-    def switching(request: TurnRuntimeRequest) -> RuntimeResult:
+    def switching(request: TurnRuntimeRequest) -> TurnRuntimeResult:
         if request.identity is None:
             return _confirmed(request)
-        return RuntimeResult(AgentResult(0, session_id="other", terminal_confirmed=True))
+        return TurnRuntimeResult(TurnRunResult("other", True))
 
     graph, control, session_id = _scripted(tmp_path, switching)
     assert control.send_coordinator_command(session_id, StartTurn("first", "Work")).status == (
@@ -522,11 +538,11 @@ def test_resumed_turn_must_keep_bound_session(tmp_path: Path) -> None:
 
 
 def test_resumed_turn_cannot_confirm_a_different_identity(tmp_path: Path) -> None:
-    def switching(request: TurnRuntimeRequest) -> RuntimeResult:
+    def switching(request: TurnRuntimeRequest) -> TurnRuntimeResult:
         if request.identity is None:
             return _confirmed(request)
         request.hooks.identity("other")
-        return RuntimeResult(None)
+        return TurnRuntimeResult(None)
 
     graph, control, session_id = _scripted(tmp_path, switching)
     _ = control.send_coordinator_command(session_id, StartTurn("first", "Work"))

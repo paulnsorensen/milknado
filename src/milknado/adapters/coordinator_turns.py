@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from threading import Event
 from typing import Literal, cast, final
@@ -19,7 +20,13 @@ from milknado.domains.common import (
     resolve_execution_agent_command,
     validate_worker_argv,
 )
-from milknado.domains.coordinator import TurnPreflightError, TurnRuntimeRequest
+from milknado.domains.coordinator import (
+    TurnIdentity,
+    TurnPreflightError,
+    TurnRunResult,
+    TurnRuntimeRequest,
+    TurnRuntimeResult,
+)
 from milknado.domains.graph import MikadoGraph, TaskAttempt
 from milknado.loop._agent import AgentRunSpec
 from milknado.loop._process_contract import ProtectionContext
@@ -30,11 +37,11 @@ from milknado.loop.sessions import (
     ProviderSessionIdentity,
     RuntimeRecoveryRequest,
     RuntimeRequest,
-    RuntimeResult,
     RuntimeSession,
     SessionChannel,
     start_or_resume,
 )
+from milknado.loop.sessions import RuntimeResult as NativeRuntimeResult
 from milknado.loop.sessions._codex_policy import translate_argv
 
 
@@ -131,33 +138,10 @@ class NativeCoordinatorTurns:
                 attempt.attempt_id, attempt.node_id, invocation_id, owner, actions, *permissions
             )
 
-        def drain() -> tuple[SessionInput, ...]:
-            return tuple(
-                SessionInput(
-                    action=command.action,
-                    text=command.text,
-                    request_id=command.permission_id or command.command_id,
-                    command_id=command.command_id,
-                )
-                for command in graph.commands.claim_pending(attempt.attempt_id, owner)
-            )
-
-        def record(command: SessionInput, state: str) -> None:
-            stored = graph.commands.command(command.command_id)
-            transition = {
-                "submitted": graph.commands.submit,
-                "delivered": graph.commands.deliver,
-                "rejected": graph.commands.reject,
-                "unconfirmed": graph.commands.unconfirm,
-            }.get(state)
-            if stored is not None and transition is not None:
-                _ = transition(stored)
-
         channel = SessionChannel(
             sink=request.hooks.event,
-            capability_sink=publish,
-            durable_drain=drain,
-            command_state_sink=record,
+            durable_drain=lambda: self._drain_commands(graph, attempt, owner),
+            command_state_sink=lambda command, state: self._record_command(graph, command, state),
         )
         channel.set_capability_sink(
             publish,
@@ -166,6 +150,56 @@ class NativeCoordinatorTurns:
             ),
         )
         return channel
+
+    def _drain_commands(
+        self, graph: MikadoGraph, attempt: TaskAttempt, owner: str
+    ) -> tuple[SessionInput, ...]:
+        return tuple(
+            SessionInput(
+                action=command.action,
+                text=command.text,
+                request_id=command.permission_id or command.command_id,
+                command_id=command.command_id,
+            )
+            for command in graph.commands.claim_pending(attempt.attempt_id, owner)
+        )
+
+    def _record_command(self, graph: MikadoGraph, command: SessionInput, state: str) -> None:
+        stored = graph.commands.command(command.command_id)
+        transition = {
+            "submitted": graph.commands.submit,
+            "delivered": graph.commands.deliver,
+            "rejected": graph.commands.reject,
+            "unconfirmed": graph.commands.unconfirm,
+        }.get(state)
+        if stored is not None and transition is not None:
+            _ = transition(stored)
+
+    def _registration_callback(
+        self, request: TurnRuntimeRequest, channel: SessionChannel, active_ids: set[str]
+    ) -> Callable[[str], None]:
+        def register(provider_id: str) -> None:
+            with self._lock:
+                if provider_id in self._active:
+                    raise ValueError("provider session is already active")
+            request.hooks.identity(provider_id)
+            incarnation = channel.capture_incarnation()
+            if incarnation is None:
+                raise RuntimeError("provider session has no active channel")
+            session = RuntimeSession(
+                ProviderSessionIdentity(
+                    cast(Literal["claude", "codex"], request.provider), provider_id
+                ),
+                channel,
+                incarnation,
+            )
+            with self._lock:
+                if provider_id in self._active:
+                    raise ValueError("provider session is already active")
+                self._active[provider_id] = session
+            active_ids.add(provider_id)
+
+        return register
 
     def _prepare(self, request: TurnRuntimeRequest) -> tuple[Path, list[str]]:
         provider, group = request.provider, request.group
@@ -182,8 +216,23 @@ class NativeCoordinatorTurns:
         except ValueError as error:
             raise TurnPreflightError(str(error)) from error
 
-    def run(self, request: TurnRuntimeRequest) -> RuntimeResult:
-        provider, prompt = request.provider, request.prompt
+    def _resume(self, identity: TurnIdentity | None, cwd: Path) -> RuntimeRecoveryRequest | None:
+        if identity is None:
+            return None
+        native_identity = ProviderSessionIdentity(
+            cast(Literal["claude", "codex"], identity.family), identity.session_id
+        )
+        return RuntimeRecoveryRequest(native_identity, cwd)
+
+    def _result(self, native: NativeRuntimeResult) -> TurnRuntimeResult:
+        run = native.run
+        return TurnRuntimeResult(
+            TurnRunResult(run.session_id, run.terminal_confirmed) if run else None,
+            native.recovery.turn_confirmed if native.recovery else None,
+        )
+
+    def run(self, request: TurnRuntimeRequest) -> TurnRuntimeResult:
+        prompt = request.prompt
         group, identity, hooks = request.group, request.identity, request.hooks
         cwd, argv = self._prepare(request)
         channel = (
@@ -194,25 +243,6 @@ class NativeCoordinatorTurns:
         with self._lock:
             self._stops[hooks.turn_id] = stop
 
-        def register(provider_id: str) -> None:
-            with self._lock:
-                if provider_id in self._active:
-                    raise ValueError("provider session is already active")
-            hooks.identity(provider_id)
-            incarnation = channel.capture_incarnation()
-            if incarnation is None:
-                raise RuntimeError("provider session has no active channel")
-            session = RuntimeSession(
-                ProviderSessionIdentity(cast(Literal["claude", "codex"], provider), provider_id),
-                channel,
-                incarnation,
-            )
-            with self._lock:
-                if provider_id in self._active:
-                    raise ValueError("provider session is already active")
-                self._active[provider_id] = session
-            active_ids.add(provider_id)
-
         spec = AgentRunSpec(
             argv,
             prompt,
@@ -222,11 +252,11 @@ class NativeCoordinatorTurns:
             iteration=1,
             cwd=cwd,
             spawn_worker=lambda options: self._spawn(options, hooks.turn_id, request.attempt),
-            on_session_id=register,
+            on_session_id=self._registration_callback(request, channel, active_ids),
         )
-        resume = RuntimeRecoveryRequest(identity, cwd) if identity is not None else None
+        resume = self._resume(identity, cwd)
         try:
-            return start_or_resume(RuntimeRequest(spec, channel, resume))
+            return self._result(start_or_resume(RuntimeRequest(spec, channel, resume)))
         finally:
             with self._lock:
                 _ = self._stops.pop(hooks.turn_id, None)

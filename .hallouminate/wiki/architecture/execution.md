@@ -497,6 +497,25 @@ The full gate remains pending behind the selection-writer freeze barrier.[^fixtu
 
 [^fixture-implemented]: `task38_explicit_fixture_cure`, `task38_recovery_review`, and `task38_explicit_fixture_taste` handbacks on 2026-09-13; `tests/test_session_lifecycle.py`, `tests/test_session_failure_paths.py`, and `tests/test_session_runtime.py` in `milknado-38-tree-left-shared-workspace-and-2`.
 
+
+
+### Coordinator native turn contract ownership
+
+Coordinator native turn contracts separate coordinator-owned identity and result values from native provider runtime values.[^coordinator-turn-contract]
+`TurnIdentity` carries the provider family and session identity.
+`TurnRunResult` carries the session identity and terminal confirmation.
+`TurnRuntimeResult` carries the run result and optional recovery-turn confirmation.[^coordinator-turn-contract]
+
+`NativeCoordinatorTurns` converts coordinator identity into native recovery input inside the adapter.
+The adapter converts native runtime results into coordinator values before returning them.[^coordinator-turn-adapter]
+`finish_turn` retains its identity, terminal-result, and recovery-confirmation checks.
+The receipt still exposes `provider_session_id` and `turn_id` through the existing JSON conversion boundary.[^coordinator-turn-receipt]
+
+These value types do not replace task-dispatch run identities or create the graph coordinator-run entity described above.
+This note describes retained local corrections for PR #521, not a merged release.
+Receipt typing, stream storage, and guard findings remain deferred.
+This note does not establish merge readiness.
+
 ## Deposit channel — worker → coordinator results (#122)
 
 The log-tail `summary` is lossy: a worker's complete deliverable rarely survives
@@ -747,3 +766,9 @@ sentinel.
 [^deep-module-implementation]: P0 `ad0110b`, P1 `cae3a54`, P2 `568c45e`, P3 `95862f8`; `loop/_process_lifecycle.py:85-198`, `execution/run_loop/_scheduler.py:73-165`, `execution/run_loop/_projection.py:64-78`, and `execution/_node_context.py:32-42`. Per-unit `just check-llm` gates pass. Runtime coverage includes `tests/loop/test_lifecycle_acceptance.py`, `tests/test_orphan_worker_recovery.py`, `tests/test_run_loop_scheduler.py`, and `tests/test_adversarial_review_runtime.py`.
 
 _Source: PR #488 and the verified deep-module commits cited above · Updated: 2026-09-30 · Supersedes: pending orphan-worker implementation, absent durable recovery, shared driver mixin, and combined scheduling/presentation ownership. The accepted F-5/F-7–F-12 limits remain._
+
+[^coordinator-turn-contract]: `src/milknado/domains/coordinator/control_services.py:36-65`; `src/milknado/domains/coordinator/__init__.py:7-14,45-50` in the retained local PR #521 correction.
+[^coordinator-turn-adapter]: `src/milknado/adapters/coordinator_turns.py:219-259` in the retained local PR #521 correction.
+[^coordinator-turn-receipt]: `src/milknado/domains/coordinator/turns.py:172-215`; `src/milknado/domains/coordinator/receipt_results.py:93-128` in the retained local PR #521 correction.
+
+_Source: PR #521 retained local coordinator-contract correction, pending publication · Updated: 2026-10-08 · Supersedes: no existing claim. Guard, receipt-typing, and stream-storage decisions remain deferred._

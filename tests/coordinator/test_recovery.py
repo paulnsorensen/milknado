@@ -265,6 +265,15 @@ def test_missing_coordinator_and_unlinked_session_fail_closed(
         )
     assert result.receipts == ()
     assert provider.calls == []
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        link_entity(conn, coordinator_id, "provider_session", "unbound")
+        with pytest.raises(ValueError, match="unbound provider session links"):
+            _ = recover_coordinator(
+                conn,
+                coordinator_id,
+                RecoveryRuntime(graph.groups, tmp_path, provider, WorktreePort()),
+            )
+    assert provider.calls == []
 
 
 def test_turn_transition_and_control_event_commit_together(graph: MikadoGraph) -> None:

@@ -50,3 +50,7 @@
 
 2026-09-30 · a9c459c58f9eb970 · merged · architecture/graph.md · Distinguish display roots from canonical domain roots. Record snapshot-order preservation.
 
+
+
+2026-10-08 · fc97fa2c79e32f07 · merged · architecture/execution.md · Record retained local PR #521 coordinator-owned native-turn values and adapter mapping. Preserve receipt meaning and deferred decisions. All three frozen probes return this page at rank 1; publication remains pending.
+

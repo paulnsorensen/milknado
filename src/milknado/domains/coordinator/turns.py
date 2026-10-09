@@ -5,9 +5,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
+import msgspec
+
 from milknado.domains.common import SessionEvent
 from milknado.domains.coordinator.control_models import StartTurn
-from milknado.domains.coordinator.control_services import TurnRuntimeHooks
+from milknado.domains.coordinator.control_services import (
+    TurnIdentity,
+    TurnRuntimeHooks,
+    TurnRuntimeResult,
+)
 from milknado.domains.coordinator.journal import append_control_event
 from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.coordinator.persistence import provider_bindings_for_session
@@ -16,22 +22,21 @@ from milknado.domains.coordinator.recovery import (
     ProviderTurn,
     RecoveryReceipt,
     record_provider_turn,
-    record_turn_recovery,
 )
+from milknado.domains.coordinator.recovery_receipts import record_recovery_receipt
 from milknado.domains.graph import (
     ExecutionGroup,
     MikadoGraph,
     TaskAttempt,
     bind_execution_group_provider,
 )
-from milknado.loop.sessions import ProviderSessionIdentity, RuntimeResult
 
 
 @dataclass(frozen=True, slots=True)
 class TurnLaunch:
     provider: str
     group: ExecutionGroup | None
-    identity: ProviderSessionIdentity | None
+    identity: TurnIdentity | None
     scope_kind: str
     scope_id: str
     attempt: TaskAttempt | None
@@ -108,13 +113,7 @@ def prepare_turn(
         raise ValueError("unsupported turn provider")
     if group and group.provider_session_id != (binding.provider_session_id if binding else None):
         raise ValueError("execution group provider binding mismatch")
-    identity = (
-        ProviderSessionIdentity(
-            cast(Literal["claude", "codex"], provider), binding.provider_session_id
-        )
-        if binding
-        else None
-    )
+    identity = TurnIdentity(provider, binding.provider_session_id) if binding else None
     attempt = (
         TaskAttempt(
             group.id,
@@ -170,12 +169,17 @@ def bind_confirmed_identity(
         )
 
 
+class TurnResponse(msgspec.Struct, frozen=True):
+    provider_session_id: str
+    turn_id: str
+
+
 def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and worktree
     conn: sqlite3.Connection,
     session_id: str,
     command: StartTurn,
     launch: TurnLaunch,
-    result: RuntimeResult,
+    result: TurnRuntimeResult,
     root: Path,
 ) -> tuple[Literal["accepted", "unavailable"], object]:
     run = result.run
@@ -187,13 +191,12 @@ def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and w
     identity = ProviderIdentity(launch.provider, run.session_id)
     record_provider_turn(conn, session_id, ProviderTurn(identity, command.command_id, "submitted"))
     if not run.terminal_confirmed or (
-        launch.identity is not None
-        and (result.recovery is None or not result.recovery.turn_confirmed)
+        launch.identity is not None and not result.recovery_turn_confirmed
     ):
         return "unavailable", "Provider turn has no confirmed terminal result."
     record_provider_turn(conn, session_id, ProviderTurn(identity, command.command_id, "confirmed"))
-    if launch.identity is not None and result.recovery is not None:
-        _ = record_turn_recovery(
+    if launch.identity is not None and result.recovery_turn_confirmed is not None:
+        _ = record_recovery_receipt(
             conn,
             session_id,
             RecoveryReceipt(
@@ -209,7 +212,7 @@ def finish_turn(  # noqa: PLR0913 - receipt links command, scope, runtime, and w
             "UPDATE coordinator_turn_launches SET state = 'confirmed' WHERE command_id = ?",
             (command.command_id,),
         )
-    return "accepted", {"provider_session_id": run.session_id, "turn_id": command.command_id}
+    return "accepted", TurnResponse(run.session_id, command.command_id)
 
 
 def confirm_turn_identity(  # noqa: PLR0913 - handshake binds command evidence to scope
