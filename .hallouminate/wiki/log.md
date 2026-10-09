@@ -71,3 +71,7 @@
 
 2026-10-09 · ff588573ffce3aa1 · merged · architecture/execution.md · Preserve mixed-provider bindings and terminal group-task failure contracts. Do not infer coordinator recovery from isolated graph alternatives. Current code-head gate and nine CI checks pass.
 
+
+
+2026-10-09 · e5c4cc23c2dcc72a · merged · architecture/graph-read-port.md · Record approved command boundaries and web receipt schema step47 after dependency integration. Full gate and121focused tests pass; publication remains pending. Frozen probes rank the page first.
+
