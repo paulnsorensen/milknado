@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -40,6 +41,7 @@ class HostDependencies:
     git: GitInspection | None = None
     owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
     coordinator: CoordinatorPort | None = None
+    shutdown: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)

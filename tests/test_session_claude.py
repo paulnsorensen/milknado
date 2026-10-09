@@ -166,7 +166,7 @@ def test_stream_event_deltas_and_tool_readable_events(tmp_path: Path) -> None:
     )
     assert tool.events[0].kind == "tool"
     assert tool.events[0].event_id == "tool-1"
-    assert tool.events[0].text == "Bash: pwd"
+    assert tool.events[0].text == "Bash"
     assert tool.events[0].state == "streaming"
 
 
@@ -562,7 +562,48 @@ def test_assistant_string_content_is_not_duplicated_by_terminal_result(tmp_path:
     assert result.events == ()
 
 
-def test_tool_results_preserve_content_and_pending_prompt_identity(tmp_path: Path) -> None:
+def test_tool_result_keeps_original_name_without_exposing_output(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    _ = session.start("go")
+    _ = session.receive(
+        _frame(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tool-7",
+                            "name": "Bash",
+                            "input": {"command": "secret"},
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    completed = session.receive(
+        _frame(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tool-7",
+                            "content": "secret output",
+                        }
+                    ]
+                },
+            }
+        )
+    )
+    assert completed.events == (
+        SessionEvent(kind="tool", text="Bash", event_id="tool-7", state="complete"),
+    )
+
+
+def test_tool_results_redact_content_and_preserve_pending_prompt_identity(tmp_path: Path) -> None:
     session = _session(tmp_path)
     started = session.start("go")
     echoed = session.receive(
@@ -589,7 +630,7 @@ def test_tool_results_preserve_content_and_pending_prompt_identity(tmp_path: Pat
         )
     )
     assert echoed.events == (
-        SessionEvent(kind="tool", text="first\nsecond", event_id="tool-7", state="complete"),
+        SessionEvent(kind="tool", text="tool", event_id="tool-7", state="complete"),
         SessionEvent(
             kind="user",
             text="go",
@@ -618,7 +659,7 @@ def test_tool_results_preserve_content_and_pending_prompt_identity(tmp_path: Pat
     assert assistant_tool.events == (
         SessionEvent(
             kind="tool",
-            text="permission denied",
+            text="tool",
             event_id="tool-8",
             state="complete",
         ),

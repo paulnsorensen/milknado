@@ -2,61 +2,29 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import msgspec
 
+from milknado.domains.common import redact_control_text as redact_control_text
+from milknado.domains.coordinator._stream_history import (
+    EVENT_COLUMNS,
+    EventRow,
+    StoredText,
+    StreamFragment,
+    StreamUpdate,
+    compact_stream,
+    decode_text,
+    stream_key,
+)
 from milknado.domains.coordinator.model import ControlEvent, ControlRecord
 
 _MAX_EVENT_BYTES = 64 * 1024
 _MAX_DIAGNOSTIC_RETENTION = timedelta(days=30)
 _DEFAULT_DIAGNOSTIC_RETENTION = timedelta(days=7)
-_QUOTED_START = re.compile(
-    r"(?i)((?:[\"']?(?:api[_-]?key|password|token|client[_-]?secret|secret|"
-    + r"authorization)[\"']?[ \t]*[:=][ \t]*|bearer[ \t]+))([\"'])"
-)
-_AUTH_HEADER = re.compile(r"(?im)(\bauthorization[ \t]*[:=][ \t]*)[^\r\n]*")
-_SECRET = re.compile(
-    r"(?i)(\b(?:bearer[ \t]+|api[_-]?key[ \t]*[=:][ \t]*|"
-    + r"password[ \t]*[=:][ \t]*|token[ \t]*[=:][ \t]*|"
-    + r"client[_-]?secret[ \t]*[=:][ \t]*|secret[ \t]*[=:][ \t]*))"
-    + r"(?![\"'])[^\s,;]+"
-    + r"|\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{8,})\b"
-)
-
-
-def _redact_quoted(value: str) -> str:
-    parts: list[str] = []
-    position = 0
-    while match := _QUOTED_START.search(value, position):
-        parts.append(value[position : match.end()])
-        quote = match.group(2)
-        cursor = match.end()
-        while cursor < len(value):
-            if value[cursor] == "\\":
-                cursor += 2
-            elif value[cursor] == quote:
-                break
-            else:
-                cursor += 1
-        parts.append("[REDACTED]")
-        if cursor >= len(value):
-            position = cursor
-            break
-        parts.append(quote)
-        position = cursor + 1
-    parts.append(value[position:])
-    return "".join(parts)
-
-
-def redact_control_text(value: str) -> str:
-    quoted = _redact_quoted(value)
-    headers = _AUTH_HEADER.sub(lambda match: match.group(1) + "[REDACTED]", quoted)
-    return _SECRET.sub(lambda match: (match.group(1) or "") + "[REDACTED]", headers)
-
 
 _OPERATION_KINDS = frozenset(
     {
@@ -84,29 +52,50 @@ def _utc(now: datetime | None) -> datetime:
     return timestamp.astimezone(UTC)
 
 
-def _record(row: tuple[int, str, str, str, str, str, str, int | None, str]) -> ControlRecord:
+@dataclass(frozen=True, slots=True)
+class _EventWrite:
+    now: datetime | None = None
+    native_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _StoredEvent:
+    text: str
+    timestamp: str
+    expires_at: str | None
+    fragment: StreamFragment | None
+
+
+@dataclass(slots=True)
+class _HistoryRead:
+    cursor: int | None
+    recovery_only: bool
+    cache: dict[int, tuple[StoredText, str]]
+
+
+def _record(
+    conn: sqlite3.Connection,
+    session_id: str,
+    row: EventRow,
+    cache: dict[int, tuple[StoredText, str]],
+) -> ControlRecord:
+    stored = StoredText(row[0], session_id, row[2], row[6], row[11], row[12], row[13])
     return ControlRecord(
         seq=row[0],
-        kind=str(row[1]),
-        text=str(row[2]),
-        entity_kind=str(row[3]),
-        entity_id=str(row[4]),
-        tool_name=str(row[5]),
-        status=str(row[6]),
-        duration_ms=row[7],
-        created_at=str(row[8]),
+        kind=row[1],
+        text=decode_text(conn, session_id, stored, cache),
+        entity_kind=row[3],
+        entity_id=row[4],
+        tool_name=row[5],
+        status=row[6],
+        turn_id=row[7],
+        provider_session_id=row[8],
+        duration_ms=row[9],
+        created_at=row[10],
     )
 
 
-def append_control_event(  # noqa
-    conn: sqlite3.Connection,
-    session_id: str,
-    event: ControlEvent,
-    *,
-    now: datetime | None = None,
-) -> int:
-    if not session_id or not event.kind:
-        raise ValueError("session_id and event kind must not be empty")
+def _prepared_event(event: ControlEvent, now: datetime | None) -> tuple[str, str, str | None]:
     diagnostic_ttl = (
         timedelta(seconds=event.diagnostic_retention_seconds)
         if event.diagnostic_retention_seconds is not None
@@ -123,85 +112,140 @@ def append_control_event(  # noqa
     if len(text.encode("utf-8")) > _MAX_EVENT_BYTES:
         raise ValueError("control event exceeds the 64 KiB limit")
     expires_at = (timestamp + diagnostic_ttl).isoformat() if event.kind == "diagnostic" else None
-    with conn:
-        _ = conn.execute(
-            "DELETE FROM coordinator_events WHERE expires_at IS NOT NULL AND expires_at <= ?",
-            (timestamp.isoformat(),),
-        )
-        cursor = conn.execute(
-            "INSERT INTO coordinator_events "
-            + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, "
-            + "duration_ms, created_at, expires_at, operation_hash) "
-            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                session_id,
-                event.kind,
-                text,
-                redact_control_text(event.entity_kind),
-                redact_control_text(event.entity_id),
-                redact_control_text(event.tool_name),
-                redact_control_text(event.status),
-                event.duration_ms,
-                timestamp.isoformat(),
-                expires_at,
-                operation_identity(event),
-            ),
-        )
+    return text, timestamp.isoformat(), expires_at
+
+
+def _insert_event(
+    conn: sqlite3.Connection, session_id: str, event: ControlEvent, stored: _StoredEvent
+) -> int:
+    fragment = stored.fragment
+    cursor = conn.execute(
+        "INSERT INTO coordinator_events "
+        + "(session_id, kind, text, entity_kind, entity_id, tool_name, status, "
+        + "turn_id, provider_session_id, duration_ms, created_at, expires_at, operation_hash, "
+        + "stream_key, stream_ref, stream_depth) "
+        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            session_id,
+            event.kind,
+            fragment.text if fragment else stored.text,
+            redact_control_text(event.entity_kind),
+            redact_control_text(event.entity_id),
+            redact_control_text(event.tool_name),
+            redact_control_text(event.status),
+            redact_control_text(event.turn_id),
+            redact_control_text(event.provider_session_id),
+            event.duration_ms,
+            stored.timestamp,
+            stored.expires_at,
+            operation_identity(event),
+            fragment.key if fragment else None,
+            fragment.ref if fragment else None,
+            fragment.depth if fragment else None,
+        ),
+    )
     assert cursor.lastrowid is not None
     return cursor.lastrowid
 
 
-def control_history(  # noqa
-    conn: sqlite3.Connection, session_id: str, *, now: datetime | None = None
-) -> tuple[ControlRecord, ...]:
-    timestamp = _utc(now).isoformat()
+def _write_event(
+    conn: sqlite3.Connection, session_id: str, event: ControlEvent, options: _EventWrite
+) -> int:
+    if not session_id or not event.kind:
+        raise ValueError("session_id and event kind must not be empty")
+    text, timestamp, expires_at = _prepared_event(event, options.now)
     with conn:
         _ = conn.execute(
             "DELETE FROM coordinator_events WHERE expires_at IS NOT NULL AND expires_at <= ?",
             (timestamp,),
         )
+        fragment = (
+            compact_stream(
+                conn,
+                session_id,
+                StreamUpdate(stream_key(session_id, event, options.native_id), text, event.status),
+            )
+            if options.native_id is not None
+            else None
+        )
+        return _insert_event(
+            conn, session_id, event, _StoredEvent(text, timestamp, expires_at, fragment)
+        )
+
+
+def append_control_event(
+    conn: sqlite3.Connection,
+    session_id: str,
+    event: ControlEvent,
+    *,
+    now: datetime | None = None,
+) -> int:
+    return _write_event(conn, session_id, event, _EventWrite(now=now))
+
+
+def append_stream_control_event(
+    conn: sqlite3.Connection, session_id: str, event: ControlEvent, native_id: str
+) -> int:
+    if event.kind not in {"assistant", "error"} or not native_id:
+        raise ValueError("stream storage requires an identified assistant or error event")
+    return _write_event(conn, session_id, event, _EventWrite(native_id=native_id))
+
+
+def control_history(
+    conn: sqlite3.Connection,
+    session_id: str,
+    *,
+    now: datetime | None = None,
+    _read: _HistoryRead | None = None,
+) -> tuple[ControlRecord, ...]:
+    timestamp = _utc(now).isoformat()
+    if _read is None:
+        with conn:
+            _ = conn.execute(
+                "DELETE FROM coordinator_events WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                (timestamp,),
+            )
+    where = "WHERE session_id = ?"
+    values: list[str | int] = [session_id]
+    if _read is not None:
+        if _read.cursor is not None:
+            where += " AND seq > ?"
+            values.append(_read.cursor)
+        if _read.recovery_only:
+            where += " AND kind = 'recovery'"
+        where += " AND (expires_at IS NULL OR expires_at > ?)"
+        values.append(timestamp)
     rows = cast(
-        list[tuple[int, str, str, str, str, str, str, int | None, str]],
+        list[EventRow],
         conn.execute(
-            "SELECT seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, "
-            + "created_at FROM coordinator_events WHERE session_id = ? ORDER BY seq",
-            (session_id,),
+            f"SELECT {EVENT_COLUMNS} FROM coordinator_events {where} ORDER BY seq", values
         ).fetchall(),
     )
-    return tuple(_record(row) for row in rows)
+    cache = _read.cache if _read is not None else {}
+    return tuple(_record(conn, session_id, row, cache) for row in rows)
 
 
 def snapshot_control_history(
     conn: sqlite3.Connection, session_id: str, cursor: int, *, now: datetime | None = None
 ) -> tuple[tuple[ControlRecord, ...], tuple[ControlRecord, ...], int]:
-    timestamp = _utc(now).isoformat()
-    columns = "seq, kind, text, entity_kind, entity_id, tool_name, status, duration_ms, created_at"
-    recent_rows = cast(
-        list[tuple[int, str, str, str, str, str, str, int | None, str]],
-        conn.execute(
-            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND seq > ? "
-            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
-            (session_id, cursor, timestamp),
-        ).fetchall(),
+    timestamp = _utc(now)
+    cache: dict[int, tuple[StoredText, str]] = {}
+    recent = control_history(
+        conn, session_id, now=timestamp, _read=_HistoryRead(cursor, False, cache)
     )
-    recovery_rows = cast(
-        list[tuple[int, str, str, str, str, str, str, int | None, str]],
-        conn.execute(
-            f"SELECT {columns} FROM coordinator_events WHERE session_id = ? AND kind = 'recovery' "
-            + "AND (expires_at IS NULL OR expires_at > ?) ORDER BY seq",
-            (session_id, timestamp),
-        ).fetchall(),
+    recovery = control_history(
+        conn, session_id, now=timestamp, _read=_HistoryRead(None, True, cache)
     )
-    if recent_rows:
-        latest = recent_rows[-1][0]
+    if recent:
+        latest = recent[-1].seq
     else:
         row = cast(
             tuple[int | None],
             conn.execute(
                 "SELECT MAX(seq) FROM coordinator_events WHERE session_id = ? "
                 + "AND (expires_at IS NULL OR expires_at > ?)",
-                (session_id, timestamp),
+                (session_id, timestamp.isoformat()),
             ).fetchone(),
         )
         latest = row[0] if row[0] is not None else cursor
-    return tuple(map(_record, recent_rows)), tuple(map(_record, recovery_rows)), latest
+    return recent, recovery, latest

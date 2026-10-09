@@ -98,6 +98,42 @@ Steps 48–49 add run verification fields.
 Step 50 creates coordinator plan proposals with a session foreign key, manifest, context path, revision, and status.[^pr520-current-schema]
 These steps create current-schema objects. They do not transform older release data.
 
+Steps 51–52 create native turn-launch records and the unique active-scope index.
+Steps 53–54 add supervisor identity; steps 55–56 add turn and provider-session identities to journal events.
+Steps 57–59 add stream keys, references, and depths; step 60 indexes stream lookup.[^pr521-current-schema]
+The ladder retains steps 31–50 and creates current-schema objects before coordinator startup.
+These steps add no old-data backfill, lazy schema creation, or release-compatibility transformation.[^pr521-current-schema]
+
+### Append-only coordinator stream history
+
+Append-only coordinator stream history compacts redacted text and rejects corrupt references while preserving exact public history.
+Compact suffix rows do not rewrite earlier events.[^pr521-stream-storage][^pr521-stream-integrity]
+A hash separates streams by coordinator, turn, provider session, event kind, and native event identity.[^pr521-stream-storage]
+Suffix chains contain at most 32 references.
+The next update writes a full checkpoint when the previous depth reaches 32.
+Replacement text, rollover text, and terminal states also write full checkpoints.[^pr521-stream-storage]
+
+History reads reconstruct each exact bounded text and preserve event sequences and cursors.
+Reads can start after a checkpoint and still reconstruct the preceding reference chain.
+A request-local cache avoids repeated reconstruction; reopened databases produce the same public history.[^pr521-stream-history]
+The production snapshot reader calls `control_history` with a private, trusted `_HistoryRead` value.
+Snapshot reads share one reconstruction cache and preserve cursor, expiry, recovery-only, and maximum-sequence rules.
+Snapshot mode neither prunes events nor commits the surrounding read transaction.
+Ordinary `control_history` calls retain their expiry pruning and commit behavior.[^pr521-stream-history]
+
+Redaction runs before compaction.
+The common domain owns the shared `redact_control_text` function.
+Coordinator journal and public exports retain direct aliases to the same function.
+Native stream diagnostics import the common public interface, which avoids a coordinator-to-session import cycle.
+The ownership change preserves the redaction patterns and behavior.[^pr521-shared-redaction]
+Raw tool payloads remain elided.
+Only identified assistant and error events use compact stream storage.
+Permission, input, terminal, and recovery records retain their public history behavior.
+Diagnostic records retain their expiry rules.[^pr521-stream-redaction]
+Missing references, cross-owner references, invalid depths, and forward references fail loudly.[^pr521-stream-integrity]
+See [Execution and Dispatch](./execution.md#coordinator-recovery-concurrency) for native turn authority and recovery.
+
+
 [^graph-current-setup]: AGENTS.md:114-122; src/milknado/domains/graph/_persistence.py:261-301.
 [^graph-no-backfill]: AGENTS.md:109-122.
 [^pr518-core-schema]: src/milknado/domains/graph/_coordinator_schema.py:3-61; src/milknado/domains/graph/_persistence.py:240-252.
@@ -106,7 +142,15 @@ These steps create current-schema objects. They do not transform older release d
 
 
 
-_Source: merged PRs #518–519 and current PR #520 schema source/tests · Updated: 2026-10-09 · Supersedes: stale schema ownership and version claims._
+[^pr521-current-schema]: src/milknado/domains/graph/_persistence.py (`MIGRATIONS`, `SCHEMA_VERSION`); src/milknado/domains/graph/_coordinator_schema.py (`CREATE_TURN_LAUNCHES`, `CREATE_ACTIVE_TURN_INDEX`, `CREATE_EVENTS_STREAM_INDEX`); AGENTS.md:109-122.
+[^pr521-stream-storage]: src/milknado/domains/coordinator/_stream_history.py:12-14,65-73,132-156.
+[^pr521-stream-history]: src/milknado/domains/coordinator/journal.py (`_HistoryRead`, `_record`, `control_history`, `snapshot_control_history`); tests/coordinator/test_turn_stream_storage.py (`test_cumulative_stream_uses_less_storage_without_changing_history`).
+[^pr521-stream-redaction]: src/milknado/domains/coordinator/journal.py (`_prepared_event`, `_write_event`, `append_stream_control_event`); src/milknado/domains/coordinator/turns.py (`record_turn_event`).
+[^pr521-shared-redaction]: src/milknado/domains/common/redaction.py (`redact_control_text`, `_redact_quoted`); src/milknado/domains/common/__init__.py; src/milknado/domains/coordinator/journal.py (direct redactor alias); src/milknado/domains/coordinator/__init__.py; src/milknado/loop/sessions/_stream.py (`capture_failure`).
+[^pr521-stream-integrity]: src/milknado/domains/coordinator/_stream_history.py:76-129.
+
+_Source: PR #521 current-schema, compact history, and shared redaction source contracts · Updated: 2026-10-09 · Supersedes: coordinator schema coverage ending at step 50 and shifted journal citations._
+
 
 ## Module split
 

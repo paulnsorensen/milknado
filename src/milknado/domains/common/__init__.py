@@ -4,8 +4,10 @@ from milknado.domains.common.agent_argv import (
     build_planning_subprocess,
     build_resume_command,
     capture_session_id,
+    resolve_execution_agent_command,
     resolve_planning_agent_command,
     resolve_worker_tools,
+    validate_worker_argv,
 )
 from milknado.domains.common.config import (
     LoadedConfig,
@@ -67,6 +69,7 @@ from milknado.domains.common.protocols import (
     TerminalRunOutcome,
     VerifySpecResult,
 )
+from milknado.domains.common.redaction import redact_control_text
 from milknado.domains.common.session import (
     SessionAction,
     SessionContext,
@@ -99,6 +102,8 @@ __all__ = [
     "SessionView",
     "normalize_session_event",
     "resolve_planning_agent_command",
+    "resolve_execution_agent_command",
+    "validate_worker_argv",
     "ArchiveIneligible",
     "BUILTIN_FLAVORS",
     "Gate",
@@ -152,6 +157,7 @@ __all__ = [
     "resolve_project_path",
     "trust_global_path",
     "validate_hint_path",
+    "redact_control_text",
     "save_config",
     "resolve_flavor_profile",
     "NodeAgentSession",

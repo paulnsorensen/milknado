@@ -250,6 +250,16 @@ MIGRATIONS: list[tuple[int, str]] = [
         + "ON DELETE CASCADE, manifest_json TEXT NOT NULL, context_path TEXT NOT NULL, "
         + "graph_revision INTEGER NOT NULL, status TEXT NOT NULL)",
     ),
+    (51, _coordinator_schema.CREATE_TURN_LAUNCHES),
+    (52, _coordinator_schema.CREATE_ACTIVE_TURN_INDEX),
+    (53, "ALTER TABLE coordinator_turn_launches ADD COLUMN supervisor_pid INTEGER"),
+    (54, "ALTER TABLE coordinator_turn_launches ADD COLUMN supervisor_start_token REAL"),
+    (55, "ALTER TABLE coordinator_events ADD COLUMN turn_id TEXT NOT NULL DEFAULT ''"),
+    (56, "ALTER TABLE coordinator_events ADD COLUMN provider_session_id TEXT NOT NULL DEFAULT ''"),
+    (57, "ALTER TABLE coordinator_events ADD COLUMN stream_key TEXT"),
+    (58, "ALTER TABLE coordinator_events ADD COLUMN stream_ref INTEGER"),
+    (59, "ALTER TABLE coordinator_events ADD COLUMN stream_depth INTEGER"),
+    (60, _coordinator_schema.CREATE_EVENTS_STREAM_INDEX),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

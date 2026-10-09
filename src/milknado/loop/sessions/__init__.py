@@ -5,6 +5,7 @@ from milknado.loop.sessions._channel import SessionChannel, SessionSink
 from milknado.loop.sessions._factory import create_protocol, is_supported
 from milknado.loop.sessions._lifecycle import (
     RuntimeActionReceipt,
+    RuntimePreflightError,
     RuntimeRequest,
     RuntimeResult,
     RuntimeSession,
@@ -27,6 +28,7 @@ __all__ = [
     "RuntimeCapabilities",
     "RuntimeRecoveryRequest",
     "RuntimeActionReceipt",
+    "RuntimePreflightError",
     "RuntimeRequest",
     "RuntimeResult",
     "RuntimeSession",

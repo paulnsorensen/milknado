@@ -68,10 +68,11 @@ class ExecutionGroupStore:
                 plan.graph_id,
                 workspace.worktree_path,
                 workspace.branch_name,
-                workspace.provider_session_id,
             )
         ):
             raise ValueError("execution group identities must be nonempty")
+        if workspace.provider_session_id == "":
+            raise ValueError("execution group provider identity must be nonempty")
         validate_membership(conn, plan.graph_id, plan.tasks)
         group = ExecutionGroup(
             uuid4().hex,
@@ -125,7 +126,10 @@ class ExecutionGroupStore:
             if (
                 workspace.worktree_path == source.worktree_path
                 or workspace.branch_name == source.branch_name
-                or workspace.provider_session_id == source.provider_session_id
+                or (
+                    workspace.provider_session_id is not None
+                    and workspace.provider_session_id == source.provider_session_id
+                )
             ):
                 raise ValueError("fork must have distinct workspace identities")
             graph_id, tasks = clone_alternative(conn, source.id, source.graph_id)
@@ -146,7 +150,7 @@ class ExecutionGroupStore:
             cast(str, row[1]),
             cast(str, row[2]),
             cast(str, row[3]),
-            cast(str, row[4]),
+            cast(str | None, row[4]),
             cast(str | None, row[5]),
         )
 

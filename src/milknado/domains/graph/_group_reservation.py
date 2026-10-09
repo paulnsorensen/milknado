@@ -57,7 +57,9 @@ def admit_writer(
         + "active_attempt_id = ?, active_node_status = ?, active_node_run_id = ? WHERE id = ?",
         (node_id, run_id, attempt.attempt_id, node[0], node[1], group_id),
     )
-    workspace = GroupWorkspace(cast(str, group[1]), cast(str, group[2]), cast(str, group[3]))
+    workspace = GroupWorkspace(
+        cast(str, group[1]), cast(str, group[2]), cast(str | None, group[3])
+    )
     return attempt, workspace
 
 
@@ -70,7 +72,7 @@ def reserved_workspace(conn: sqlite3.Connection, attempt: TaskAttempt) -> GroupW
     )
     if row is None or (row[0], row[1]) != (attempt.node_id, attempt.run_id):
         raise ValueError("execution group writer fence lost")
-    return GroupWorkspace(cast(str, row[2]), cast(str, row[3]), cast(str, row[4]))
+    return GroupWorkspace(cast(str, row[2]), cast(str, row[3]), cast(str | None, row[4]))
 
 
 def claim_reservation_allows(

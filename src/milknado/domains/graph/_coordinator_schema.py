@@ -44,6 +44,22 @@ CREATE_EVENTS_OPERATION_INDEX = (
     "WHERE operation_hash IS NOT NULL"
 )
 
+CREATE_TURN_LAUNCHES = (
+    "CREATE TABLE IF NOT EXISTS coordinator_turn_launches ("
+    + "command_id TEXT PRIMARY KEY, coordinator_id TEXT NOT NULL, "
+    + "scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL, state TEXT NOT NULL)"
+)
+CREATE_ACTIVE_TURN_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_coordinator_turn_active "
+    + "ON coordinator_turn_launches(coordinator_id, scope_kind, scope_id) "
+    + "WHERE state = 'submitted'"
+)
+
+CREATE_EVENTS_STREAM_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_coordinator_events_stream "
+    "ON coordinator_events(session_id, stream_key, seq) WHERE stream_key IS NOT NULL"
+)
+
 CREATE_WEB_RECEIPTS = (
     "CREATE TABLE IF NOT EXISTS coordinator_web_receipts ("
     "command_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, "

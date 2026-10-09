@@ -31,14 +31,14 @@ class RuntimeCapabilities:
 
 _COMMON_FLOOR: dict[LifecycleOperation, CapabilitySupport] = {
     "start": "native",
-    "resume": "unsupported",
+    "resume": "native",
     "streamed_output": "native",
     "user_input": "native",
     "interrupt": "native",
     "approval": "native",
     "cancel": "runtime",
     "terminal_result": "native",
-    "recovery_report": "unsupported",
+    "recovery_report": "runtime",
 }
 _ACTIONS: dict[ProviderFamily, frozenset[SessionAction]] = {
     "claude": frozenset({"follow_up", "interrupt", "approve", "deny"}),

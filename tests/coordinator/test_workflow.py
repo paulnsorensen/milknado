@@ -10,6 +10,7 @@ import pytest
 from typing_extensions import override
 
 from milknado.domains.common import (
+    CONTROLLER_MASTER_ENV,
     CrgPort,
     NodeKind,
     NodeStatus,
@@ -17,16 +18,25 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
 )
-from milknado.domains.coordinator import ProviderBinding
+from milknado.domains.coordinator import EntityLink, ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
 from milknado.domains.coordinator.journal import control_history
-from milknado.domains.coordinator.persistence import bind_provider_session, links_for_session
+from milknado.domains.coordinator.persistence import (
+    bind_provider_session,
+    link_entity,
+    links_for_session,
+)
+from milknado.domains.coordinator.planning_workflow import CoordinatorPlanning
+from milknado.domains.coordinator.turns import TurnLaunch, bind_confirmed_identity
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
+    GoalReviewDecision,
+    GoalReviewDecisionRequest,
     GoalReviewRequest,
     GroupWorkspace,
     MikadoGraph,
+    bind_execution_group_provider,
 )
 from milknado.domains.planning import Planner, PlanningPorts, PlanningProcessResult
 from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
@@ -38,6 +48,7 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
         workflow = CoordinatorWorkflow(graph, conn)
         session = workflow.start_goal("Deliver result", "codex")
         task = graph.add_node("Implement", session.goal_id, files=("src/a.py",))
+        CoordinatorPlanning(graph, conn).record_plan(session, "plan-1", "accepted")
         group = workflow.create_group(
             session, "main", (task.id,), GroupWorkspace("/tmp/group-a", "group-a", "provider-a")
         )
@@ -53,11 +64,13 @@ def test_goal_plan_group_and_receipts_survive_reopen(tmp_path: Path) -> None:
     with closing(sqlite3.connect(graph.db_path)) as conn:
         links = links_for_session(conn, session.id)
         assert [(link.kind, link.entity_id) for link in links] == [
+            ("planning_decision", "plan-1"),
             ("execution_group", group.id),
             ("provider_session", "provider-a"),
-            ("run", "run-a"),
+            ("run", handoff.attempt.attempt_id),
         ]
         assert [event.kind for event in control_history(conn, session.id)] == [
+            "planning_decision",
             "execution_group",
             "run_transition",
             "run_transition",
@@ -127,6 +140,7 @@ def test_approval_action_is_queued_once_with_durable_receipt(tmp_path: Path) -> 
         bind_provider_session(
             conn, session.id, ProviderBinding("coordinator", session.id, "codex", "provider-1")
         )
+        link_entity(conn, session.id, "provider_session", "provider-1")
         channel = SessionChannel()
         channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("approve",))
         channel.publish(
@@ -222,6 +236,7 @@ def test_action_rejects_same_family_foreign_session(tmp_path: Path) -> None:
         bind_provider_session(
             conn, owner.id, ProviderBinding("coordinator", owner.id, "codex", "provider-owner")
         )
+        link_entity(conn, owner.id, "provider_session", "provider-owner")
         channel = SessionChannel()
         channel.start(SessionContext(family="codex", cwd=str(tmp_path)), ("steer",))
         incarnation = channel.capture_incarnation()
@@ -233,6 +248,180 @@ def test_action_rejects_same_family_foreign_session(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="provider session"):
             _ = submit_coordinator_action(conn, foreign, runtime, command)
         assert channel.drain() == ()
+    graph.close()
+
+
+def test_finish_rejects_foreign_goal_and_launch_failure_is_visible(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        owner = workflow.start_goal("Owner", "codex")
+        foreign = workflow.start_goal("Foreign", "codex")
+        task = graph.add_node("Task", owner.goal_id)
+        group = workflow.create_group(
+            owner,
+            "owner-graph",
+            (task.id,),
+            GroupWorkspace("/tmp/owner", "owner", "provider-owner"),
+        )
+        handoff = workflow.dispatch_task(owner, group.id, task.id, "owner-run")
+        assert handoff.state == "awaiting_launch"
+        with pytest.raises(ValueError, match="coordinator"):
+            workflow.finish_task(foreign, handoff.attempt, NodeLoopOutcome(task.id, True))
+        assert graph.groups.task_result(task.id) is None
+        workflow.fail_launch(owner, handoff, "spawn failed")
+        assert workflow.dispatch_state(handoff.attempt.attempt_id) == "launch_failed"
+        assert graph.groups.task_result(task.id) == ("failed", "spawn failed")
+        node = graph.get_node(task.id)
+        assert node is not None and node.status is NodeStatus.PENDING
+        assert [
+            event.status
+            for event in control_history(conn, owner.id)
+            if event.kind == "run_transition"
+        ] == [
+            "claimed",
+            "launch_failed",
+        ]
+    graph.close()
+
+
+def test_group_retry_repairs_link_after_persistence_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        workspace = GroupWorkspace("/tmp/retry", "retry", "provider-retry")
+        original = link_entity
+        failed = False
+
+        def fail_once(
+            target: sqlite3.Connection, session_id: str, kind: str, entity_id: str
+        ) -> None:
+            nonlocal failed
+            if kind == "execution_group" and not failed:
+                failed = True
+                raise sqlite3.OperationalError("injected link failure")
+            original(target, session_id, kind, entity_id)
+
+        monkeypatch.setattr("milknado.domains.coordinator.workflow.link_entity", fail_once)
+        with pytest.raises(sqlite3.OperationalError, match="injected"):
+            _ = workflow.create_group(session, "retry-graph", (task.id,), workspace)
+        group = workflow.create_group(session, "retry-graph", (task.id,), workspace)
+        assert graph.groups.tasks(group.id) == (task.id,)
+        assert (
+            links_for_session(conn, session.id).count(EntityLink("execution_group", group.id)) == 1
+        )
+    graph.close()
+
+
+def test_empty_provider_identity_does_not_persist_group(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        with pytest.raises(ValueError, match="provider"):
+            _ = workflow.create_group(
+                session, "main", (task.id,), GroupWorkspace("/tmp/empty", "empty", "")
+            )
+        assert graph.groups.for_task(task.id) is None
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/empty", "empty", None)
+        )
+        assert group.provider_session_id is None
+        assert graph.groups.tasks(group.id) == (task.id,)
+    graph.close()
+
+
+def test_group_provider_binding_rejects_rebind_without_mutation(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/bound", "bound", None)
+        )
+        with conn:
+            bind_execution_group_provider(conn, group.id, "provider-one")
+        with pytest.raises(ValueError, match="changed"):
+            with conn:
+                bind_execution_group_provider(conn, group.id, "provider-two")
+        rebound = graph.groups.get(group.id)
+        assert rebound is not None and rebound.provider_session_id == "provider-one"
+    graph.close()
+
+
+def test_group_binding_rolls_back_on_cross_scope_identity(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/scope", "scope", None)
+        )
+        coordinator = TurnLaunch("codex", None, None, "coordinator", session.id, None)
+        bind_confirmed_identity(conn, session.id, coordinator, "provider-one")
+        launch = TurnLaunch("codex", group, None, "execution_group", group.id, None)
+        with pytest.raises(ValueError, match="another scope"):
+            bind_confirmed_identity(conn, session.id, launch, "provider-one")
+        unchanged = graph.groups.get(group.id)
+        assert unchanged is not None and unchanged.provider_session_id is None
+    graph.close()
+
+
+def test_reserved_task_rejects_competing_claim(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/claim", "claim", "provider")
+        )
+        handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+        assert not graph.claim_node(task.id, "other", now="2026-01-01T00:00:00+00:00")
+        assert not graph.claim_node(
+            task.id, handoff.attempt.attempt_id, now="2026-01-01T00:00:00+00:00"
+        )
+        with pytest.raises(ValueError):
+            graph.mark_running(task.id, run_id=handoff.attempt.attempt_id)
+        node = graph.get_node(task.id)
+        assert node is not None and node.status is NodeStatus.PENDING
+        workflow.fail_launch(session, handoff, "spawn failed")
+    graph.close()
+
+
+def test_review_pauses_dispatch_and_reserved_launch(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        first = graph.add_node("First", session.goal_id)
+        second = graph.add_node("Second", session.goal_id)
+        first_group = workflow.create_group(
+            session, "first", (first.id,), GroupWorkspace("/tmp/first", "first", "provider-1")
+        )
+        second_group = workflow.create_group(
+            session, "second", (second.id,), GroupWorkspace("/tmp/second", "second", "provider-2")
+        )
+        handoff = workflow.dispatch_task(session, first_group.id, first.id, "run-1")
+        _ = graph.request_goal_review(
+            GoalReviewRequest(
+                session.goal_id, "rev", "evidence", "change", (first.id, second.id), "agent"
+            )
+        )
+        with pytest.raises(ValueError, match="pauses"):
+            _ = workflow.dispatch_task(session, second_group.id, second.id, "run-2")
+        assert graph.groups.active_attempt(second_group.id) is None
+        with pytest.raises(ValueError, match="pauses"):
+            _ = workflow.acknowledge_launch(session, handoff)
+        node = graph.get_node(first.id)
+        assert node is not None and node.status is NodeStatus.PENDING
     graph.close()
 
 
@@ -286,4 +475,115 @@ def test_planning_operations_reuse_proposals_without_applying(tmp_path: Path) ->
         )
         assert cached == first
         assert process.calls == 2
+    graph.close()
+
+
+def test_goal_review_retry_matches_canonical_text(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        original = GoalReviewRequest(
+            session.goal_id,
+            "rev",
+            "evidence",
+            "change",
+            (task.id,),
+            "agent",
+            operation_id="review-whitespace",
+        )
+        first = workflow.review_goal_change(session, original)
+        spaced = GoalReviewRequest(
+            session.goal_id,
+            " rev ",
+            " evidence ",
+            " change ",
+            (task.id,),
+            " agent ",
+            operation_id="review-whitespace",
+        )
+        retried = workflow.review_goal_change(session, spaced)
+        assert retried.review_id == first.review_id
+        approvals = [
+            event.entity_id
+            for event in control_history(conn, session.id)
+            if event.kind == "approval"
+        ]
+        assert approvals == [str(first.review_id)]
+    graph.close()
+
+
+def test_claim_before_reservation_is_rejected(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        assert graph.claim_node(task.id, "prior-run", now="2026-01-01T00:00:00+00:00")
+        with pytest.raises(ValueError, match="active node"):
+            _ = workflow.create_group(
+                session, "main", (task.id,), GroupWorkspace("/tmp/prior", "prior", "provider")
+            )
+    graph.close()
+
+
+@pytest.mark.parametrize("status", [NodeStatus.FAILED, NodeStatus.BLOCKED])
+def test_launch_failure_preserves_prelaunch_state(tmp_path: Path, status: NodeStatus) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        if status is NodeStatus.FAILED:
+            graph.mark_failed(task.id)
+        else:
+            assert graph.claim_node(task.id, "prior-run", now="2026-01-01T00:00:00+00:00")
+            graph.mark_blocked(task.id)
+        group = workflow.create_group(
+            session, "main", (task.id,), GroupWorkspace("/tmp/retry-state", "state", "provider")
+        )
+        handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+        workflow.fail_launch(session, handoff, "spawn failed")
+        node = graph.get_node(task.id)
+        assert node is not None and node.status is status
+        if status is NodeStatus.BLOCKED:
+            prior_run = cast(
+                tuple[str] | None,
+                conn.execute("SELECT run_id FROM nodes WHERE id = ?", (task.id,)).fetchone(),
+            )
+            assert prior_run == ("prior-run",)
+        assert graph.groups.task_result(task.id) == ("failed", "spawn failed")
+    graph.close()
+
+
+@pytest.mark.parametrize("decision", [GoalReviewDecision.ACCEPTED, GoalReviewDecision.REJECTED])
+def test_decided_review_retry_keeps_original_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decision: GoalReviewDecision
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    monkeypatch.setenv(CONTROLLER_MASTER_ENV, "controller-secret")
+    graph.register_controller_master()
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        workflow = CoordinatorWorkflow(graph, conn)
+        session = workflow.start_goal("Goal", "codex")
+        task = graph.add_node("Task", session.goal_id)
+        request = GoalReviewRequest(
+            session.goal_id,
+            "rev",
+            "evidence",
+            "change",
+            (task.id,),
+            "agent",
+            operation_id=f"review-{decision.value}",
+        )
+        first = workflow.review_goal_change(session, request)
+        _ = graph.decide_goal_review(
+            GoalReviewDecisionRequest(first.review_id, decision), decided_by="human"
+        )
+        retried = workflow.review_goal_change(session, request)
+        assert retried.review_id == first.review_id
+        assert retried.decision is decision
+        latest = graph.latest_goal_review(session.goal_id)
+        assert latest is not None and latest.review_id == first.review_id
     graph.close()

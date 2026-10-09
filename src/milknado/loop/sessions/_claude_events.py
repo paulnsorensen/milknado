@@ -58,15 +58,12 @@ class ClaudeEventsMixin(ClaudeState):
 
     def _tool(self, data: dict[str, object], state: str) -> SessionEvent:
         event_id = _string(data.get("id")) or _string(data.get("tool_use_id")) or self._id("tool")
-        name = _string(data.get("name")) or "tool"
-        value = _mapping(data.get("input")) or {}
-        detail = _string(value.get("command")) or _string(value.get("file_path"))
-        text = (
-            f"{name}: {detail}"
-            if detail
-            else (self._content(data.get("content")) if state == "complete" else name)
-        )
-        return SessionEvent(kind="tool", text=text, event_id=event_id, state=state)
+        if state == "complete":
+            name = self._tool_names.pop(event_id, "tool")
+        else:
+            name = _string(data.get("name")) or "tool"
+            self._tool_names[event_id] = name
+        return SessionEvent(kind="tool", text=name, event_id=event_id, state=state)
 
     def _stream(self, raw: ClaudeFrame) -> ProtocolStep:
         event = raw.event
@@ -95,6 +92,7 @@ class ClaudeEventsMixin(ClaudeState):
         if block.type == "tool_use":
             event_id = block.id or self._id("tool")
             self._blocks[event.index] = Block("tool", event_id, block.name or "tool")
+            self._tool_names[event_id] = block.name or "tool"
             output = SessionEvent(
                 kind="tool", text=block.name or "tool", event_id=event_id, state="streaming"
             )
@@ -163,15 +161,3 @@ class ClaudeEventsMixin(ClaudeState):
                 self._pending_users.remove(turn)
                 break
         return SessionEvent(kind="user", text=text, event_id=event_id, state="delivered")
-
-    def _content(self, value: object) -> str:
-        if isinstance(value, str):
-            return value
-        if not isinstance(value, list):
-            return ""
-        parts: list[str] = []
-        for item in cast(list[object], value):
-            data = _mapping(item)
-            if data:
-                parts.append(_string(data.get("text")) or "")
-        return "".join(parts)

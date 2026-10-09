@@ -30,11 +30,16 @@ class RunWorkers:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeWorkers:
+    runtime_run_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class UnassociatedWorkers:
     pass
 
 
-WorkerSelection = NodeWorkers | RunWorkers | UnassociatedWorkers
+WorkerSelection = NodeWorkers | RunWorkers | RuntimeWorkers | UnassociatedWorkers
 
 
 def default_worker_db_path() -> Path:
@@ -174,6 +179,8 @@ class WorkerEvidenceStore:
             return _worker_persistence.live_workers(self._conn, node_id=selection.node_id)
         if isinstance(selection, RunWorkers):
             return _worker_persistence.live_workers(self._conn, run_id=selection.graph_run_id)
+        if isinstance(selection, RuntimeWorkers):
+            return _worker_persistence.live_runtime_workers(self._conn, selection.runtime_run_id)
         if isinstance(cast(object, selection), UnassociatedWorkers):
             return _worker_persistence.live_workers(self._conn, unassociated=True)
         raise TypeError("worker selection required")

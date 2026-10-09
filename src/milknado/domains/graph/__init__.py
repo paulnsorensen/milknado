@@ -9,10 +9,11 @@ from milknado.domains.graph._execution_groups import (
 )
 from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._goal_review_scope import top_level_goal
+from milknado.domains.graph._group_binding import bind_execution_group_provider
 from milknado.domains.graph._plan_transaction import graph_revision
 from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph._transitions import ConcurrencyLimitReached, HostCapacityFull
-from milknado.domains.graph._worker_persistence import WorkerRecord
+from milknado.domains.graph._worker_persistence import WorkerRecord, live_runtime_workers
 from milknado.domains.graph.commands import (
     CommandFenceError,
     CommandReceipt,
@@ -70,6 +71,7 @@ from milknado.domains.graph.status_flow import (
 from milknado.domains.graph.traversals import walk_ancestors
 from milknado.domains.graph.worker_evidence import (
     NodeWorkers,
+    RuntimeWorkers,
     RunWorkers,
     UnassociatedWorkers,
     WorkerEvidenceStore,
@@ -83,6 +85,7 @@ __all__ = [
     "ControllerAuthorizationError",
     "ExecutionGroup",
     "ExecutionGroupStore",
+    "bind_execution_group_provider",
     "GroupWorkspace",
     "TaskAttempt",
     "TaskOutcome",
@@ -123,8 +126,10 @@ __all__ = [
     "RunRecord",
     "WorkerEvidenceStore",
     "WorkerRecord",
+    "live_runtime_workers",
     "NodeWorkers",
     "RunWorkers",
+    "RuntimeWorkers",
     "UnassociatedWorkers",
     "default_worker_db_path",
     "existing_standalone_worker_db",

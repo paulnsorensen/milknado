@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import msgspec
 
-from milknado.domains.coordinator.commands import (
-    CoordinatorAction,
-    DispatchHandoff,
-    record_control_once,
-    submit_coordinator_action,
-)
+import milknado.domains.coordinator.turns as turns
+from milknado.domains.coordinator._command_lifecycle import CommandLifecycle
+from milknado.domains.coordinator.attempt_commands import apply_attempt_command
 from milknado.domains.coordinator.control_models import (
     AttemptCommand,
+    CancelTurn,
     CoordinatorCommand,
     CoordinatorCommandReceipt,
     CreateGroup,
@@ -29,34 +28,45 @@ from milknado.domains.coordinator.control_models import (
     RequestGoalReview,
     RuntimeAction,
     StartGoal,
+    StartTurn,
 )
-from milknado.domains.coordinator.control_services import CoordinatorServices
-from milknado.domains.coordinator.model import (
-    ControlEvent,
-    CoordinatorSession,
-    CoordinatorSessionSummary,
+from milknado.domains.coordinator.control_services import (
+    CoordinatorServices,
+    TurnPreflightError,
+    TurnRuntimePort,
+    TurnRuntimeRequest,
 )
-from milknado.domains.coordinator.persistence import get_coordinator, list_coordinator_sessions
+from milknado.domains.coordinator.model import CoordinatorSession, CoordinatorSessionSummary
+from milknado.domains.coordinator.persistence import (
+    get_coordinator,
+    list_coordinator_sessions,
+)
 from milknado.domains.coordinator.projection import (
     CoordinatorSnapshot,
     read_coordinator_snapshot,
 )
-from milknado.domains.coordinator.receipt_results import receipt_payload
+from milknado.domains.coordinator.receipt_results import reserve_command_receipt
 from milknado.domains.coordinator.recovery import recover_coordinator
 from milknado.domains.coordinator.review_decisions import (
     decide_coordinator_review,
     decide_goal_review,
     request_coordinator_review,
 )
+from milknado.domains.coordinator.runtime_actions import ActionInvocation, send_runtime_action
+from milknado.domains.coordinator.turn_context import TurnContext
+from milknado.domains.coordinator.turn_fences import (
+    cancel_owned_turn,
+    claim_turn,
+    reconcile_turn_fences,
+    release_unconfirmed_turn,
+)
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
-from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import (
     ControllerAuthorizationError,
     GoalReviewDecisionRequest,
     GoalReviewRecord,
     GroupWorkspace,
     MikadoGraph,
-    TaskAttempt,
 )
 
 
@@ -67,6 +77,7 @@ class CoordinatorControl:
         self._graph: MikadoGraph = graph
         self._root: Path = project_root
         self._services: CoordinatorServices = services or CoordinatorServices()
+        self._commands: CommandLifecycle = CommandLifecycle(lambda: self._conn)
 
     @property
     def _conn(self) -> sqlite3.Connection:
@@ -82,9 +93,19 @@ class CoordinatorControl:
     def decide_goal_review(
         self, request: GoalReviewDecisionRequest, *, decided_by: str
     ) -> GoalReviewRecord:
-        return decide_goal_review(self._graph, self._services, request, decided_by)
+        with self._commands.command():
+            return decide_goal_review(self._graph, self._services, request, decided_by)
 
     def send_coordinator_command(
+        self, session_id: str, command: CoordinatorCommand
+    ) -> CoordinatorCommandReceipt:
+        with self._commands.command():
+            return self._send_command(session_id, command)
+
+    def shutdown(self, stop_runtime: Callable[[], None]) -> None:
+        self._commands.shutdown(stop_runtime)
+
+    def _send_command(
         self, session_id: str, command: CoordinatorCommand
     ) -> CoordinatorCommandReceipt:
         if not command.command_id:
@@ -93,14 +114,29 @@ class CoordinatorControl:
             raise ValueError(
                 "start_goal requires an empty session ID; other commands require a session ID"
             )
+        if isinstance(command, StartTurn):
+            return self._send_turn(session_id, command)
+        if isinstance(command, RuntimeAction):
+            return send_runtime_action(
+                self._graph,
+                self._services,
+                ActionInvocation(session_id, command),
+                self._commands.complete,
+            )
+        if isinstance(command, Recover) and self._services.recovery_runtime is not None:
+            workers = self._services.recovery_runtime.workers
+            if workers is not None:
+                reconcile_turn_fences(self._conn, self._graph, session_id, workers)
         with self._graph.synchronization_lock:
             if session_id and get_coordinator(self._conn, session_id) is None:
                 raise KeyError(session_id)
             fingerprint = hashlib.sha256(msgspec.json.encode(command)).hexdigest()
-            existing = self._reserve(session_id, command.command_id, fingerprint)
+            existing = reserve_command_receipt(
+                self._conn, session_id, command.command_id, fingerprint
+            )
             if existing is not None:
                 return existing
-            if not isinstance(command, (PlanGoal, DecidePlanProposal)):
+            if not isinstance(command, (PlanGoal, DecidePlanProposal, Recover)):
                 return self._execute_reserved(session_id, command)
         return self._execute_reserved(session_id, command)
 
@@ -112,75 +148,61 @@ class CoordinatorControl:
         except (ValueError, PermissionError, ControllerAuthorizationError) as error:
             status, result = "rejected", str(error)
         with self._graph.synchronization_lock:
-            return self._complete(session_id, command, status, result)
+            return self._commands.complete(session_id, command, status, result)
 
-    def _reserve(
-        self, session_id: str, command_id: str, fingerprint: str
-    ) -> CoordinatorCommandReceipt | None:
-        with self._conn:
-            cursor = self._conn.execute(
-                "INSERT OR IGNORE INTO coordinator_web_receipts "
-                + "(command_id, session_id, command_hash, status, result_json) "
-                + "VALUES (?, ?, ?, 'unconfirmed', 'null')",
-                (command_id, session_id, fingerprint),
+    def _admit_turn(
+        self, context: TurnContext, command: StartTurn
+    ) -> CoordinatorCommandReceipt | tuple[turns.TurnLaunch, TurnRuntimePort]:
+        session = get_coordinator(context.conn, context.session_id)
+        if session is None:
+            raise KeyError(context.session_id)
+        fingerprint = hashlib.sha256(msgspec.json.encode(command)).hexdigest()
+        existing = reserve_command_receipt(
+            context.conn, context.session_id, context.command_id, fingerprint
+        )
+        if existing is not None:
+            return existing
+        runtime = self._services.turn_runtime
+        if runtime is None:
+            return self._commands.complete(
+                context.session_id, command, "unavailable", "Turn runtime is not connected."
             )
-        row = cast(
-            tuple[str, str, str, str] | None,
-            self._conn.execute(
-                "SELECT session_id, command_hash, status, result_json "
-                + "FROM coordinator_web_receipts WHERE command_id = ?",
-                (command_id,),
-            ).fetchone(),
-        )
-        if row is None:
-            raise RuntimeError("coordinator command has no receipt")
-        if row[:2] != (session_id, fingerprint):
-            raise ValueError("command_id was reused for a different command")
-        if cursor.rowcount:
-            return None
-        return CoordinatorCommandReceipt(
-            command_id,
-            session_id,
-            cast(
-                Literal["accepted", "unavailable", "unsupported", "rejected", "unconfirmed"],
-                row[2],
-            ),
-            cast(object, msgspec.json.decode(row[3].encode())),
-        )
+        try:
+            launch = turns.prepare_turn(context.conn, self._graph, session, command)
+            turn_owner = self._services.turn_owner
+            owner = turn_owner(context.command_id) if turn_owner else None
+            claim_turn(context, launch, owner)
+        except (ValueError, PermissionError) as error:
+            return self._commands.complete(context.session_id, command, "rejected", str(error))
+        return launch, runtime
 
-    def _complete(
-        self,
-        session_id: str,
-        command: CoordinatorCommand,
-        status: Literal["accepted", "unavailable", "unsupported", "rejected"],
-        result: object,
-    ) -> CoordinatorCommandReceipt:
-        built = receipt_payload(result)
-        command_id = command.command_id
-        event_session_id = (
-            cast(CoordinatorSession, result).id
-            if isinstance(command, StartGoal) and status == "accepted"
-            else session_id
+    def _send_turn(self, session_id: str, command: StartTurn) -> CoordinatorCommandReceipt:
+        context = TurnContext(self._conn, session_id, command.command_id)
+        with self._graph.synchronization_lock:
+            admission = self._admit_turn(context, command)
+            if isinstance(admission, CoordinatorCommandReceipt):
+                return admission
+        launch, runtime_port = admission
+        hooks = turns.make_turn_hooks(context, self._graph, launch)
+        request = TurnRuntimeRequest(
+            launch.provider, command.prompt, launch.group, launch.identity, hooks, launch.attempt
         )
-        with self._conn:
-            _ = self._conn.execute(
-                "UPDATE coordinator_web_receipts SET status = ?, result_json = ? "
-                + "WHERE command_id = ?",
-                (status, msgspec.json.encode(built).decode(), command_id),
-            )
-            if event_session_id:
-                record_control_once(
-                    self._conn,
-                    event_session_id,
-                    ControlEvent(
-                        kind="command",
-                        text=type(command).__name__,
-                        entity_kind="coordinator_command",
-                        entity_id=hashlib.sha256(command_id.encode()).hexdigest(),
-                        status=status,
-                    ),
-                )
-        return CoordinatorCommandReceipt(command_id, session_id, status, built)
+        try:
+            runtime = runtime_port.run(request)
+        except TurnPreflightError as error:
+            with self._graph.synchronization_lock:
+                release_unconfirmed_turn(self._conn, command.command_id)
+                return self._commands.complete(session_id, command, "unavailable", str(error))
+        except (OSError, ValueError) as error:
+            with self._graph.synchronization_lock:
+                return self._commands.complete(session_id, command, "unavailable", str(error))
+        with self._graph.synchronization_lock:
+            try:
+                status, result = turns.finish_turn(context, launch, runtime, self._root)
+            except (ValueError, sqlite3.IntegrityError) as error:
+                status, result = "rejected", str(error)
+            release_unconfirmed_turn(self._conn, command.command_id)
+            return self._commands.complete(session_id, command, status, result)
 
     def _execute(
         self, session_id: str, command: CoordinatorCommand
@@ -205,13 +227,32 @@ class CoordinatorControl:
                     command.decision,
                 )
             case AttemptCommand() | FailLaunch() | FinishTask():
-                return "accepted", self._attempt_command(workflow, session, command)
+                return "accepted", apply_attempt_command(workflow, session, command)
             case RequestGoalReview():
                 return "accepted", request_coordinator_review(workflow, session, command)
             case DecideGoalReview():
                 return decide_coordinator_review(self._graph, self._services, session, command)
-            case RuntimeAction() | Recover():
-                return self._runtime_command(session, command)
+            case CancelTurn():
+                return cancel_owned_turn(
+                    self._conn, session_id, command.turn_id, self._services.turn_cancel
+                )
+            case Recover():
+                return self._recover(session)
+            case StartTurn() | RuntimeAction():
+                raise AssertionError("runtime command must run outside the graph lock")
+
+    def _recover(
+        self, session: CoordinatorSession
+    ) -> tuple[Literal["accepted", "unavailable"], object]:
+        runtime = self._services.recovery_runtime
+        if runtime is None:
+            return "unavailable", "Recovery runtime is not connected."
+        return "accepted", recover_coordinator(
+            self._conn,
+            session.id,
+            runtime,
+            synchronization_lock=self._graph.synchronization_lock,
+        )
 
     def _workflow_command(
         self,
@@ -240,51 +281,3 @@ class CoordinatorControl:
             case RecordRevision():
                 workflow.record_revision(session, command.revision_id, command.affected_node_ids)
                 return "accepted", None
-
-    def _attempt_command(
-        self,
-        workflow: CoordinatorWorkflow,
-        session: CoordinatorSession,
-        command: AttemptCommand | FailLaunch | FinishTask,
-    ) -> object:
-        attempt = TaskAttempt(
-            command.group_id, command.node_id, command.run_id, command.attempt_id
-        )
-        if isinstance(command, AttemptCommand):
-            return workflow.acknowledge_launch(
-                session, DispatchHandoff(attempt, "awaiting_launch")
-            )
-        if isinstance(command, FailLaunch):
-            workflow.fail_launch(
-                session, DispatchHandoff(attempt, "awaiting_launch"), command.reason
-            )
-            return None
-        workflow.finish_task(
-            session,
-            attempt,
-            NodeLoopOutcome(
-                command.node_id,
-                command.success,
-                command.detail,
-                ownership_preserved=command.ownership_preserved,
-            ),
-        )
-        return None
-
-    def _runtime_command(
-        self, session: CoordinatorSession, command: RuntimeAction | Recover
-    ) -> tuple[Literal["accepted", "unavailable"], object]:
-        if isinstance(command, Recover):
-            if self._services.recovery_runtime is None:
-                return "unavailable", "Recovery runtime is not connected."
-            return "accepted", recover_coordinator(
-                self._conn, session.id, self._services.recovery_runtime
-            )
-        if self._services.runtime_session is None:
-            return "unavailable", "Provider runtime is not connected."
-        runtime = self._services.runtime_session(command.provider_session_id)
-        if runtime is None:
-            return "unavailable", "Provider session is not active."
-        return "accepted", submit_coordinator_action(
-            self._conn, session, runtime, CoordinatorAction(command.command_id, command.input)
-        )

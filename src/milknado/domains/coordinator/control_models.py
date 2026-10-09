@@ -44,7 +44,26 @@ class CreateGroup(
     tasks: tuple[_SQLiteIdentifier, ...]
     worktree_path: str
     branch_name: str
-    provider_session_id: str
+    provider_session_id: str | None = None
+
+
+class StartTurn(
+    msgspec.Struct, frozen=True, tag="start_turn", tag_field="kind", forbid_unknown_fields=True
+):
+    command_id: str
+    prompt: str
+    provider: Literal["claude", "codex"] | None = None
+    group_id: str | None = None
+    node_id: _SQLiteIdentifier | None = None
+    run_id: str | None = None
+    attempt_id: str | None = None
+
+
+class CancelTurn(
+    msgspec.Struct, frozen=True, tag="cancel_turn", tag_field="kind", forbid_unknown_fields=True
+):
+    command_id: str
+    turn_id: str
 
 
 class DispatchTask(
@@ -153,6 +172,8 @@ CoordinatorCommand = (
     | PlanGoal
     | DecidePlanProposal
     | CreateGroup
+    | StartTurn
+    | CancelTurn
     | DispatchTask
     | AttemptCommand
     | FailLaunch

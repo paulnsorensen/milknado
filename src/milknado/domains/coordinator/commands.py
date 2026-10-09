@@ -14,7 +14,7 @@ from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession
 from milknado.domains.graph import TaskAttempt
 
 
-class _ActionSession(Protocol):
+class ActionSession(Protocol):
     @property
     def family(self) -> str: ...
 
@@ -129,13 +129,11 @@ def _reserve_action_receipt(
 def submit_coordinator_action(  # noqa: V103
     conn: sqlite3.Connection,
     session: CoordinatorSession,
-    runtime_session: _ActionSession,
+    runtime_session: ActionSession,
     command: CoordinatorAction,
 ) -> CoordinatorActionReceipt:
     if not command.command_id:
         raise ValueError("command identity must not be empty")
-    if runtime_session.family != session.provider:
-        raise ValueError("provider does not match coordinator session")
     identity = runtime_session.provider_session_id
     linked = cast(
         tuple[int] | None,

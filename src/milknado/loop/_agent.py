@@ -493,6 +493,7 @@ class AgentResult(ProcessResult):
     # True when the cap was reached and the agent process was terminated
     # (streaming) or the cap was exceeded post-hoc (blocking path).
     turn_capped: bool = False
+    terminal_confirmed: bool = False
 
 
 @dataclass(slots=True)
@@ -551,6 +552,7 @@ class AgentRunSpec:
     cwd: Path | None = None
     env: dict[str, str] | None = None
     spawn_worker: Callable[[SpawnOptions], WorkerHandle] | None = None
+    on_session_id: Callable[[str], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)

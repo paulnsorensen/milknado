@@ -19,6 +19,7 @@ web_module = importlib.import_module("milknado.cli.web")
 class Graph:
     def __init__(self) -> None:
         self.closed = False
+        self.groups = object()
 
     def close(self) -> None:
         self.closed = True

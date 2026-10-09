@@ -54,7 +54,7 @@ def _session(graph: MikadoGraph, provider: str = "codex") -> str:
         return start_coordinator(conn, goal.id, provider).id
 
 
-def _group(graph: MikadoGraph, workspace: Path, provider_id: str) -> ExecutionGroup:
+def _group(graph: MikadoGraph, workspace: Path, provider_id: str | None) -> ExecutionGroup:
     workspace.mkdir()
     return graph.groups.create(
         "graph-a",
@@ -125,6 +125,27 @@ def test_restore_failure_never_resumes_group(graph: MikadoGraph, tmp_path: Path)
         )
     assert worktrees.calls == [group]
     assert provider.calls == []
+    assert result.receipts[0].outcome == "unavailable"
+
+
+def test_unbound_group_restores_worktree_without_provider_probe(
+    graph: MikadoGraph, tmp_path: Path
+) -> None:
+    coordinator_id = _session(graph)
+    group = _group(graph, tmp_path / "group", None)
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        link_entity(conn, coordinator_id, "execution_group", group.id)
+    provider = ProviderPort("resumed")
+    worktrees = WorktreePort()
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        result = recover_coordinator(
+            conn, coordinator_id, RecoveryRuntime(graph.groups, tmp_path, provider, worktrees)
+        )
+    assert worktrees.calls == [group]
+    assert provider.calls == []
+    assert len(result.receipts) == 1
+    assert result.receipts[0].entity_id == group.id
+    assert result.receipts[0].identity is None
     assert result.receipts[0].outcome == "unavailable"
 
 
@@ -241,6 +262,15 @@ def test_missing_coordinator_and_unlinked_session_fail_closed(
             conn, coordinator_id, RecoveryRuntime(graph.groups, tmp_path, provider, WorktreePort())
         )
     assert result.receipts == ()
+    assert provider.calls == []
+    with closing(sqlite3.connect(graph.db_path)) as conn:
+        link_entity(conn, coordinator_id, "provider_session", "unbound")
+        with pytest.raises(ValueError, match="unbound provider session links"):
+            _ = recover_coordinator(
+                conn,
+                coordinator_id,
+                RecoveryRuntime(graph.groups, tmp_path, provider, WorktreePort()),
+            )
     assert provider.calls == []
 
 

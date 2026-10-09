@@ -4,7 +4,7 @@ CREATE_EXECUTION_GROUPS = (
     "CREATE TABLE IF NOT EXISTS execution_groups ("
     "id TEXT PRIMARY KEY, graph_id TEXT NOT NULL, "
     "worktree_path TEXT NOT NULL UNIQUE, branch_name TEXT NOT NULL UNIQUE, "
-    "provider_session_id TEXT NOT NULL UNIQUE, "
+    "provider_session_id TEXT UNIQUE, "
     "source_group_id TEXT REFERENCES execution_groups(id), "
     "active_node_id INTEGER REFERENCES nodes(id), active_run_id TEXT)"
 )

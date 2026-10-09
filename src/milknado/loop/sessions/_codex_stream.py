@@ -33,16 +33,8 @@ def item_text(item: dict[str, object]) -> str:
                     parts.append(text_value(data.get("text")))
             return "\n".join(parts)
         return text_value(content)
-    if kind == "commandExecution":
-        return text_value(item.get("aggregatedOutput")) or text_value(item.get("command"))
-    if kind == "mcpToolCall":
-        return text_value(item.get("name")) or text_value(item.get("tool"))
-    if kind == "fileChange":
-        return ", ".join(str(path) for path in object_value(item.get("changes")))
-    if kind == "functionCallOutput":
-        return text_value(item.get("output")) or text_value(item.get("name"))
-    if kind in {"dynamicToolCall", "collabAgentToolCall", "subAgentActivity"}:
-        return text_value(item.get("name")) or text_value(item.get("tool")) or text_value(item)
+    if is_tool(kind):
+        return text_value(item.get("name")) or text_value(item.get("tool")) or kind
     return ""
 
 
@@ -72,7 +64,11 @@ class CodexStreamMixin(CodexState, metaclass=ABCMeta):
         if kind == "assistant":
             self._assistant[event_id] = self._assistant.get(event_id, "") + delta
         event = SessionEvent(
-            kind=kind, text=delta, event_id=event_id, state="streaming", delta=True
+            kind=kind,
+            text=delta if kind == "assistant" else "",
+            event_id=event_id,
+            state="streaming",
+            delta=True,
         )
         return ProtocolStep(events=(event,), session_id=self._session_id or None)
 
@@ -83,7 +79,7 @@ class CodexStreamMixin(CodexState, metaclass=ABCMeta):
             return self._failure("Codex tool progress omitted itemId")
         event = SessionEvent(
             kind="tool",
-            text=text_value(params.get("message")),
+            text="",
             event_id=event_id,
             state="streaming",
             delta=True,
@@ -97,7 +93,7 @@ class CodexStreamMixin(CodexState, metaclass=ABCMeta):
             return self._failure("Codex terminal event omitted itemId")
         event = SessionEvent(
             kind="tool",
-            text=text_value(params.get("stdin")),
+            text="",
             event_id=event_id,
             state="streaming",
             delta=True,

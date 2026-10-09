@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
 
 import msgspec
 
@@ -35,6 +37,28 @@ class ProviderBinding:
     provider_session_id: str
 
 
+RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderIdentity:
+    family: str
+    session_id: str
+
+    def __post_init__(self) -> None:
+        if self.family not in {"claude", "codex"} or not self.session_id:
+            raise ValueError("recovery requires a supported provider session identity")
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryReceipt:
+    entity_kind: str
+    entity_id: str
+    identity: ProviderIdentity | None
+    worktree_path: Path
+    outcome: RecoveryOutcome
+
+
 class ControlEvent(msgspec.Struct, frozen=True):
     kind: str
     text: str = ""
@@ -42,6 +66,8 @@ class ControlEvent(msgspec.Struct, frozen=True):
     entity_id: str = ""
     tool_name: str = ""
     status: str = ""
+    turn_id: str = ""
+    provider_session_id: str = ""
     duration_ms: int | None = None
     tool_arguments: str = ""  # noqa: V107 - accepted but never persisted
     tool_result: str = ""  # noqa: V107 - accepted but never persisted
@@ -57,5 +83,7 @@ class ControlRecord:
     entity_id: str
     tool_name: str
     status: str
+    turn_id: str
+    provider_session_id: str
     duration_ms: int | None
     created_at: str

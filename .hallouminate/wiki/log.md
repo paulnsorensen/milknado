@@ -52,6 +52,8 @@
 
 
 
+2026-10-08 · fc97fa2c79e32f07 · merged · architecture/execution.md · Record retained local PR #521 coordinator-owned native-turn values and adapter mapping. Preserve receipt meaning and deferred decisions. All three frozen probes return this page at rank 1; publication remains pending.
+
 2026-10-08 · 58f3da859dc553e5 · merged · architecture/graph-read-port.md · Record retained local root-first snapshot hydration through public graph.get_nodes. Preserve descendant claim fields, pending publication, and schema ordering. All three frozen probes return the page at rank 1.
 2026-10-08 · ecca3a51b4180ee5 · merged · architecture/planning.md · Record retained local unique planning-context files and completed-operation replay. Supersede the shared filename claim; preserve pending publication and guard approval. All three frozen probes return the page at rank 1.
 
@@ -81,4 +83,28 @@
 
 
 2026-10-09 · af98dc7afde7e31f23701e40364ce0626a1150f891c75a417252e796e2bbd71c · merged · architecture/planning.md · Remove ephemeral publication status from the behavior description. A planning retrieval probe returns the page first. Index reconciliation remains queued; no complete index freshness is claimed.
+
+
+
+2026-10-09 · 42d1929d0f771164 · merged · architecture/execution.md · Record native admission, invocation-scoped permissions, and shutdown ownership. Supersede deferred guard claims. Source: current PR #521 source contracts; Updated: 2026-10-09.
+2026-10-09 · 42d1929d0f771164 · merged · architecture/execution.md · Record coordinator-owned recovery values and locked snapshot, unlocked probe, and revalidation phases. Preserve public receipts and mixed-family bindings. Supersede deferred receipt ownership.
+2026-10-09 · 42d1929d0f771164 · merged · architecture/graph.md · Extend current schema through step 60 and document append-only compact history. All nine frozen probes pass; receipt ownership ranks second, others first. No live native-binding E2E, full-gate, publication, or complete index freshness claim follows.
+
+
+
+2026-10-09 · bab26cf68503829a · merged · architecture/planning.md · Restore the incoming main page by removing duplicate merge residue. Add no design or source claim. Byte comparison and origin/main diff match. Three frozen probes pass at ranks 1, 1, and 2; index reconciliation remains incomplete.
+
+
+
+2026-10-09 · 851a8e01479d3ba5 · merged · architecture/graph.md · Record shared common-domain redactor ownership and replace shifted journal citations with stable symbols. Preserve redaction behavior and direct public aliases. All 15 unchanged and new frozen probes pass; two natural probes rank second. Index reconciliation remains incomplete.
+
+
+
+2026-10-09 · 3e318ac28d184e34 · merged · architecture/execution.md · Record whole-command shutdown through final receipts and public review journals. Replace shifted adapter and CLI anchors with stable symbols. All six new probes pass.
+2026-10-09 · 3e318ac28d184e34 · retrieval-warning · architecture/graph.md · Record production history reuse without committing snapshot reads. Preserve ordinary pruning and commit behavior. Twenty of 21 frozen checks pass. The existing corrupt-reference question misses its top-three requirement after one bounded repair. No complete index freshness or action-admission completion claim follows.
+
+
+
+2026-10-09 · d14a265069979181 · merged · architecture/execution.md · Record approved group-action graph admission through the adapter facade. Preserve root RuntimeSession, durable drain, and identity fences. Supersede the wrapper-free group-action claim. Five frozen checks rank first.
+2026-10-09 · d14a265069979181 · merged · architecture/graph.md · Replace moved schema citations with stable symbols; preserve steps 51–52 and their SQL meaning. Earlier retrieval warning remains 20/21, with corrupt-reference retrieval last observed at rank 4. Index reconciliation remains incomplete.
 
