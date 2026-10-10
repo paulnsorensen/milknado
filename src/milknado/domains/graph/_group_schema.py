@@ -34,3 +34,9 @@ CREATE_GROUP_CLAIM_TRIGGER = (
 
 ADD_RESERVED_NODE_STATUS = "ALTER TABLE execution_groups ADD COLUMN active_node_status TEXT"
 ADD_RESERVED_NODE_RUN_ID = "ALTER TABLE execution_groups ADD COLUMN active_node_run_id TEXT"
+
+RESET_STATEMENTS = (
+    "DELETE FROM execution_group_tasks",
+    "DELETE FROM graph_alternatives",
+    "DELETE FROM execution_groups",
+)

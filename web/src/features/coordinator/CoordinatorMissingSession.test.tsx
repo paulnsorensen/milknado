@@ -1,3 +1,4 @@
+import { Profiler } from 'react';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getState, resetStore } from '../../app/store';
@@ -106,5 +107,24 @@ describe('missing coordinator session', () => {
     expect(localStorage.getItem('milknado.coordinator.session')).toBe('session-a');
     expect(screen.getByText('Goal session-a', { selector: 'strong' })).toBeInTheDocument();
     expect(getState().notices).toEqual([]);
+  });
+  it('shows session B when selection occurs in the discovery commit', async () => {
+    localStorage.setItem('milknado.coordinator.session', 'session-a');
+    vi.mocked(fetch).mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/coordinators') return response([{ id: 'session-b', description: 'Goal B', provider: 'codex' }]);
+      if (url.includes('session-a/snapshot')) return new Promise<Response>(() => {});
+      return response(snapshot('session-b'));
+    });
+    let selected = false;
+    render(<Profiler id="coordinator" onRender={() => {
+      const button = screen.queryByRole('button', { name: 'Goal B · codex' });
+      if (button && !selected) {
+        selected = true;
+        button.click();
+      }
+    }}><CoordinatorCockpit /></Profiler>);
+    expect(await screen.findByText('Goal session-b', { selector: 'strong' })).toBeInTheDocument();
+    expect(selected).toBe(true);
   });
 });
