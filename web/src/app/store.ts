@@ -4,8 +4,10 @@ import type { WireCapabilities, WireExecutionSnapshot, WireGraphSnapshot } from 
 
 export type GraphFilter = "ready" | "running" | "blocked" | null;
 export type GraphLod = "card" | "pill" | "dot";
+export type GraphMode = "execution" | "roadmap";
 
 export interface GraphView {
+  mode: GraphMode;
   filter: GraphFilter;
   focus: string | number | null;
   lod: GraphLod | undefined;
@@ -38,6 +40,7 @@ function initialState(): StoreState {
     selection: null,
     activeSidecar: null,
     graphView: {
+      mode: "execution",
       filter: null,
       focus: null,
       lod: undefined,
@@ -131,6 +134,7 @@ function sameCollapsed(
 
 function sameGraphView(a: GraphView, b: GraphView): boolean {
   return (
+    a.mode === b.mode &&
     a.filter === b.filter &&
     a.focus === b.focus &&
     a.lod === b.lod &&

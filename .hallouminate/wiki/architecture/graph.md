@@ -267,8 +267,10 @@ which is correct across processes where an in-process mutex would not be.
 - **Acyclicity** — `add_edge` and `reparent` run `would_create_cycle`
   (walks ancestors of the proposed parent; reaching the child means a loop).
 - **Prerequisite (Mikado) semantics** — `get_ready_nodes` returns PENDING
-  non-root nodes whose children are all DONE (or who have no children, i.e.
-  leaves). `get_next_runnable(kind)` is the first ready node of a given kind.
+  non-root nodes whose children are all DONE. A GOAL without a structural child
+  (`nodes.parent_id = goal.id`) is an undecomposed stub and is never ready, even
+  with prerequisite edges (`DECOMPOSED_GOAL_FILTER`). `get_next_runnable(kind)`
+  is the first ready node of a given kind.
 - **Roots vs leaves** — a *root* has no incoming edge (not in `edges.child_id`);
   a *leaf* has no outgoing edge. `complete_root` auto-marks the root DONE only
   once every non-root node is DONE (it briefly transitions root through RUNNING

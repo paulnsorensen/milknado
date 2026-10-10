@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getState, resetStore, setSelection, setSnapshot } from '../../app/store';
-import type { WireExecutionSnapshot } from '../../app/wire';
+import { getState, resetStore, setCoordinatorGraph, setGraphView, setSelection, setSnapshot } from '../../app/store';
+import type { WireExecutionSnapshot, WireGraphSnapshot } from '../../app/wire';
 import { getActiveTab, resetTab } from '../../shared/node-detail';
 import {
   clearSelection,
@@ -112,5 +112,39 @@ describe('graphNav', () => {
     expect(getState().graphView.collapsed).toEqual([2]);
     toggleSelectedCollapsed();
     expect(getState().graphView.collapsed).toEqual([]);
+  });
+
+  describe('graph modes', () => {
+    const modeGraph = {
+      nodes: [
+        { id: 10, description: 'road', status: 'pending', parent_id: null, kind: 'roadmap', flavor: null },
+        { id: 11, description: 'goal', status: 'pending', parent_id: 10, kind: 'goal', flavor: null },
+        { id: 12, description: 'task', status: 'pending', parent_id: 11, kind: 'task', flavor: null },
+      ],
+      edges: [
+        { parent_id: 10, child_id: 11 },
+        { parent_id: 11, child_id: 12 },
+      ],
+      root_ids: [10],
+    } satisfies WireGraphSnapshot;
+
+    beforeEach(() => setCoordinatorGraph(modeGraph));
+
+    it('execution mode treats the goal as a root, so selectParent stays put', () => {
+      setSelection(11);
+      selectParent();
+      expect(getState().selection).toBe(11);
+      selectFirstChild();
+      expect(getState().selection).toBe(12);
+    });
+
+    it('roadmap mode folds tasks away, so selectFirstChild does not reach the task', () => {
+      setGraphView({ mode: 'roadmap' });
+      setSelection(11);
+      selectFirstChild();
+      expect(getState().selection).toBe(11);
+      selectParent();
+      expect(getState().selection).toBe(10);
+    });
   });
 });

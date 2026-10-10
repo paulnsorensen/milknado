@@ -27,26 +27,6 @@ from milknado.domains.graph.goal_review import (
     GoalReviewRequest,
 )
 
-READY_NODE_ADMISSION_CTE = """
-WITH RECURSIVE unbounded_review_nodes(id) AS (
-    SELECT goal_id FROM goal_reviews
-    WHERE decision = 'pending' AND affected_node_ids IS NULL
-    UNION
-    SELECT nodes.id
-    FROM nodes
-    JOIN unbounded_review_nodes ON nodes.parent_id = unbounded_review_nodes.id
-),
-paused_review_nodes(id) AS (
-    SELECT id FROM unbounded_review_nodes
-    UNION
-    SELECT CAST(scope.value AS INTEGER)
-    FROM goal_reviews
-    JOIN json_each(goal_reviews.affected_node_ids) AS scope
-    WHERE goal_reviews.decision = 'pending'
-)
-"""
-READY_NODE_ADMISSION_FILTER = "n.id NOT IN (SELECT id FROM paused_review_nodes)"
-
 
 def _text(value: str, label: str) -> str:
     result = value.strip()

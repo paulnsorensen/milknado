@@ -13,10 +13,7 @@ from typing import cast
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
 from milknado.domains.graph._goal_claims import get_goal_claim
-from milknado.domains.graph._goal_review_sql import (
-    READY_NODE_ADMISSION_CTE,
-    READY_NODE_ADMISSION_FILTER,
-)
+from milknado.domains.graph._goal_review_sql import READY_NODE_ADMISSION_CTE, READY_NODE_PREDICATE
 from milknado.domains.graph._persistence import children_id_map, row_to_node
 from milknado.domains.graph._run_persistence import RunRecord, run_row_to_dict
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
@@ -203,7 +200,7 @@ def get_ready_nodes(
 ) -> list[MikadoNode]:
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
-    filters = ["n.status = ?", "EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id)"]
+    filters = ["n.status = ?"]
     if not include_archived:
         # Defensive: eligibility restricts archive to all-DONE subtrees, which
         # the status filter already excludes, but the read layer must not rely
@@ -221,11 +218,10 @@ def get_ready_nodes(
         conn,
         READY_NODE_ADMISSION_CTE
         + "SELECT n.* FROM nodes n WHERE "
-        + READY_NODE_ADMISSION_FILTER
+        + READY_NODE_PREDICATE
         + " AND "
         + " AND ".join(filters)
-        + " AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "
-        + "WHERE e.parent_id = n.id AND c.status != 'done') ORDER BY n.id LIMIT ?",
+        + " ORDER BY n.id LIMIT ?",
         params,
     )
     return [row_to_node(row) for row in rows]

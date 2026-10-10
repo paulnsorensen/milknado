@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getState, resetStore, setCoordinatorGraph, setSelection, setSnapshot } from '../../app/store';
+import { getState, resetStore, setCoordinatorGraph, setGraphView, setSelection, setSnapshot } from '../../app/store';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
 import { GraphToolbarFeature } from './GraphToolbarFeature';
 
@@ -87,6 +87,34 @@ describe('GraphToolbarFeature', () => {
     expect(getState().snapshot).toBe(execution);
     fireEvent.change(input, { target: { value: 'Task' } });
     expect(screen.getByRole('option', { name: /Task one/ })).toBeInTheDocument();
+  });
+
+  it('switching graph mode clears collapse and focus, and the search follows the mode', () => {
+    setCoordinatorGraph({
+      nodes: [
+        { id: 20, description: 'Roadmap', status: 'pending', parent_id: null, kind: 'roadmap', flavor: null },
+        { id: 21, description: 'Planned goal', status: 'pending', parent_id: 20, kind: 'goal', flavor: null },
+        { id: 22, description: 'Goal task', status: 'pending', parent_id: 21, kind: 'task', flavor: null },
+      ],
+      edges: [{ parent_id: 20, child_id: 21 }, { parent_id: 21, child_id: 22 }], root_ids: [20],
+    });
+    render(<GraphToolbarFeature />);
+    const input = screen.getByLabelText('Jump to node');
+    fireEvent.change(input, { target: { value: 'Roadmap' } });
+    expect(screen.queryByRole('option', { name: /Roadmap/ })).not.toBeInTheDocument();
+    screen.getByTitle('Collapse all groups').click();
+    expect(getState().graphView.collapsed).toEqual([21]);
+    setGraphView({ focus: 21 });
+    expect(getState().graphView.focus).toBe(21);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Roadmap' }));
+
+    expect(getState().graphView).toMatchObject({ mode: 'roadmap', collapsed: [], focus: null });
+    expect(screen.getByRole('button', { name: 'Roadmap' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.change(input, { target: { value: 'Goal task' } });
+    expect(screen.queryByRole('option', { name: /Goal task/ })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'Planned' } });
+    expect(screen.getByRole('option', { name: /Planned goal/ })).toBeInTheDocument();
   });
 
   it('picking a node style sets the level of detail', () => {

@@ -2,12 +2,12 @@
 // graph snapshot directly from the store, bypassing the action registry.
 import { getState, setGraphView, setSelection } from '../../app/store';
 import { Milknado } from '../../design-system';
-import { toGraphNodes, type GraphNodeData } from '../../app/wire';
+import { visibleGraphNodes } from '../../app/graphMode';
+import type { GraphNodeData } from '../../app/wire';
 import { setActiveTab } from '../../shared/node-detail';
 
 function graphNodes(): GraphNodeData[] {
-  const graph = getState().snapshot?.graph;
-  return graph ? toGraphNodes(graph) : [];
+  return visibleGraphNodes(getState());
 }
 
 function selectSiblingBy(offset: number): void {
