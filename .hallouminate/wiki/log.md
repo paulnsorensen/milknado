@@ -112,3 +112,7 @@
 
 2026-10-09 · 07edf6c0c36fac2a · merged · architecture/graph.md · Record FK-safe graph persistence reset, receipt cleanup, schema retention, and unchanged worker/filesystem policies. Four frozen probes pass.
 
+
+
+2026-10-10 · 26ad8ac695db06c8 · new-page · gotchas/coordinator-polling-session-ownership.md · Record the approved session-ID match check and controlled RED5/5 to GREEN5/5 regression. Four frozen probes pass at ranks1,2,1,2. No existing page owns frontend effect scope; backend recovery remains separate. Hash lookup follows an earlier broad orientation search, not strict pre-search ordering.
+
