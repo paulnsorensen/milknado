@@ -39,16 +39,56 @@ function rollupOwner(node: WireNode, byId: Map<number, WireNode>): number | null
   return owner?.id ?? null;
 }
 
+function tally(rollup: Rollup, status: WireNodeStatus): void {
+  rollup.total += 1;
+  if (status === 'done') rollup.done += 1;
+  if (status === 'running') rollup.running += 1;
+  if (status === 'blocked' || status === 'failed') rollup.blocked += 1;
+}
+
 function count(rollups: Map<number, Rollup>, ownerId: number, status: WireNodeStatus): void {
   let rollup = rollups.get(ownerId);
   if (!rollup) {
     rollup = { total: 0, done: 0, running: 0, blocked: 0 };
     rollups.set(ownerId, rollup);
   }
-  rollup.total += 1;
-  if (status === 'done') rollup.done += 1;
-  if (status === 'running') rollup.running += 1;
-  if (status === 'blocked' || status === 'failed') rollup.blocked += 1;
+  tally(rollup, status);
+}
+
+function addRollups(into: Rollup, other: Rollup): void {
+  into.total += other.total;
+  into.done += other.done;
+  into.running += other.running;
+  into.blocked += other.blocked;
+}
+
+/**
+ * A goal totals its own tasks plus each child goal: a decomposed child adds its
+ * rollup, and a stub child with no tasks yet adds itself as one unit.
+ */
+function foldChildGoals(nodes: WireNode[], rollups: Map<number, Rollup>): void {
+  const childGoals = new Map<number, WireNode[]>();
+  for (const node of nodes) {
+    if (node.kind === 'goal' && node.parent_id !== null) {
+      childGoals.set(node.parent_id, [...(childGoals.get(node.parent_id) ?? []), node]);
+    }
+  }
+  const folded = new Map<number, Rollup>();
+  const fold = (id: number): Rollup | undefined => {
+    if (folded.has(id)) return folded.get(id);
+    const total: Rollup = { total: 0, done: 0, running: 0, blocked: 0, ...rollups.get(id) };
+    for (const child of childGoals.get(id) ?? []) {
+      const childRollup = fold(child.id);
+      if (childRollup) addRollups(total, childRollup);
+      else tally(total, child.status);
+    }
+    if (total.total > 0) folded.set(id, total);
+    return folded.get(id);
+  };
+  for (const node of nodes) {
+    if (node.kind === 'goal') fold(node.id);
+  }
+  for (const [id, rollup] of folded) rollups.set(id, rollup);
 }
 
 /** Task rollups keyed by goal id, and goal rollups keyed by roadmap id. */
@@ -56,10 +96,16 @@ function rollupsFor(nodes: WireNode[]): Map<number, Rollup> {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const rollups = new Map<number, Rollup>();
   for (const node of nodes) {
-    const ownerId = rollupOwner(node, byId);
-    const owner = ownerId === null ? undefined : byId.get(ownerId);
-    if (owner && (node.kind === 'task' || owner.kind === 'roadmap')) {
-      count(rollups, owner.id, node.status);
+    const ownerId = node.kind === 'task' ? rollupOwner(node, byId) : null;
+    if (ownerId !== null && byId.get(ownerId)?.kind === 'goal') {
+      count(rollups, ownerId, node.status);
+    }
+  }
+  foldChildGoals(nodes, rollups);
+  for (const node of nodes) {
+    const parent = node.parent_id === null ? undefined : byId.get(node.parent_id);
+    if (node.kind === 'goal' && parent?.kind === 'roadmap') {
+      count(rollups, parent.id, rollupState(node, rollups.get(node.id)));
     }
   }
   return rollups;
@@ -95,15 +141,19 @@ function roadmapNodes(graph: WireGraphSnapshot): GraphNodeData[] {
   });
 }
 
-// Goals under a hidden roadmap become roots but keep the sibling card width,
-// so the goals of one roadmap still fit one canvas row.
+// Goals under a hidden roadmap become roots but render as `subgoal`: the
+// vendored design system sizes cards by kind alone and has no layout prop, so
+// `goal` would widen them and break the one-row fit of a roadmap's goals.
 function executionNodes(graph: WireGraphSnapshot): GraphNodeData[] {
   const roadmapIds = new Set(
     graph.nodes.filter((node) => node.kind === 'roadmap').map((node) => node.id),
   );
   const promoted = new Set(
     graph.nodes
-      .filter((node) => node.parent_id !== null && roadmapIds.has(node.parent_id))
+      .filter(
+        (node) =>
+          node.kind === 'goal' && node.parent_id !== null && roadmapIds.has(node.parent_id),
+      )
       .map((node) => node.id),
   );
   return toGraphNodes(keepNodes(graph, (node) => !roadmapIds.has(node.id))).map((data) =>
@@ -111,7 +161,7 @@ function executionNodes(graph: WireGraphSnapshot): GraphNodeData[] {
   );
 }
 
-export function graphNodesFor(graph: WireGraphSnapshot, mode: GraphMode): GraphNodeData[] {
+function graphNodesFor(graph: WireGraphSnapshot, mode: GraphMode): GraphNodeData[] {
   return mode === 'roadmap' ? roadmapNodes(graph) : executionNodes(graph);
 }
 

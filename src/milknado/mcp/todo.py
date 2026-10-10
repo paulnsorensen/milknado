@@ -89,7 +89,9 @@ def milknado_todo_next(
     flavor: Flavor | None = None,
     project_root: str = "",
 ) -> NodeSummary | None:
-    """Return the next runnable node (leaf with no incomplete prereqs).
+    """Return the next runnable node (no incomplete prereqs).
+
+    Never returns undecomposed stub goals; a goal appears once its children are done.
 
     flavor: if provided, only returns nodes with the matching flavor.
     """

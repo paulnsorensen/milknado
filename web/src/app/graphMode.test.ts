@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { graphNodesFor, visibleGraphNodes } from './graphMode';
-import { getState, resetStore, setCoordinatorGraph, setGraphView } from './store';
-import type { WireGraphSnapshot, WireNode } from './wire';
+import { visibleGraphNodes } from './graphMode';
+import { getState, resetStore, setCoordinatorGraph, setGraphView, type GraphMode } from './store';
+import type { GraphNodeData, WireGraphSnapshot, WireNode } from './wire';
 
 function node(id: number, kind: WireNode['kind'], parent_id: number | null, status: WireNode['status'] = 'pending'): WireNode {
   return { id, description: `node ${id}`, status, parent_id, kind, flavor: null };
@@ -33,9 +33,26 @@ const GRAPH: WireGraphSnapshot = {
   root_ids: [1],
 };
 
-describe('graphNodesFor', () => {
+function chain(nodes: WireNode[]): WireGraphSnapshot {
+  return {
+    nodes,
+    edges: nodes
+      .filter((child) => child.parent_id !== null)
+      .map((child) => ({ parent_id: child.parent_id as number, child_id: child.id })),
+    root_ids: nodes.filter((child) => child.parent_id === null).map((child) => child.id),
+  };
+}
+
+function nodesFor(graph: WireGraphSnapshot, mode: GraphMode): GraphNodeData[] {
+  resetStore();
+  setCoordinatorGraph(graph);
+  setGraphView({ mode });
+  return visibleGraphNodes(getState());
+}
+
+describe('graph modes', () => {
   it('execution mode hides roadmap nodes and promotes their goals to roots', () => {
-    const nodes = graphNodesFor(GRAPH, 'execution');
+    const nodes = nodesFor(GRAPH, 'execution');
 
     expect(nodes.map((data) => data.id)).toEqual([2, 3, 4, 5, 6, 7, 8]);
     expect(nodes.find((data) => data.id === 2)).toMatchObject({ kind: 'subgoal', parent: null });
@@ -43,26 +60,86 @@ describe('graphNodesFor', () => {
   });
 
   it('roadmap mode keeps roadmap and goal nodes with task rollups', () => {
-    const nodes = graphNodesFor(GRAPH, 'roadmap');
+    const nodes = nodesFor(GRAPH, 'roadmap');
 
     expect(nodes.map(({ id, kind, parent, state, statusText }) => ({ id, kind, parent, state, statusText }))).toEqual([
-      { id: 1, kind: 'goal', parent: null, state: 'pending', statusText: '0/2 goals' },
-      { id: 2, kind: 'subgoal', parent: 1, state: 'blocked', statusText: '1/3 · 1 blocked' },
+      { id: 1, kind: 'goal', parent: null, state: 'blocked', statusText: '0/2 · 1 blocked' },
+      { id: 2, kind: 'subgoal', parent: 1, state: 'blocked', statusText: '2/4 · 1 blocked' },
       { id: 3, kind: 'subgoal', parent: 1, state: 'pending', statusText: 'no tasks yet' },
       { id: 7, kind: 'subgoal', parent: 2, state: 'done', statusText: '1/1 tasks' },
     ]);
   });
 
   it('a pending goal with running and no blocked tasks shows as running', () => {
-    const graph: WireGraphSnapshot = {
-      nodes: [node(1, 'goal', null), node(2, 'task', 1, 'running')],
-      edges: [{ parent_id: 1, child_id: 2 }],
-      root_ids: [1],
-    };
+    const graph = chain([node(1, 'goal', null), node(2, 'task', 1, 'running')]);
 
-    expect(graphNodesFor(graph, 'roadmap')).toMatchObject([
+    expect(nodesFor(graph, 'roadmap')).toMatchObject([
       { id: 1, state: 'running', statusText: '0/1 · 1 running' },
     ]);
+  });
+
+  it('a goal with a blocked task shows as blocked', () => {
+    const graph = chain([node(1, 'goal', null), node(2, 'task', 1, 'blocked')]);
+
+    expect(nodesFor(graph, 'roadmap')).toMatchObject([
+      { id: 1, state: 'blocked', statusText: '0/1 · 1 blocked' },
+    ]);
+  });
+
+  it('a goal that already left pending keeps its own state', () => {
+    const graph = chain([node(1, 'goal', null, 'done'), node(2, 'task', 1, 'running')]);
+
+    expect(nodesFor(graph, 'roadmap')).toMatchObject([
+      { id: 1, state: 'done', statusText: '0/1 · 1 running' },
+    ]);
+  });
+
+  it('a goal holding only goals totals the tasks beneath them', () => {
+    const graph = chain([
+      node(1, 'goal', null),
+      node(2, 'goal', 1),
+      node(3, 'task', 2, 'done'),
+      node(4, 'task', 2, 'blocked'),
+      node(5, 'goal', 1),
+    ]);
+
+    expect(nodesFor(graph, 'roadmap').map(({ id, state, statusText }) => ({ id, state, statusText }))).toEqual([
+      { id: 1, state: 'blocked', statusText: '1/3 · 1 blocked' },
+      { id: 2, state: 'blocked', statusText: '1/2 · 1 blocked' },
+      { id: 5, state: 'pending', statusText: 'no tasks yet' },
+    ]);
+  });
+
+  it('a goal with its own tasks also totals its child goals', () => {
+    const graph = chain([
+      node(1, 'goal', null),
+      node(2, 'task', 1, 'done'),
+      node(3, 'goal', 1),
+      node(4, 'task', 3, 'running'),
+    ]);
+
+    expect(nodesFor(graph, 'roadmap')).toMatchObject([
+      { id: 1, state: 'running', statusText: '1/2 · 1 running' },
+      { id: 3, statusText: '0/1 · 1 running' },
+    ]);
+  });
+
+  it('a goal decomposed only into stub goals counts them as pending units', () => {
+    const graph = chain([node(1, 'goal', null), node(2, 'goal', 1), node(3, 'goal', 1, 'done')]);
+
+    expect(nodesFor(graph, 'roadmap')).toMatchObject([
+      { id: 1, state: 'pending', statusText: '1/2 tasks' },
+      { id: 2, statusText: 'no tasks yet' },
+      { id: 3, statusText: 'no tasks yet' },
+    ]);
+  });
+
+  it('a task directly under a roadmap is neither a goal rollup nor a promoted root', () => {
+    const graph = chain([node(1, 'roadmap', null), node(2, 'task', 1), node(3, 'goal', 1)]);
+
+    expect(nodesFor(graph, 'execution').find((data) => data.id === 2)).toMatchObject({ kind: 'task' });
+    expect(nodesFor(graph, 'execution').find((data) => data.id === 3)).toMatchObject({ kind: 'subgoal' });
+    expect(nodesFor(graph, 'roadmap').find((data) => data.id === 1)?.statusText).toBe('0/1 goals');
   });
 });
 

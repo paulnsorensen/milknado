@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { getState, resetStore, setCoordinatorGraph, setSelection, setSnapshot } from '../../app/store';
+import { getState, resetStore, setCoordinatorGraph, setGraphView, setSelection, setSnapshot } from '../../app/store';
 import { mergeSnapshot, type RawStreamSnapshot } from '../live-state/runtimeSnapshot';
 import { GraphToolbarFeature } from './GraphToolbarFeature';
 
@@ -104,6 +104,8 @@ describe('GraphToolbarFeature', () => {
     expect(screen.queryByRole('option', { name: /Roadmap/ })).not.toBeInTheDocument();
     screen.getByTitle('Collapse all groups').click();
     expect(getState().graphView.collapsed).toEqual([21]);
+    setGraphView({ focus: 21 });
+    expect(getState().graphView.focus).toBe(21);
 
     fireEvent.click(screen.getByRole('button', { name: 'Roadmap' }));
 
@@ -111,6 +113,8 @@ describe('GraphToolbarFeature', () => {
     expect(screen.getByRole('button', { name: 'Roadmap' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.change(input, { target: { value: 'Goal task' } });
     expect(screen.queryByRole('option', { name: /Goal task/ })).not.toBeInTheDocument();
+    fireEvent.change(input, { target: { value: 'Planned' } });
+    expect(screen.getByRole('option', { name: /Planned goal/ })).toBeInTheDocument();
   });
 
   it('picking a node style sets the level of detail', () => {

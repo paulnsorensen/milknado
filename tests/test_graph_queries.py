@@ -67,6 +67,15 @@ def test_undecomposed_goals_are_not_ready(tmp_path: Path) -> None:
         "decomposed", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL)
     )
     task = graph.add_node("task", parent_id=decomposed.id)
+    dependency = graph.add_node(
+        "dependency", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL)
+    )
+    _ = graph.add_edge(stub.id, dependency.id)
+    dependency_task = graph.add_node("dependency task", parent_id=dependency.id)
+    graph.mark_running(dependency_task.id)
+    graph.mark_done(dependency_task.id)
+    graph.mark_running(dependency.id)
+    graph.mark_done(dependency.id)
     conn = graph_conn(graph)
 
     assert [node.id for node in graph.get_ready_nodes()] == [task.id]
