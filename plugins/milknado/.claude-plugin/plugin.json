@@ -1,5 +1,5 @@
 {
   "name": "milknado",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Mikado execution engine — decomposes goals into dependency graphs, executes as parallel loops"
 }
