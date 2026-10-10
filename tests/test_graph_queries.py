@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec, NodeStatus
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import MikadoGraph, _dispatch_readiness
 from tests.graph_helpers import graph_conn
 
 
@@ -56,6 +56,29 @@ def test_ready_nodes_filter_kind_and_flavor(tmp_path: Path) -> None:
     ready = graph.get_ready_nodes(kind=NodeKind.TASK, flavor="research")
 
     assert [node.id for node in ready] == [research.id]
+    graph.close()
+
+
+def test_undecomposed_goals_are_not_ready(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    roadmap = graph.add_node("roadmap", spec=NodeSpec(kind=NodeKind.ROADMAP))
+    stub = graph.add_node("stub", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL))
+    decomposed = graph.add_node(
+        "decomposed", parent_id=roadmap.id, spec=NodeSpec(kind=NodeKind.GOAL)
+    )
+    task = graph.add_node("task", parent_id=decomposed.id)
+    conn = graph_conn(graph)
+
+    assert [node.id for node in graph.get_ready_nodes()] == [task.id]
+    assert _dispatch_readiness.ready_node_ids(conn) == [task.id]
+    assert _dispatch_readiness.dispatchable_count(conn) == 1
+
+    graph.mark_running(task.id)
+    graph.mark_done(task.id)
+
+    assert [node.id for node in graph.get_ready_nodes()] == [decomposed.id]
+    assert _dispatch_readiness.ready_node_ids(conn) == [decomposed.id]
+    assert stub.id not in _dispatch_readiness.ready_node_ids(conn)
     graph.close()
 
 

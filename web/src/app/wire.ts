@@ -80,6 +80,8 @@ export interface GraphNodeData {
   title: string;
   kind: 'goal' | 'subgoal' | 'task';
   state: WireNodeStatus;
+  /** Overrides the status word on the node card. */
+  statusText?: string;
   parent: string | number | null;
   extra?: Array<string | number>;
 }

@@ -294,6 +294,21 @@ body {
   z-index: var(--mk-layer-toolbar);
 }
 
+.mk-graph-toolbar-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mk-space-2);
+}
+
+.mk-graph-toolbar-row > .mk-seg {
+  flex: none;
+}
+
+.mk-graph-toolbar-row > :last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .mk-shell [data-region="canvas"] {
   position: relative;
   flex: 1 1 0;

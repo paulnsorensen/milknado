@@ -6,17 +6,25 @@ import json
 import sqlite3
 from typing import cast
 
-from milknado.domains.common import NodeStatus
+from milknado.domains.common import NodeKind, NodeStatus
 from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_CTE,
     READY_NODE_ADMISSION_FILTER,
 )
 from milknado.domains.graph._sqlite_rows import as_tuple, fetchall, fetchone
 
+# A goal with no prerequisites is an undecomposed roadmap stub, not executable work.
+DECOMPOSED_GOAL_FILTER = (
+    f"(n.kind != '{NodeKind.GOAL.value}' "
+    + "OR EXISTS (SELECT 1 FROM edges d WHERE d.parent_id = n.id))"
+)
+
 _READY_CTE = (
     READY_NODE_ADMISSION_CTE
     + ", ready AS (SELECT n.id FROM nodes n WHERE "
     + READY_NODE_ADMISSION_FILTER
+    + " AND "
+    + DECOMPOSED_GOAL_FILTER
     + " AND n.status = ? AND n.archived_at IS NULL "
     + "AND n.id IN (SELECT child_id FROM edges) "
     + "AND NOT EXISTS (SELECT 1 FROM edges e JOIN nodes c ON c.id = e.child_id "

@@ -12,6 +12,7 @@ from dataclasses import replace
 from typing import cast
 
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
+from milknado.domains.graph._dispatch_readiness import DECOMPOSED_GOAL_FILTER
 from milknado.domains.graph._goal_claims import get_goal_claim
 from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_CTE,
@@ -203,7 +204,11 @@ def get_ready_nodes(
 ) -> list[MikadoNode]:
     if not 1 <= limit <= 100:
         raise ValueError("limit must be between 1 and 100")
-    filters = ["n.status = ?", "EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id)"]
+    filters = [
+        "n.status = ?",
+        "EXISTS (SELECT 1 FROM edges i WHERE i.child_id = n.id)",
+        DECOMPOSED_GOAL_FILTER,
+    ]
     if not include_archived:
         # Defensive: eligibility restricts archive to all-DONE subtrees, which
         # the status filter already excludes, but the read layer must not rely
