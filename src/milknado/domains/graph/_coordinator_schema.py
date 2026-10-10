@@ -132,3 +132,16 @@ CREATE_UNKNOWN_TURN_INDEX = (
     "(coordinator_id, provider_family, provider_session_id, turn_id) "
     "WHERE status = 'unknown'"
 )
+
+RESET_STATEMENTS = (
+    "DELETE FROM coordinator_turn_events",
+    "DELETE FROM coordinator_provider_bindings",
+    "DELETE FROM coordinator_links",
+    "DELETE FROM coordinator_events",
+    "DELETE FROM coordinator_dispatches",
+    "DELETE FROM coordinator_action_receipts",
+    "DELETE FROM coordinator_plans",
+    "DELETE FROM coordinator_sessions",
+    "DELETE FROM coordinator_web_receipts",
+    "DELETE FROM coordinator_turn_launches",
+)

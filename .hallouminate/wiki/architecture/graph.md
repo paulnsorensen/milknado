@@ -104,6 +104,26 @@ Steps 57–59 add stream keys, references, and depths; step 60 indexes stream lo
 The ladder retains steps 31–50 and creates current-schema objects before coordinator startup.
 These steps add no old-data backfill, lazy schema creation, or release-compatibility transformation.[^pr521-current-schema]
 
+
+
+### Graph persistence reset
+
+Full graph persistence reset deletes coordinator receipts and execution-group dependencies before node rows.[^issue523-reset-order]
+`MikadoGraph.drop_all()` returns the pre-reset node count and retains the current schema.
+Explicit cleanup includes web command receipts and turn launches, which have no session foreign key.
+Deleting coordinator sessions also clears plan proposals through the existing cascade.[^issue523-reset-order]
+Group tasks, graph alternatives, and execution groups clear before nodes, including forked group references.
+
+Reset tests verify all coordinator tables, foreign keys before and after reset, schema after reopen, and command-ID reuse.[^issue523-reset-tests]
+Repeated reset of an empty graph returns zero.
+The persistence function does not terminate workers, remove Git worktrees, or fork provider conversations.
+This cleanup does not add a controller takeover or user-facing reset route.[^issue523-reset-order]
+
+_Source: issue #523 reset follow-up and current graph persistence code · Updated: 2026-10-09_
+
+[^issue523-reset-order]: src/milknado/domains/graph/_persistence.py:668-695; src/milknado/domains/graph/_coordinator_schema.py:136-147; src/milknado/domains/graph/_group_schema.py:38-42
+[^issue523-reset-tests]: tests/coordinator/test_graph_reset.py:87-140
+
 ### Append-only coordinator stream history
 
 Append-only coordinator stream history compacts redacted text and rejects corrupt references while preserving exact public history.

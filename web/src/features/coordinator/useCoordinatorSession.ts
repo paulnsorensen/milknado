@@ -95,7 +95,7 @@ export function useCoordinatorSession() {
   }
 
   useEffect(() => {
-    if (!sessionId || !available) return;
+    if (!sessionId || !available || scope.current.id !== sessionId) return;
     const currentScope = scope.current;
     let timer: number | undefined;
     async function poll(): Promise<void> {
