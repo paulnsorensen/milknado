@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 import threading
 import time
@@ -9,16 +10,21 @@ from pathlib import Path
 from typing import TypedDict, cast
 from uuid import uuid4
 
+import psutil
 import pytest
 from typing_extensions import override
 
+import milknado.domains.execution._node_attempts as _node_attempts
 import milknado.domains.execution.executor as _executor_module
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import (
     ProgressEvent,
+    RunResult,
     SessionInput,
     SessionView,
     TerminalRunOutcome,
     VerifySpecResult,
+    WorkerOwner,
 )
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import (
@@ -41,8 +47,11 @@ from milknado.domains.execution import (
 )
 from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
 from milknado.domains.execution.executor import WorktreeManager
-from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
 from milknado.loop import RunStatus
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
+from milknado.loop._process_startup import _release_worker  # pyright: ignore[reportPrivateUsage]
 
 _BUILD_COMMIT_MESSAGE = cast(
     Callable[[int, str], str], attrgetter("_build_commit_message")(_executor_module)
@@ -75,6 +84,39 @@ def _redispatch_review_round(
         attrgetter("_redispatch_review_round")(executor),
     )
     return method(node, config, worktree)
+
+
+def _assert_review_failure_replay(
+    graph: MikadoGraph, node_id: int, first: DispatchResult, second: DispatchResult
+) -> None:
+    attempt_id = first.attempt_id
+    assert attempt_id is not None
+    current = graph.get_node(node_id)
+    prior = graph.runs.get(first.run_id)
+    terminal = graph.runs.get(second.run_id)
+    attempt = graph.task_attempts.get(attempt_id)
+    assert current is not None and current.status is NodeStatus.PENDING
+    assert prior is not None and prior["status"] == "done"
+    assert terminal is not None and terminal["status"] == "failed"
+    assert terminal["ended_at"] is not None
+    assert attempt is not None and (attempt.outcome, attempt.disposition) == ("failed", "pending")
+    assert graph.task_attempts.failed_count(node_id) == 1
+    replay = graph.task_attempts.fail(
+        FinalizeTaskFailure(
+            node_id,
+            attempt_id,
+            second.run_id,
+            second.run_id,
+            3,
+            RunResult("failed", None, False, terminal["ended_at"], detail="review worker failed"),
+        )
+    )
+    assert (replay.status, replay.failed_count) == (NodeStatus.PENDING, 1)
+    assert graph.task_attempts.failed_count(node_id) == 1
+    prior_after = graph.runs.get(first.run_id)
+    terminal_after = graph.runs.get(second.run_id)
+    assert prior_after is not None and prior_after["status"] == prior["status"]
+    assert terminal_after is not None and terminal_after["status"] == terminal["status"]
 
 
 def _finalize_worker_run(executor: Executor, run_id: str | None, result: object) -> None:
@@ -558,6 +600,64 @@ class TestExecutorDispatch:
         assert RUN_ID_RE.match(result.run_id), "the loop run_id matches the executor's id format"
         assert "extract-interface" in str(result.worktree)
 
+    def test_default_limit_links_and_counts_one_task_attempt(
+        self, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        executor = Executor(graph=graph, git=FakeGit(), loop=FakeLoop(), crg=FakeCrg())
+        _ = graph.add_node("task")
+        result = executor.dispatch(1, config)
+        row = graph.runs.get(result.run_id)
+        assert row is not None
+        assert result.attempt_id is not None
+        assert row["attempt_id"] == result.attempt_id
+        executor.fail(1, "one failure")
+        attempt = graph.task_attempts.get(result.attempt_id)
+        assert attempt is not None
+        assert attempt.outcome == "failed"
+        assert attempt.failed_count == 1
+        assert graph.task_attempts.failed_count(1) == 1
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.FAILED
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX exec-status channel")
+    def test_default_limit_missing_command_keeps_failed_without_count(
+        self, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        executor = Executor(graph=graph, git=FakeGit(), loop=FakeLoop(), crg=FakeCrg())
+        _ = graph.add_node("task")
+        result = executor.dispatch(1, config)
+        assert result.attempt_id is not None
+        supervisor = psutil.Process()
+        owner = WorkerOwner(
+            result.run_id, supervisor.pid, supervisor.create_time(), result.run_id, 1
+        )
+        options = SpawnOptions(
+            command=("/nonexistent/milknado-start-test",),
+            cwd=None,
+            env=None,
+            text=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        worker = spawn_gated(options)
+        try:
+            _release_worker(
+                worker, ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+            )
+            assert worker.start_evidence is StartEvidence.STARTUP_FAILED
+            assert worker.process.wait(timeout=3) != 0
+        finally:
+            worker.close_gate()
+        executor.fail(1, "command did not start")
+        attempt = graph.task_attempts.get(result.attempt_id)
+        assert attempt is not None and attempt.outcome == "startup_failed"
+        assert graph.task_attempts.failed_count(1) == 0
+        node = graph.get_node(1)
+        assert node is not None and node.status is NodeStatus.FAILED
+        run = graph.runs.get(result.run_id)
+        assert run is not None and run["status"] == "failed"
+
     def test_marks_node_running(
         self,
         executor: Executor,
@@ -638,6 +738,79 @@ class TestExecutorDispatch:
         assert env["MILKNADO_RUN_ID"] == result.run_id
         assert env["MILKNADO_PROJECT_ROOT"] == str(config.project_root.resolve())
         assert env["MILKNADO_PROJECT_ROOT"] != str(result.worktree)
+
+    def test_attempt_identity_is_durable_before_loop_start(
+        self, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        node = graph.add_node("task")
+
+        class InspectLoop(FakeLoop):
+            @override
+            def start_run(self, run_id: str) -> None:
+                row = graph.runs.get(run_id)
+                current = graph.get_node(node.id)
+                assert row is not None and row["attempt_id"] is not None
+                assert current is not None and current.run_id == run_id
+                attempt = graph.task_attempts.get(row["attempt_id"])
+                assert attempt is not None and attempt.owner_run_id == run_id
+                super().start_run(run_id)
+
+        executor = Executor(graph=graph, git=FakeGit(), loop=InspectLoop(), crg=FakeCrg())
+        result = executor.dispatch(node.id, replace(config, max_node_attempts=3))
+        run = graph.runs.get(result.run_id)
+        assert run is not None and run["attempt_id"] == result.attempt_id
+
+    def test_confirmed_failure_requeues_linked_direct_attempt(
+        self, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        node = graph.add_node("task")
+        executor = Executor(graph=graph, git=FakeGit(), loop=FakeLoop(), crg=FakeCrg())
+        result = executor.dispatch(node.id, replace(config, max_node_attempts=3))
+        assert result.attempt_id is not None
+        assert graph.task_attempts.confirm_execution(
+            result.attempt_id, result.run_id, result.run_id
+        )
+
+        executor.fail(node.id, "worker failed")
+
+        current = graph.get_node(node.id)
+        assert current is not None and current.status is NodeStatus.PENDING
+        assert graph.task_attempts.failed_count(node.id) == 1
+        run = graph.runs.get(result.run_id)
+        assert run is not None and run["status"] == "failed"
+
+    def test_review_redispatch_reuses_attempt_before_next_loop_start(
+        self, graph: MikadoGraph, config: ExecutionConfig
+    ) -> None:
+        node = graph.add_node("review")
+        seen: list[str] = []
+
+        class InspectLoop(FakeLoop):
+            @override
+            def start_run(self, run_id: str) -> None:
+                row = graph.runs.get(run_id)
+                current = graph.get_node(node.id)
+                assert row is not None and row["attempt_id"] is not None
+                assert current is not None and current.run_id == run_id
+                seen.append(row["attempt_id"])
+                super().start_run(run_id)
+
+        executor = Executor(graph=graph, git=FakeGit(), loop=InspectLoop(), crg=FakeCrg())
+        bounded = replace(config, max_node_attempts=3)
+        first = executor.dispatch(node.id, bounded)
+        current = graph.get_node(node.id)
+        assert current is not None
+        second = _redispatch_review_round(executor, current, bounded, first.worktree)
+        assert first.attempt_id is not None and first.attempt_id == second.attempt_id
+        assert seen == [first.attempt_id, first.attempt_id]
+        assert not graph.task_attempts.confirm_execution(
+            first.attempt_id, first.run_id, first.run_id
+        )
+        assert graph.task_attempts.confirm_execution(
+            first.attempt_id, second.run_id, second.run_id
+        )
+        executor.fail(node.id, "review worker failed")
+        _assert_review_failure_replay(graph, node.id, first, second)
 
     def test_loop_brief_states_orientation(
         self,
@@ -1881,6 +2054,7 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
         return run_id
 
     monkeypatch.setattr(_executor_module, "make_run_id", fixed_run_id)
+    monkeypatch.setattr(_node_attempts, "make_run_id", fixed_run_id)
     monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
     retry_config = replace(config, dispatch_max_retries=1, dispatch_backoff_seconds=0)
     with pytest.raises(PreservedWorkerRun) as aborted:

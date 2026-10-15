@@ -239,6 +239,7 @@ def _execute_pair(case: _ExhaustionCase) -> AgentResult:
         try:
             assert _until(affected_stage.exists)
             assert _until(other_stage.exists)
+            assert _until(lambda: "affected" in case.workers and "other" in case.workers)
             affected_worker = case.workers["affected"]
             other_pid = _assert_started(case.graph, case.workers, case.tmp_path)
             _exhaust(case.graph, affected_worker, case.failure, case.monkeypatch)

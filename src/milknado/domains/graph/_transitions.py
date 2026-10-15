@@ -18,11 +18,9 @@ from milknado.domains.graph._goal_review_sql import (
     READY_NODE_ADMISSION_FILTER,
 )
 from milknado.domains.graph._group_reservation import claim_reservation_allows
+from milknado.domains.graph._owner_release import NO_OPEN_WORKERS as _NO_OPEN_WORKERS
 from milknado.domains.graph._sqlite_rows import fetchone
 
-_NO_OPEN_WORKERS = (
-    "NOT EXISTS (SELECT 1 FROM run_workers AS w WHERE w.node_id = nodes.id AND w.ended_at IS NULL)"
-)
 _NO_OPEN_WORKERS_ALIASED = (
     "NOT EXISTS (SELECT 1 FROM run_workers AS w WHERE w.node_id = n.id AND w.ended_at IS NULL)"
 )
@@ -228,28 +226,6 @@ def claim_node(
         if owns_transaction:
             conn.rollback()
         raise
-
-
-def release(conn: sqlite3.Connection, node_id: int, owner_run_id: str) -> bool:
-    """Flip a RUNNING node back to PENDING, clearing ownership, gated on run_id.
-
-    Used by try_reclaim to free a provably-dead owner and by dispatch cleanup to
-    release a claim whose startup failed. The run_id guard means a node already
-    re-claimed under a different run is left untouched.
-
-    The `status = 'running'` guard mirrors mark_terminal: DONE keeps its run_id, so
-    without it an owner that committed DONE between a reclaim's SELECT and this
-    UPDATE could be walked back from DONE to PENDING, resurrecting a completed node.
-    """
-    cur = conn.execute(
-        "UPDATE nodes SET status = 'pending', run_id = NULL, pid = NULL, "
-        + "worktree_path = NULL, branch_name = NULL, completed_at = NULL "
-        + "WHERE id = ? AND run_id = ? AND status = 'running' AND "
-        + _NO_OPEN_WORKERS,
-        (node_id, owner_run_id),
-    )
-    conn.commit()
-    return cur.rowcount == 1
 
 
 def mark_terminal(

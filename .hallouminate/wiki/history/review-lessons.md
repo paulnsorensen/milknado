@@ -56,6 +56,31 @@ through `load_config` so the value is genuinely derived.
 testing an impossible state. Build fixtures through the real entry point
 (`load_config`), not by hand-constructing internals.
 
+### Recovery fixtures: SIGSTOP does not prove a SQLite writer gap
+
+A SIGSTOP recovery fixture cannot infer a SQLite writer gap from committed worker snapshot fields.
+A stopped child can retain an open writer transaction after the snapshot reports no observation owner.
+The controlled regression uses a real child, a real graph database, and a held `BEGIN IMMEDIATE` transaction.[^freeze-gap-witness]
+
+After verified SIGSTOP, `freeze_after_snapshot` probes a separate SQLite connection with `timeout=0`.
+It executes `BEGIN IMMEDIATE`, rolls back, and closes the probe before accepting the stopped state.
+On `SQLITE_BUSY`, it resumes the child and retries within the original eight-second deadline.
+Other SQLite errors resume the child and propagate.[^freeze-gap-helper]
+This tests-only correction changes neither production retry policy nor production timeouts.
+
+The controlled witness fails five of five times with `database is locked` before correction.
+It passes five of five times after correction.
+The original recovery seam also passes five repeats before correction, so that seam alone does not prove the fix.[^freeze-gap-replay]
+The historical gate-3 lock owner remains unknown.
+The separate SIGKILL exhaustion failure also has no identified cause.
+These results establish a fixture failure class, not a production contention fix or a passing integrated gate.[^freeze-gap-replay]
+
+[^freeze-gap-witness]: tests/test_recovery_freeze_gap.py:21-37,48-75.
+[^freeze-gap-helper]: tests/test_loop_recovery_subprocess.py:52-79.
+[^freeze-gap-replay]: Controlled replay evidence recorded on 2026-10-10 in bounded-node-attempts-freeze-gap-observations.md and bounded-node-attempts-freeze-gap-validation.md; normalized source hash `4cba4cf6250b4b91`. RED: five failures, five exact error matches, zero timeouts. GREEN: five passing controlled runs.
+
+_Source: Issue #495 tests-only freeze-gap correction and controlled real-process replay · Updated: 2026-10-10 · Supersedes: none; production contention causes remain unresolved._
+
 ## CI: codecov/patch is the gate that catches under-tested branches
 
 Both #96 and #109 had `codecov/patch` red while every other check was green

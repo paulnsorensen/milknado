@@ -59,6 +59,16 @@ from milknado.domains.execution._models import (
     PreservedWorkerRun,
     RebaseConflict,
 )
+from milknado.domains.execution._node_attempts import (
+    AttemptRuntime,
+    bind_before_start,
+    bind_review_round,
+    discard_worktree,
+    dispatch_identity,
+    fail_bounded_attempt,
+    record_nonfailure,
+    supersede_review_round,
+)
 from milknado.domains.execution._node_context import ExecutionConfig as ExecutionConfig
 from milknado.domains.execution._node_context import NodeExecutionContext
 from milknado.domains.execution._review import (
@@ -73,6 +83,7 @@ from milknado.domains.execution._stop import (
     stop_graph_run,
 )
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
+from milknado.domains.graph import StartTaskAttempt
 from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
@@ -471,6 +482,7 @@ class Executor:
             )
             self._context_by_node[node_id] = NodeExecutionContext(
                 worker_run_id=result.run_id,
+                attempt_id=result.attempt_id,
                 owner_fence=parent_run_id,
                 worktree=result.worktree,
                 session=None,
@@ -538,18 +550,9 @@ class Executor:
             )
 
         wt_path, branch = self._resolve_worktree_path(node_id, node, config)
-        adopted = parent_run_id is not None
-        if adopted:
-            if node.status is not NodeStatus.RUNNING or node.run_id != parent_run_id:
-                raise InvalidTransition(
-                    node_id,
-                    node.status,
-                    NodeStatus.RUNNING,
-                    tuple(VALID_TRANSITIONS[node.status]),
-                )
-            owner_run_id = parent_run_id
-        else:
-            owner_run_id = make_run_id(node_id)
+        owner_run_id, attempt_id, selected_run_id, adopted = dispatch_identity(
+            self._graph, node, config, parent_run_id
+        )
         self._admit(node_id, owner_run_id, config.project_root, adopted=adopted)
 
         create_attempted = False
@@ -561,18 +564,28 @@ class Executor:
             self._graph.set_worktree(node_id, owner_run_id, str(wt_path), branch)
             create_attempted = True
             self._wt.create(node_id, wt_path, branch)
+            budget = config.max_node_attempts
+            _ = self._graph.task_attempts.start(
+                StartTaskAttempt(node_id, attempt_id, owner_run_id, selected_run_id, budget)
+            )
             dispatch_base_oid = base_oid or self._git.resolve_ref(self._git.current_branch())
             run_id = self._create_loop_run(
                 node,
                 config,
                 wt_path,
                 dispatch_base_oid,
+                selected_run_id=selected_run_id,
+                attempt_id=attempt_id,
                 aborted_run_metadata=aborted_run_metadata,
             )
-            if not adopted:
+            if not adopted and selected_run_id is None:
                 if not self._graph.replace_run_id(node_id, owner_run_id, run_id):
                     raise ValueError(f"dispatch fence lost for node {node_id}")
                 owner_run_id = run_id
+            if selected_run_id is None and not self._graph.task_attempts.bind_invocation(
+                attempt_id, owner_run_id, run_id
+            ):
+                raise ValueError(f"task attempt invocation fence lost for node {node_id}")
             self._graph.set_dispatched_at(node_id)
         except Exception as exc:
             _logger.error(
@@ -598,7 +611,9 @@ class Executor:
             if not confirmed and started_run_id is not None:
                 raise PreservedWorkerRun(node_id, started_run_id, owner_run_id) from exc
             raise
-        return DispatchResult(node_id=node_id, worktree=wt_path, run_id=run_id)
+        return DispatchResult(
+            node_id=node_id, worktree=wt_path, run_id=run_id, attempt_id=attempt_id
+        )
 
     def _create_loop_run(
         self,
@@ -611,8 +626,11 @@ class Executor:
         prior_findings: str = "",
         findings_round: int | None = None,
         aborted_run_metadata: list[tuple[str, bool]] | None = None,
+        selected_run_id: str | None = None,
+        attempt_id: str | None = None,
+        before_start: Callable[[str], None] | None = None,
     ) -> str:
-        loop_run_id = make_run_id(node.id)
+        loop_run_id = selected_run_id or make_run_id(node.id)
         current = self._graph.get_node(node.id)
         brief = render_brief(
             self._graph,
@@ -683,7 +701,9 @@ class Executor:
             str(log_dir),
             datetime.now(UTC).isoformat(),
             config.completion_timeout_seconds,
+            attempt_id=attempt_id,
         )
+        bind_before_start(self._graph, run_id, before_start)
         self._loop.start_run(run_id)
         try:
             self._spawn_loop_cancel_watcher(run_id, config.project_root)
@@ -982,35 +1002,18 @@ class Executor:
         findings_round: int | None = None,
     ) -> DispatchResult:
         context = self._context_by_node.get(node.id)
-        owner_fence = context.owner_fence if context else None
-        prior_worker_run_id = context.worker_run_id if context else None
-        old_worker_run_id = prior_worker_run_id or node.run_id
-        if not old_worker_run_id:
-            raise ValueError(
-                f"node {node.id} has no run fence/worker run id for review redispatch"
-            )
-        # The prior round is over (its review already ran) regardless of
-        # whether the next round can be created below — finalize it here,
-        # unconditionally and exactly once, so a fresh-run failure (raised
-        # out of _create_loop_run before any fence check runs) can never
-        # leave it zombied 'running'. Only the recorded worker run id is
-        # finalized — never the node.run_id fence fallback, which can be a
-        # live parent run's row.
-        review_round = context.review_round if context else 0
-        self._finalize_worker_run(
-            prior_worker_run_id,
-            RunResult(
-                status="done",
-                exit_code=0,
-                timed_out=False,
-                ended_at=datetime.now(UTC).isoformat(),
-                detail=f"superseded by review round {review_round} redispatch",
-            ),
+        owner_fence, old_worker_run_id = supersede_review_round(
+            self._finalize_worker_run, node, context
         )
         base_oid = context.base_oid if context else None
         if base_oid is None:
             raise ValueError(f"node {node.id} has no dispatch base oid for review")
         session = context.session if context else None
+        attempt_id = context.attempt_id if context else None
+        bounded_attempt_id = attempt_id if config.max_node_attempts > 1 else None
+        if config.max_node_attempts > 1 and bounded_attempt_id is None:
+            raise ValueError(f"node {node.id} has no bounded task attempt")
+
         try:
             run_id = self._create_loop_run(
                 node,
@@ -1020,11 +1023,29 @@ class Executor:
                 session=session if config.session_mode == "resume" else None,
                 prior_findings=prior_findings,
                 findings_round=findings_round,
+                selected_run_id=make_run_id(node.id) if bounded_attempt_id else None,
+                attempt_id=attempt_id,
+                before_start=(
+                    lambda run_id: (
+                        bind_review_round(
+                            self._graph,
+                            cast(NodeExecutionContext, context),
+                            old_worker_run_id,
+                            run_id,
+                        )
+                        if bounded_attempt_id
+                        else None
+                    )
+                ),
             )
         except PreservedWorkerRun as exc:
             raise PreservedWorkerRun(
                 node.id, exc.run_id, owner_fence or old_worker_run_id
             ) from exc
+        if bounded_attempt_id is not None:
+            assert context is not None
+            context.worker_run_id = run_id
+            return DispatchResult(node.id, worktree, run_id, bounded_attempt_id)
         if owner_fence is None:
             if not self._graph.replace_run_id(node.id, old_worker_run_id, run_id):
                 if not self._stop_aborted_run(
@@ -1040,10 +1061,16 @@ class Executor:
                 ):
                     raise PreservedWorkerRun(node.id, run_id, owner_fence)
                 raise ValueError(f"adopted owner fence lost for node {node.id}")
+        if attempt_id is not None and not self._graph.task_attempts.bind_invocation(
+            attempt_id, owner_fence or run_id, run_id
+        ):
+            raise ValueError(f"review task attempt invocation fence lost for node {node.id}")
         if context is not None:
             context.worker_run_id = run_id
 
-        return DispatchResult(node_id=node.id, worktree=worktree, run_id=run_id)
+        return DispatchResult(
+            node_id=node.id, worktree=worktree, run_id=run_id, attempt_id=attempt_id
+        )
 
     def _cleanup_failed_dispatch(
         self,
@@ -1185,11 +1212,14 @@ class Executor:
         )
         if rebase_result.success:
             wrote = self._mark_terminal(node, NodeStatus.DONE)
+            if wrote:
+                record_nonfailure(self._graph, node, self._context_by_node.get(node.id), "done")
             if wrote and node.dispatched_at is not None:
                 completed_now = datetime.now(UTC)
                 duration = (completed_now - node.dispatched_at).total_seconds()
                 self._graph.record_completion_duration(node_id, duration)
         else:
+            record_nonfailure(self._graph, node, self._context_by_node.get(node.id), "preserved")
             _ = self._mark_terminal(node, NodeStatus.FAILED, preserve_recovery=True)
             if rebase_result.conflicting_files or rebase_result.detail:
                 conflict = RebaseConflict(
@@ -1233,6 +1263,7 @@ class Executor:
             blocked = True
         if not blocked:
             raise ValueError(f"review block fence lost for node {node.id}")
+        record_nonfailure(self._graph, node, self._context_by_node.get(node.id), "review_blocked")
         self._finish_node_worker_run(
             node.id,
             RunResult(
@@ -1412,30 +1443,6 @@ class Executor:
             node.id, node.run_id, status, preserve_recovery=preserve_recovery
         )
 
-    def _discard_worktree(self, node_id: int, node: MikadoNode, reason: str) -> str | None:
-        """Remove the node's worktree; on unlanded work, preserve it and return its path.
-
-        Absorbs ``UnlandedWorkError`` the way ``ensure_clean`` does so a teardown
-        never crashes the run loop, leaving the worktree on disk for recovery.
-        """
-        if not node.worktree_path:
-            return None
-        wt = Path(node.worktree_path)
-        if not wt.exists():
-            return None
-        try:
-            self._wt.remove(node_id, wt)
-        except UnlandedWorkError as exc:
-            _logger.warning(
-                "Preserving %s node %d worktree %s; recording for recovery: %s",
-                reason,
-                node_id,
-                wt,
-                exc,
-            )
-            return str(wt)
-        return None
-
     def finish_preserved_abort(self, node_id: int, owner_run_id: str, run_id: str) -> None:
         try:
             node = self._graph.get_node(node_id)
@@ -1467,8 +1474,17 @@ class Executor:
             node = self._graph.get_node(node_id)
             if node is not None:
                 self._require_worker_cleanup(node)
+            context = self._context_by_node.get(node_id)
+            if node is not None and node.run_id and context is not None and context.attempt_id:
+                fail_bounded_attempt(
+                    AttemptRuntime(self._graph, self._wt.ensure_clean, self._wt.remove),
+                    node,
+                    context,
+                    detail,
+                )
+                return
             self._wt.ensure_clean(node_id)
-            preserved = self._discard_worktree(node_id, node, "failed") if node else None
+            preserved = discard_worktree(self._wt.remove, node, "failed") if node else None
             self._graph.mark_failed(node_id)
             self._finish_node_worker_run(
                 node_id,
@@ -1490,6 +1506,7 @@ class Executor:
             if node is None:
                 raise ValueError(f"Node {node_id} not found")
             self._require_worker_cleanup(node)
+            record_nonfailure(self._graph, node, self._context_by_node.get(node.id), "cancelled")
             self._finish_node_worker_run(
                 node_id,
                 RunResult(
@@ -1500,7 +1517,7 @@ class Executor:
                     error="cancelled",
                 ),
             )
-            _ = self._discard_worktree(node_id, node, "stopped")
+            _ = discard_worktree(self._wt.remove, node, "stopped")
             if node.run_id:
                 _ = self._graph.release(node_id, node.run_id)
             else:

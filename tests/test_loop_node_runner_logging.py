@@ -43,6 +43,7 @@ def test_main_logs_terminal_event_with_run_id(
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
         max_iterations: int = 8
+        max_node_attempts: int = 1
         host_worker_limit: int = 6
         max_turns: int = 60
         commit_footer: str | None = None

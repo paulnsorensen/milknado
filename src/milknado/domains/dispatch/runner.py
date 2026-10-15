@@ -134,6 +134,7 @@ def _execute(
     *,
     canonical_root: Path | None = None,
     process: ProcessPort,
+    on_started: Callable[[int], None] | None = None,
 ) -> tuple[int, bool]:
     root = canonical_root or project_root
     extra = {
@@ -150,6 +151,7 @@ def _execute(
         stdin,
         build_worker_env(extra, executable=argv[0]),
         timeout,
+        on_started=on_started,
     )
     return outcome.exit_code, outcome.timed_out
 
@@ -200,6 +202,7 @@ def run_headless(
     default_cmd: str,
     cwd: Path | None = None,
     process: ProcessPort,
+    on_started: Callable[[int], None] | None = None,
 ) -> RunResult:
     argv = resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
@@ -219,6 +222,7 @@ def run_headless(
         run_id,
         canonical_root=project_root,
         process=process,
+        on_started=on_started,
     )
     _logger.info(
         "worker dispatch terminal: run_id=%s node_id=%d exit_code=%d timed_out=%s",

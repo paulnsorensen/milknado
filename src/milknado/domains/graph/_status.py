@@ -12,6 +12,7 @@ import sqlite3
 from typing import cast
 
 import milknado.domains.graph._goal_review as _goal_review
+import milknado.domains.graph._owner_release as _owner_release
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._transitions as _transitions
 from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
@@ -248,13 +249,13 @@ def release(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, ru
 
     Used by dispatch cleanup to undo a claim whose startup failed, without
     clobbering a node already re-claimed under a different run. Fenced on both
-    run_id and status = 'running' (see _transitions.release), so a node that
+    run_id and status = 'running' (see _owner_release.release), so a node that
     completed DONE between the caller's read and this write is never walked
     back to PENDING. Returns whether the release landed.
     """
 
     def mutate() -> bool:
-        return _transitions.release(conn, node_id, run_id)
+        return _owner_release.release(conn, node_id, run_id)
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid),
@@ -330,7 +331,7 @@ def try_reclaim(
         return False
 
     def mutate() -> bool:
-        return _transitions.release(conn, node_id, owner_run_id)
+        return _owner_release.release(conn, node_id, owner_run_id, reclaim=True)
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid),

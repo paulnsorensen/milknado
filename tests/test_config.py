@@ -68,6 +68,16 @@ class TestLoadConfig:
         cfg = load_config(path)
         assert cfg.concurrency_limit == 8
 
+    def test_node_attempt_limit_defaults_and_loads(self, tmp_path: Path) -> None:
+        assert default_config(tmp_path).max_node_attempts == 1
+        path = self._write_toml(tmp_path, "[milknado]\nmax_node_attempts = 3\n")
+        assert load_config(path).max_node_attempts == 3
+
+    @pytest.mark.parametrize("value", [0, -1, True, 1.5, "3"])
+    def test_rejects_invalid_node_attempt_limit(self, value: object) -> None:
+        with pytest.raises(msgspec.ValidationError, match="max_node_attempts"):
+            _ = decode_milknado_section({"max_node_attempts": value})
+
     @pytest.mark.parametrize(
         ("field", "value"),
         [
@@ -215,6 +225,14 @@ class TestSaveConfig:
 
         loaded = load_config(path)
         assert loaded.completion_timeout_seconds == 3600.0
+
+    def test_roundtrip_preserves_node_attempt_limit(self, tmp_path: Path) -> None:
+        cfg = msgspec.structs.replace(default_config(tmp_path), max_node_attempts=3)
+        path = tmp_path / "milknado.toml"
+
+        save_config(cfg, path)
+
+        assert load_config(path).max_node_attempts == 3
 
     def test_escapes_backslashes(self, tmp_path: Path) -> None:
         cfg = MilknadoConfig(

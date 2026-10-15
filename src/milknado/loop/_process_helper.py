@@ -97,6 +97,7 @@ def start_helper(
                 worker.identity.invocation_id,
                 str(request.generation),
             ),
+            start_new_session=os.name != "nt",
             pass_fds=(read_fd,),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

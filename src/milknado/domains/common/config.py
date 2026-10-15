@@ -10,6 +10,7 @@ from typing import TypeVar, cast
 import msgspec
 import tomli_w
 
+from milknado.domains.common._config_agents import resolve_agents
 from milknado.domains.common.agent_argv import (
     DEFAULT_PLANNING_AGENT_BY_FAMILY,
     resolve_execution_agent_command,
@@ -74,6 +75,7 @@ class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
+    max_node_attempts: int = 1
     host_worker_limit: int = DEFAULT_HOST_WORKER_LIMIT
     project_root: Path = Path(".")
     db_path: Path = Path(".milknado/milknado.db")
@@ -165,6 +167,7 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
     worktree: bool = True
     worktree_pattern: str = "milknado-{node_id}-{slug}"
     concurrency_limit: int = 4
+    max_node_attempts: int = 1
     host_worker_limit: int = DEFAULT_HOST_WORKER_LIMIT
     db_path: str = ".milknado/milknado.db"
     plugins: tuple[str, ...] = ()
@@ -185,6 +188,7 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
 
     def __post_init__(self) -> None:
         _ = validate_positive_int(self.plan_review_max_rounds, "[milknado] plan_review_max_rounds")
+        _ = validate_positive_int(self.max_node_attempts, "[milknado] max_node_attempts")
         _ = validate_positive_int(self.host_worker_limit, "[milknado] host_worker_limit")
         _ = validate_positive_int(self.max_iterations, "[milknado] max_iterations")
         _ = validate_positive_int(self.max_turns, "[milknado] max_turns")
@@ -242,7 +246,7 @@ def _validate_section_scalars(section: dict[str, object]) -> None:
             raise msgspec.ValidationError(f"[milknado] {key} must be a string")
     if "loop_mode" in section:
         _ = validate_loop_mode(section["loop_mode"])
-    for key in ("plan_review_max_rounds", "max_iterations", "max_turns"):
+    for key in ("plan_review_max_rounds", "max_node_attempts", "max_iterations", "max_turns"):
         if key in section:
             _ = validate_positive_int(section[key], f"[milknado] {key}")
 
@@ -473,6 +477,7 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, object]:
             "worktree": config.worktree,
             "worktree_pattern": config.worktree_pattern,
             "concurrency_limit": config.concurrency_limit,
+            "max_node_attempts": config.max_node_attempts,
             "db_path": os.path.relpath(config.db_path, config.project_root),
             "plugins": list(config.plugins),
             "stall_threshold_seconds": config.stall_threshold_seconds,
@@ -635,24 +640,6 @@ def _reject_omp_tool_translation(section: MilknadoSection, family: str) -> None:
         raise ValueError("[milknado.flavor.*].tools is not supported for agent_family 'omp'")
 
 
-def _resolve_agents(section: MilknadoSection, family: str) -> tuple[str, str]:
-    """Derive the planning/execution commands from explicit values or family defaults."""
-    planning_agent = resolve_planning_agent_command(
-        family,
-        planning_agent=section.planning_agent,
-    )
-    family_tools = section.worker.tools.get(family)
-    resolved_tools = (
-        resolve_worker_tools(family, list(family_tools)) if family_tools is not None else None
-    )
-    execution_agent = resolve_execution_agent_command(
-        family,
-        execution_agent=section.execution_agent,
-        tools=resolved_tools,
-    )
-    return planning_agent, execution_agent
-
-
 def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConfig:
     section = decode_milknado_section(raw)
     family = section.agent_family
@@ -660,7 +647,9 @@ def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConf
         name: table.to_override(name, project_root) for name, table in section.flavor.items()
     }
     _reject_omp_tool_translation(section, family)
-    planning_agent, execution_agent = _resolve_agents(section, family)
+    planning_agent, execution_agent = resolve_agents(
+        family, section.planning_agent, section.execution_agent, section.worker.tools
+    )
     return MilknadoConfig(
         agent_family=family,
         planning_agent=planning_agent,
@@ -672,6 +661,7 @@ def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConf
         worktree=section.worktree,
         worktree_pattern=section.worktree_pattern,
         concurrency_limit=section.concurrency_limit,
+        max_node_attempts=section.max_node_attempts,
         host_worker_limit=section.host_worker_limit,
         project_root=project_root,
         db_path=resolve_project_path(section.db_path, project_root, label="db_path"),

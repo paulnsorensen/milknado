@@ -12,6 +12,13 @@ from milknado.domains.dispatch._runstate import (
     tail,
     tail_latest_iteration_log,
 )
+from milknado.domains.dispatch._tmux_receipt import (
+    ExecutedReceipt,
+    FailedReceipt,
+    FinishedReceipt,
+    PreparedReceipt,
+    Receipt,
+)
 from milknado.domains.dispatch.async_run import (
     AsyncRunRequest,
     poll_async_run,
@@ -78,6 +85,11 @@ __all__ = [
     "ProcessOutcome",
     "ProcessPort",
     "ProcessTerminationPort",
+    "ExecutedReceipt",
+    "FailedReceipt",
+    "FinishedReceipt",
+    "PreparedReceipt",
+    "Receipt",
     "RunWindow",
     "TmuxPort",
     "WorkerCleanupResult",

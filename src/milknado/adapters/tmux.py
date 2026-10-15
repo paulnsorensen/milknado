@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from milknado.domains.dispatch import RunWindow
@@ -181,8 +182,21 @@ class TmuxAdapter:
         - A successful run kills its own window; a failed run leaves it behind.
         """
         assignments = (shlex.quote(f"{k}={v}") for k, v in window.env.items())
-        runner = " ".join(["env", "-i", *assignments, shlex.join(window.argv)])
-        if window.brief_path is not None:
+        command = window.argv
+        if window.exec_receipt_path is not None:
+            if window.exec_nonce is None:
+                raise ValueError("tmux execution receipt requires an invocation nonce")
+            command = (
+                sys.executable,
+                "-m",
+                "milknado.adapters._tmux_exec",
+                window.exec_nonce,
+                str(window.exec_receipt_path),
+                str(window.brief_path) if window.brief_path is not None else "-",
+                *window.argv,
+            )
+        runner = " ".join(["env", "-i", *assignments, shlex.join(command)])
+        if window.exec_receipt_path is None and window.brief_path is not None:
             runner += f" < {shlex.quote(str(window.brief_path))}"
         rc = shlex.quote(str(window.exit_code_path))
         log = shlex.quote(str(window.log_path))

@@ -47,6 +47,7 @@ class _RecoveryGraph:
             "run_id": "run-1",
             "node_id": 1,
             "status": "running",
+            "attempt_id": None,
             "pid": None,
             "log_path": "",
             "started_at": "2026-01-01T00:00:00+00:00",
@@ -81,6 +82,9 @@ class _RecoveryRuns:
 
     def for_node(self, node_id: int) -> list[RunRecord]:
         return [self._graph.state] if node_id == self._graph.node.id else []
+
+    def get(self, run_id: str) -> RunRecord | None:
+        return self._graph.state if run_id == self._graph.state["run_id"] else None
 
     def latest_terminal(self, node_id: int, run_id: str) -> RunRecord | None:
         if node_id != self._graph.node.id or run_id != self._graph.state["run_id"]:

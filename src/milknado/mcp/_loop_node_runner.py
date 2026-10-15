@@ -203,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             quality_gates=profile.quality_gates,
             worktree_pattern=cfg.worktree_pattern,
             project_root=root,
+            max_node_attempts=cfg.max_node_attempts,
             brief_prepend=profile.brief_prepend,
             commit_footer=cfg.commit_footer,
             review=profile.review,

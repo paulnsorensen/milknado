@@ -31,7 +31,7 @@ def test_empty_command_fails_before_process_creation(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
-def test_popen_failure_closes_both_gate_fds(
+def test_popen_failure_closes_gate_and_proof_fds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_pipe = os.pipe
@@ -49,7 +49,7 @@ def test_popen_failure_closes_both_gate_fds(
     monkeypatch.setattr(subprocess, "Popen", fail_popen)
     with pytest.raises(OSError, match="spawn denied"):
         _ = spawn_gated(_options(tmp_path, (sys.executable, "-c", "pass")))
-    assert len(gate_fds) == 2
+    assert len(gate_fds) == 4
     for fd in gate_fds:
         with pytest.raises(OSError):
             _ = os.fstat(fd)

@@ -46,6 +46,7 @@ def run_row_to_dict(row: sqlite3.Row) -> RunRecord:
     return {
         "run_id": raw["run_id"],
         "node_id": raw["node_id"],
+        "attempt_id": raw["attempt_id"],
         "status": raw["status"],
         "pid": raw["pid"],
         "log_path": raw["log_path"],
@@ -70,19 +71,31 @@ def start_run(
     started_at: str,
     timeout_seconds: int | None,
     pid: int | None = None,
+    attempt_id: str | None = None,
 ) -> None:
     """INSERT a status='running' run row (replaces the initial sidecar write)."""
     _ = conn.execute(
         "INSERT INTO runs "
-        + "(run_id, node_id, status, pid, log_path, started_at, timeout_seconds, timed_out) "
-        + "VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-        (run_id, node_id, _RUN_STATUS_RUNNING, pid, log_path, started_at, timeout_seconds),
+        + "(run_id, node_id, attempt_id, status, pid, log_path, started_at, "
+        + "timeout_seconds, timed_out) "
+        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+        (
+            run_id,
+            node_id,
+            attempt_id,
+            _RUN_STATUS_RUNNING,
+            pid,
+            log_path,
+            started_at,
+            timeout_seconds,
+        ),
     )
     conn.commit()
 
 
 def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None:
     """Write one terminal result; raise when the running-row fence is lost."""
+    owns_transaction = not conn.in_transaction
     cur = conn.execute(
         "UPDATE runs SET status = ?, exit_code = ?, timed_out = ?, ended_at = ?, "
         + "error = ?, detail = ?, rebased = ? WHERE run_id = ? AND status = ?",
@@ -98,7 +111,8 @@ def finish_run(conn: sqlite3.Connection, run_id: str, result: RunResult) -> None
             _RUN_STATUS_RUNNING,
         ),
     )
-    conn.commit()
+    if owns_transaction:
+        conn.commit()
     if cur.rowcount == 0:
         _logger.warning(
             "finish_run dropped late terminal write for run %s (status=%s)",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 from milknado.domains.common import (
     GitPort,
@@ -19,6 +19,11 @@ from milknado.domains.common import (
 from milknado.domains.common.protocols import HostCapacityPort
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
+from milknado.domains.dispatch._sync_completion import (
+    confirm_execution,
+    finish_sync_exception,
+    start_sync_attempt,
+)
 from milknado.domains.dispatch.brief import (
     WorkerOrientation,
     current_branch_or_none,
@@ -32,7 +37,6 @@ from milknado.domains.dispatch.isolate import (
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.ports import (
-    FinishDispatchPort,
     ProcessPort,
     ProcessTerminationPort,
     WorkerOutcomePort,
@@ -42,9 +46,7 @@ from milknado.domains.dispatch.reconcile import (
     reconcile_node_status,
 )
 from milknado.domains.dispatch.runner import run_headless
-
-if TYPE_CHECKING:
-    from milknado.domains.graph import MikadoGraph
+from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
 
 _logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ class SyncDispatchRequest:
     merge_back: bool = True
     worktree_pattern: str = ""
     host_capacity: HostCapacityPort | None = None
+    max_node_attempts: int = 1
 
 
 def _setup_sync_worktree(
@@ -85,17 +88,22 @@ def _setup_sync_worktree(
 
 
 def _finish_dispatch(
-    graph: object,
+    graph: MikadoGraph,
     node_id: int,
     run_id: str,
     result: object,
     terminal: str,
     merge: MergeBackResult | None,
 ) -> None:
-    typed_graph = cast(FinishDispatchPort, graph)
     worker_result = cast(WorkerOutcomePort, result)
+    if graph.runs.live_workers(run_id=run_id):
+        raise RuntimeError(f"worker cleanup unresolved for run {run_id}")
+    preserved = merge is not None and not merge.rebased and worker_result.exit_code == 0
+    counted = terminal == "failed" and not preserved
+    if counted and _fail_counted_attempt(graph, node_id, run_id, worker_result, merge):
+        return
     try:
-        typed_graph.runs.finish(
+        graph.runs.finish(
             run_id,
             RunResult(
                 status=terminal,
@@ -108,15 +116,58 @@ def _finish_dispatch(
     except RunFenceLostError:
         _logger.info("sync dispatch terminal run already finalized: run_id=%s", run_id)
         return
-    if (
-        typed_graph.mark_terminal(
-            node_id, run_id, NodeStatus.DONE if terminal == "done" else NodeStatus.FAILED
-        )
-        is False
-    ):
-        if typed_graph.get_node(node_id) is None:
+    if preserved:
+        _record_attempt_nonfailure(graph, run_id, "preserved")
+    status = NodeStatus.DONE if terminal == "done" and not preserved else NodeStatus.FAILED
+    marked = graph.mark_terminal(node_id, run_id, status, preserve_recovery=preserved)
+    if marked is False:
+        if graph.get_node(node_id) is None:
             return
         raise RuntimeError(f"terminal node write lost its fence for node {node_id}")
+    if not preserved:
+        _record_attempt_nonfailure(graph, run_id, "done")
+
+
+def _run_attempt_id(graph: MikadoGraph, run_id: str) -> str | None:
+    run = graph.runs.get(run_id)
+    attempt_id = run["attempt_id"] if run is not None else None
+    return attempt_id if isinstance(attempt_id, str) else None
+
+
+def _fail_counted_attempt(
+    graph: MikadoGraph,
+    node_id: int,
+    run_id: str,
+    worker_result: WorkerOutcomePort,
+    merge: MergeBackResult | None,
+) -> bool:
+    attempt_id = _run_attempt_id(graph, run_id)
+    if attempt_id is None:
+        return False
+    attempt = graph.task_attempts.get(attempt_id)
+    if attempt is None:
+        raise ValueError(f"task attempt missing for run {run_id}")
+    result = RunResult(
+        "failed",
+        worker_result.exit_code,
+        worker_result.timed_out,
+        now_iso(),
+        rebased=merge.rebased if merge else None,
+    )
+    failure = FinalizeTaskFailure(
+        node_id, attempt_id, run_id, run_id, attempt.max_node_attempts, result
+    )
+    if graph.task_attempts.fail(failure).status == "lost_fence":
+        raise RuntimeError(f"task attempt fence lost for run {run_id}")
+    return True
+
+
+def _record_attempt_nonfailure(graph: MikadoGraph, run_id: str, outcome: str) -> None:
+    attempt_id = _run_attempt_id(graph, run_id)
+    if attempt_id is not None and not graph.task_attempts.record_nonfailure(
+        attempt_id, run_id, outcome
+    ):
+        raise RuntimeError(f"task attempt outcome fence lost for run {run_id}")
 
 
 def dispatch_node_sync(
@@ -164,13 +215,7 @@ def _run_claimed_node(
                 run_id, cwd, isolate.worker_branch if isolate else current_branch_or_none(git)
             ),
         )
-        graph.runs.start(
-            run_id,
-            request.node_id,
-            str(log_path),
-            now_iso(),
-            request.timeout_seconds,
-        )
+        start_sync_attempt(graph, request, run_id, str(log_path))
         started = True
         result = run_headless(
             request.project_root,
@@ -182,7 +227,10 @@ def _run_claimed_node(
             default_cmd=request.default_cmd,
             cwd=cwd,
             process=request.process,
+            on_started=lambda pid: confirm_execution(graph, run_id, pid),
         )
+        if graph.runs.live_workers(run_id=run_id):
+            raise RuntimeError(f"worker cleanup unresolved for run {run_id}")
         terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
         merge = merge_back_if_done(
             git, request.project_root, isolate if request.merge_back else None, terminal
@@ -191,24 +239,12 @@ def _run_claimed_node(
             terminal = "failed"
         _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
     except Exception as exc:
+        if started:
+            finish_sync_exception(graph, request, run_id, exc)
+            raise
         terminal_error: BaseException | None = None
         try:
-            if started:
-                try:
-                    graph.runs.finish(
-                        run_id,
-                        RunResult(
-                            status="failed",
-                            exit_code=-1,
-                            timed_out=False,
-                            ended_at=now_iso(),
-                            error=f"{type(exc).__name__}: {exc}",
-                        ),
-                    )
-                except RunFenceLostError:
-                    _logger.info("sync dispatch failure run already finalized: run_id=%s", run_id)
-            node_written = graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED)
-            if node_written is False:
+            if graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED) is False:
                 terminal_error = RuntimeError(
                     f"terminal persistence lost its fence for run {run_id}"
                 )

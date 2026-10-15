@@ -51,6 +51,7 @@ from milknado.domains.graph._pipeline import (
     StatusPipeline,
     _PluginAsMiddleware,
 )
+from milknado.domains.graph._task_attempt_facade import TaskAttemptFacade
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
     GoalReviewDecisionRequest,
@@ -86,6 +87,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     _concurrency_limit: int
     _graph_snapshot_cache: GraphSnapshot | None
     runs: _RunFacade
+    task_attempts: TaskAttemptFacade
     sessions: _SessionFacade
     commands: _CommandFacade
     files: _FileFacade
@@ -142,6 +144,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
         self._graph_snapshot_revision: tuple[int, int] | None = None
         self._controller_master: bytes | None = None
         self.runs = _RunFacade(self)
+        self.task_attempts = TaskAttemptFacade(self)
         self.sessions = _SessionFacade(self)
         self.commands = _CommandFacade(self)
         self.files = _FileFacade(self)

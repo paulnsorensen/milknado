@@ -13,6 +13,7 @@ from typing import TypedDict, cast
 import milknado.domains.graph._coordinator_schema as _coordinator_schema
 import milknado.domains.graph._goal_review_schema as _goal_review_schema
 import milknado.domains.graph._group_schema as _group_schema
+import milknado.domains.graph._task_attempt_schema as _task_attempt_schema
 import milknado.domains.graph._worker_persistence as _worker_persistence
 import milknado.domains.graph.controller_capability as _controller_capability
 from milknado.domains.common import MikadoNode, NodeKind, NodeStatus
@@ -260,6 +261,11 @@ MIGRATIONS: list[tuple[int, str]] = [
     (58, "ALTER TABLE coordinator_events ADD COLUMN stream_ref INTEGER"),
     (59, "ALTER TABLE coordinator_events ADD COLUMN stream_depth INTEGER"),
     (60, _coordinator_schema.CREATE_EVENTS_STREAM_INDEX),
+    (61, _task_attempt_schema.CREATE_TASK_ATTEMPTS),
+    (62, "ALTER TABLE runs ADD COLUMN attempt_id TEXT REFERENCES task_attempts(attempt_id)"),
+    (63, _task_attempt_schema.CREATE_NODE_OUTCOME_INDEX),
+    (64, _task_attempt_schema.CREATE_RUN_ATTEMPT_INDEX),
+    (65, _task_attempt_schema.CREATE_LIVE_WORKER_INDEX),
 ]
 
 SCHEMA_VERSION = max(version for version, _ in MIGRATIONS)

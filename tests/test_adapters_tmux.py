@@ -6,6 +6,7 @@ from __future__ import annotations
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -14,7 +15,10 @@ from typing import NoReturn, TypedDict, Unpack
 import pytest
 
 from milknado.adapters.tmux import TmuxAdapter, TmuxDispatchError, session_name_for
+from milknado.domains.common import default_config
 from milknado.domains.dispatch import RunWindow
+from milknado.domains.dispatch.tmux_run import read_exec_evidence
+from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
 RUN_ID = "node-1-20260101T000000Z-deadbeef"
 
@@ -437,6 +441,65 @@ def test_real_tmux_window_lifecycle(tmp_path: Path, monkeypatch: pytest.MonkeyPa
         _wait_until(lambda: pid_alive(live_pid))
         _ = adapter.kill_window(live)
         _wait_until(lambda: not pid_alive(live_pid))
+    finally:
+        _ = subprocess.run(
+            ["tmux", "-S", str(socket), "kill-server"], capture_output=True, check=False
+        )
+
+
+def _linked_receipt_node(root: Path, run_id: str, log_path: Path) -> int:
+    db_path = default_config(root).db_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    graph = MikadoGraph(db_path)
+    try:
+        node = graph.add_node("receipt target")
+        assert graph.claim_node(node.id, run_id, now="2026-01-01T00:00:00+00:00")
+        _ = graph.task_attempts.start(StartTaskAttempt(node.id, run_id, run_id, run_id))
+        graph.runs.start(
+            run_id, node.id, str(log_path), "2026-01-01T00:00:00+00:00", 10, attempt_id=run_id
+        )
+        return node.id
+    finally:
+        graph.close()
+
+
+@pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
+def test_real_tmux_window_records_target_receipt(tmp_path: Path) -> None:
+    socket = Path("/tmp") / f"milknado-receipt-{tmp_path.name}.sock"
+    adapter = TmuxAdapter(tmp_path, socket_path=socket, config_path=Path("/dev/null"))
+    run_id = "node-1-20260101T000000Z-0000eeee"
+    receipt = tmp_path / "target.exec.json"
+    code = tmp_path / "target.rc"
+    node_id = _linked_receipt_node(tmp_path, run_id, code)
+    try:
+        adapter.ensure_session()
+        pane_pid = adapter.open_run_window(
+            RunWindow(
+                run_id=run_id,
+                argv=(sys.executable, "-c", "raise SystemExit(7)"),
+                cwd=tmp_path,
+                log_path=tmp_path / "target.log",
+                exit_code_path=code,
+                env={
+                    "MILKNADO_PROJECT_ROOT": str(tmp_path),
+                    "MILKNADO_RUN_ID": run_id,
+                    "MILKNADO_NODE_ID": str(node_id),
+                },
+                exec_receipt_path=receipt,
+                exec_nonce="current-nonce",
+            )
+        )
+        assert pane_pid > 0
+        _wait_until(code.exists)
+        assert code.read_text().strip() == "7"
+        assert read_exec_evidence(receipt, "current-nonce") == "executed"
+        assert read_exec_evidence(receipt, "old-nonce") is None
+        graph = MikadoGraph(default_config(tmp_path).db_path)
+        try:
+            assert graph.runs.live_workers(run_id=run_id) == ()
+        finally:
+            graph.close()
+        assert adapter.kill_window(run_id)
     finally:
         _ = subprocess.run(
             ["tmux", "-S", str(socket), "kill-server"], capture_output=True, check=False

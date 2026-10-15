@@ -91,6 +91,36 @@ def test_conflicting_finish_preserves_task_result_and_dispatch(tmp_path: Path) -
     graph.close()
 
 
+def test_native_failure_retries_without_finalizing_group_member(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    workflow = CoordinatorWorkflow(graph, graph.group_connection, max_node_attempts=3)
+    session = workflow.start_goal("Deliver", "codex")
+    task = graph.add_node("Task", session.goal_id)
+    group = workflow.create_group(
+        session,
+        "main",
+        (task.id,),
+        GroupWorkspace(str(tmp_path / "group"), "branch", "provider"),
+    )
+    handoff = workflow.dispatch_task(session, group.id, task.id, "run")
+    _ = workflow.acknowledge_launch(session, handoff)
+    assert graph.task_attempts.confirm_execution(
+        handoff.attempt.attempt_id,
+        handoff.attempt.attempt_id,
+        handoff.attempt.attempt_id,
+    )
+    workflow.finish_task(
+        session, handoff.attempt, NodeLoopOutcome(task.id, False, "worker failed")
+    )
+    node = graph.get_node(task.id)
+    assert node is not None and node.status.value == "pending"
+    assert graph.groups.task_result(task.id) is None
+    assert graph.task_attempts.failed_count(task.id) == 1
+    run = graph.runs.get(handoff.attempt.attempt_id)
+    assert run is not None and run["status"] == "failed"
+    graph.close()
+
+
 def test_empty_goal_and_plan_do_not_write_coordinator_state(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     with closing(sqlite3.connect(graph.db_path)) as conn:

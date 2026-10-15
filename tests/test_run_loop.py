@@ -559,7 +559,7 @@ def test_state_collects_configured_projection_facts(
         executor=executor,
         graph=graph,
         loop=fake_loop,
-        config=MilknadoConfig(dispatch_max_retries=4, stall_threshold_seconds=300),
+        config=MilknadoConfig(max_node_attempts=5, stall_threshold_seconds=300),
     )
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
@@ -577,7 +577,7 @@ def test_state_collects_configured_projection_facts(
     assert snapshot.elapsed_seconds == 5.0
     assert snapshot.eta_seconds == 15.0
     assert snapshot.progress_pct == 75.0
-    assert snapshot.attempt == 2
+    assert snapshot.attempt == 1
     assert snapshot.max_attempts == 5
     assert snapshot.stalled is False
 

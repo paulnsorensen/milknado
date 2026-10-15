@@ -13,7 +13,7 @@ import pytest
 
 from milknado.domains.common import NodeStatus, RunResult
 from milknado.domains.dispatch import now_iso
-from milknado.domains.graph import MikadoGraph, RunRecord
+from milknado.domains.graph import RunRecord
 from milknado.mcp._core import NodeSummary
 from milknado.mcp.loop import milknado_run_loop_poll, milknado_run_loop_start
 from milknado.mcp.server import open_graph
@@ -328,6 +328,7 @@ def test_spawn_failure_accepts_already_finalized_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.app import loop as loop_app
+    from milknado.app._loop_start_failure import LoopStartupFailure
     from milknado.domains.common import NodeStatus
     from milknado.domains.graph import RunFenceLostError
 
@@ -356,7 +357,10 @@ def test_spawn_failure_accepts_already_finalized_run(
     monkeypatch.setattr(graph.runs, "finish", fence_lost)
     try:
         loop_app._record_start_failure(  # pyright: ignore[reportPrivateUsage]
-            graph, claim, OSError("spawn failed"), run_started=True
+            graph,
+            LoopStartupFailure(
+                claim.node_id, claim.run_id, claim.run_id, True, OSError("spawn failed")
+            ),
         )
         node = graph.get_node(task["id"])
         assert node is not None
@@ -476,70 +480,55 @@ def test_reclaimed_worktree_cleanup_logs_unexpected_failure(
 
 
 def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
+    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-
+    from milknado.app._loop_start_failure import LoopStartupFailure
     from milknado.domains.common import NodeStatus
-    from milknado.mcp.loop import LoopClaim, _record_start_failure
+    from milknado.mcp.loop import _record_start_failure
 
-    class Graph:
-        def __init__(self) -> None:
-            self.terminal: tuple[int, str, NodeStatus] | None = None
-            self.runs: Graph = self
-
-        def finish(self, _run_id: str, _result: object) -> None:
-            raise RuntimeError("database unavailable")
-
-        def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus) -> None:
-            self.terminal = (node_id, run_id, status)
-
-    claim = LoopClaim(
-        run_id="node-6-20260101T000000Z-spwn",
-        node_id=6,
-        target_branch="main",
-        base_oid="abc123",
-        stale_worktree=None,
+    graph, _ = open_graph(tmp_path)
+    node = graph.add_node("task")
+    run_id = "node-6-20260101T000000Z-spwn"
+    assert graph.claim_node(node.id, run_id, now="2026-01-01T00:00:00+00:00")
+    graph.runs.start(run_id, node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+    _ = graph.group_connection.execute(
+        "CREATE TRIGGER refuse_failed_run BEFORE UPDATE OF status ON runs "
+        + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END"
     )
-    graph = Graph()
     with pytest.raises(RuntimeError, match="start failure persistence failed"):
         _record_start_failure(
-            cast(MikadoGraph, cast(object, graph)),
-            claim,
-            OSError("missing runner"),
-            run_started=True,
+            graph,
+            LoopStartupFailure(node.id, run_id, run_id, True, OSError("missing runner")),
         )
-    assert graph.terminal == (6, claim.run_id, NodeStatus.FAILED)
+    current = graph.get_node(node.id)
+    assert current is not None and current.status is NodeStatus.FAILED
     assert "start failure persistence failed" in caplog.text
+    graph.close()
 
 
-def test_spawn_failure_preserves_node_persistence_exception() -> None:
-    from milknado.mcp.loop import LoopClaim, _record_start_failure
+def test_spawn_failure_preserves_node_persistence_exception(tmp_path: Path) -> None:
+    import sqlite3
 
-    class Graph:
-        def __init__(self) -> None:
-            self.runs: Graph = self
+    from milknado.app._loop_start_failure import LoopStartupFailure
+    from milknado.mcp.loop import _record_start_failure
 
-        def finish(self, _run_id: str, _result: object) -> None:
-            pass
-
-        def mark_terminal(self, _node_id: int, _run_id: str, _status: object) -> bool:
-            raise RuntimeError("node database unavailable")
-
-    claim = LoopClaim(
-        run_id="node-7-20260101T000000Z-spwn",
-        node_id=7,
-        target_branch="main",
-        base_oid="abc123",
-        stale_worktree=None,
+    graph, _ = open_graph(tmp_path)
+    node = graph.add_node("task")
+    run_id = "node-7-20260101T000000Z-spwn"
+    assert graph.claim_node(node.id, run_id, now="2026-01-01T00:00:00+00:00")
+    graph.runs.start(run_id, node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+    _ = graph.group_connection.execute(
+        "CREATE TRIGGER refuse_failed_node BEFORE UPDATE OF status ON nodes "
+        + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'node database unavailable'); END"
     )
     with pytest.raises(RuntimeError, match="start failure persistence failed") as error:
         _record_start_failure(
-            cast(MikadoGraph, cast(object, Graph())),
-            claim,
-            OSError("missing runner"),
-            run_started=True,
+            graph,
+            LoopStartupFailure(node.id, run_id, run_id, True, OSError("missing runner")),
         )
-    assert isinstance(error.value.__cause__, RuntimeError)
+    assert isinstance(error.value.__cause__, sqlite3.IntegrityError)
+    graph.close()
 
 
 def test_poll_derives_log_path_from_run_id(tmp_path: Path) -> None:
@@ -726,6 +715,7 @@ def test_runner_writes_done_on_successful_outcome(
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
         host_worker_limit: int = 6
+        max_node_attempts: int = 1
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None
@@ -850,6 +840,7 @@ def test_runner_calls_force_stop_on_timeout(
         worker_agent_type: str = "milknado:milknado-worker"
         loop_mode: str = "redispatch"
         host_worker_limit: int = 6
+        max_node_attempts: int = 1
         max_iterations: int = 8
         max_turns: int = 60
         commit_footer: str | None = None

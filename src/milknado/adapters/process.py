@@ -7,13 +7,39 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
-from milknado.domains.common import WorkerIdentity, pid_alive
+import psutil
+
+from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.domains.common import (
+    WorkerIdentity,
+    WorkerOwner,
+    default_config,
+    load_config,
+    pid_alive,
+)
 from milknado.domains.dispatch import Descendant, ProcessOutcome, WorkerCleanupResult
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions, StartEvidence
 from milknado.loop._process_identity import identity_state, observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
+from milknado.loop._process_lifecycle import spawn_protected
+
+
+@dataclass(frozen=True, slots=True)
+class _InlineLaunch:
+    argv: tuple[str, ...]
+    cwd: Path
+    log_path: Path
+    stdin: bytes
+    env: dict[str, str]
+    timeout: float
+    run_id: str
+    cancel_requested: Callable[[], bool] | None
+    on_started: Callable[[int], None]
 
 
 class ProcessAdapter:
@@ -33,6 +59,12 @@ class ProcessAdapter:
         cancel_requested: Callable[[], bool] | None = None,
         on_started: Callable[[int], None] | None = None,
     ) -> ProcessOutcome:
+        if on_started is not None and (run_id := env.get("MILKNADO_RUN_ID")):
+            return self._run_protected(
+                _InlineLaunch(
+                    argv, cwd, log_path, stdin, env, timeout, run_id, cancel_requested, on_started
+                )
+            )
         timed_out = False
         cancelled = False
         with log_path.open("wb") as log:
@@ -81,6 +113,81 @@ class ProcessAdapter:
             timed_out=timed_out,
             cancelled=cancelled,
         )
+
+    @staticmethod
+    def _protection_context(launch: _InlineLaunch) -> ProtectionContext:
+        root = Path(launch.env["MILKNADO_PROJECT_ROOT"])
+        config_path = root / "milknado.toml"
+        config = load_config(config_path) if config_path.exists() else default_config(root)
+        supervisor = psutil.Process()
+        owner = WorkerOwner(
+            launch.run_id,
+            supervisor.pid,
+            supervisor.create_time(),
+            launch.run_id,
+            int(launch.env["MILKNADO_NODE_ID"]),
+        )
+        return ProtectionContext(LoopWorkerEvidence(config.db_path), owner, config.db_path)
+
+    def _run_protected(self, launch: _InlineLaunch) -> ProcessOutcome:
+        context = self._protection_context(launch)
+        with launch.log_path.open("wb") as log:
+            options = SpawnOptions(
+                launch.argv,
+                launch.cwd,
+                launch.env,
+                False,
+                subprocess.PIPE,
+                log.fileno(),
+                log.fileno(),
+                launch.run_id,
+            )
+            worker = spawn_protected(options, context)
+            try:
+                if worker.worker.start_evidence is StartEvidence.EXECUTED:
+                    launch.on_started(worker.process.pid)
+                # SpawnOptions uses text=False, so this subprocess carries bytes.
+                proc = cast(subprocess.Popen[bytes], worker.process)
+                timed_out, cancelled = self._wait_protected(proc, launch)
+                if not worker.complete(graceful=not (timed_out or cancelled)):
+                    raise RuntimeError(f"worker cleanup unresolved for run {launch.run_id}")
+            except BaseException as exc:
+                if not worker.cleanup():
+                    raise RuntimeError(
+                        f"worker cleanup unresolved for run {launch.run_id}"
+                    ) from exc
+                raise
+        if worker.worker.start_evidence is StartEvidence.STARTUP_FAILED:
+            raise OSError(f"worker command failed before execution for run {launch.run_id}")
+        if worker.worker.start_evidence is StartEvidence.UNKNOWN:
+            raise RuntimeError(f"worker execution start unknown for run {launch.run_id}")
+        return ProcessOutcome(
+            worker.process.returncode if worker.process.returncode is not None else -1,
+            timed_out,
+            cancelled,
+        )
+
+    def _wait_protected(
+        self, proc: subprocess.Popen[bytes], launch: _InlineLaunch
+    ) -> tuple[bool, bool]:
+        if launch.cancel_requested is None:
+            try:
+                _ = proc.communicate(input=launch.stdin, timeout=launch.timeout)
+            except subprocess.TimeoutExpired:
+                return True, False
+            return False, False
+        if proc.stdin is not None:
+            threading.Thread(
+                target=self._write_stdin, args=(proc.stdin, launch.stdin), daemon=True
+            ).start()
+        deadline = time.monotonic() + launch.timeout
+        while proc.poll() is None:
+            if launch.cancel_requested():
+                return False, True
+            if time.monotonic() >= deadline:
+                return True, False
+            time.sleep(self._poll_interval)
+        return False, False
 
     def spawn_detached(
         self,

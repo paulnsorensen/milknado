@@ -21,6 +21,7 @@ class DispatchResult:
     node_id: int
     worktree: Path
     run_id: str
+    attempt_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -88,6 +88,7 @@ def build_exec_config(config: MilknadoConfig, project_root: Path) -> ExecutionCo
         quality_gates=config.quality_gates,
         worktree_pattern=config.worktree_pattern,
         project_root=project_root,
+        max_node_attempts=config.max_node_attempts,
         brief_prepend=config.worker_brief_prepend,
     )
 
@@ -543,6 +544,7 @@ def run_inline(
             merge_back=request.merge_back,
             worktree_pattern=cfg.worktree_pattern,
             host_capacity=FlockSlotPool(cfg.host_worker_limit),
+            max_node_attempts=cfg.max_node_attempts,
         ),
     )
     return state
@@ -625,6 +627,7 @@ def run_inline_start(
                 cwd=worker_cwd,
                 merge_ctx=isolate if request.merge_back else None,
                 lease=lease,
+                max_node_attempts=cfg.max_node_attempts,
             ),
             _GraphSessions(),
             git,
