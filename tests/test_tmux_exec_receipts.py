@@ -87,20 +87,22 @@ def test_tmux_receipt_rejects_preexec_failure_and_signal(tmp_path: Path) -> None
 
 def test_tmux_receipt_live_identity_and_malformed_data(tmp_path: Path) -> None:
     receipt = tmp_path / "exec.json"
+    release = tmp_path / "release"
+    holder = (
+        f"import os, time\nwhile not os.path.exists({str(release)!r}):\n    time.sleep(0.01)\n"
+    )
     process = subprocess.Popen(
-        _wrapper(receipt, sys.executable, "-c", "import time; time.sleep(0.7)"),
+        _wrapper(receipt, sys.executable, "-c", holder),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     try:
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            if read_exec_evidence(receipt, "current-nonce") == "executed":
-                break
+        # The target stays live until released, so the observation cannot miss it.
+        while read_exec_evidence(receipt, "current-nonce") != "executed":
+            assert process.poll() is None, "wrapper exited before the live receipt appeared"
             time.sleep(0.01)
-        else:
-            raise AssertionError("live target receipt was not observed")
-        assert process.wait(timeout=2) == 0
+        release.touch()
+        assert process.wait(timeout=30) == 0
     finally:
         if process.poll() is None:
             process.kill()

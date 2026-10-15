@@ -20,6 +20,13 @@ from milknado.domains.common import WorkerIdentity
 from milknado.loop._output import SUBPROCESS_TEXT_KWARGS
 from milknado.loop._process_identity import identity_state
 
+# Bounds interpreter startup of the gate (until it reports "G"), not worker exec.
+# Generous because a loaded host can take seconds to start Python.
+_GATE_STARTUP_TIMEOUT = 30.0
+# Bounds read, report, and exec after release. One second proved too short on a
+# loaded host: a late report left a launched worker as unknown start evidence.
+_EXEC_REPORT_TIMEOUT = 10.0
+
 
 @dataclass(frozen=True, slots=True)
 class SpawnOptions:
@@ -56,8 +63,24 @@ class WorkerProcess:
             StartEvidence.EXECUTED if status_fd is None else StartEvidence.UNKNOWN
         )
 
+    def _exited_after_exec(self) -> StartEvidence:
+        code = self.process.poll()
+        return (
+            StartEvidence.EXECUTED
+            if code is not None and code >= 0 and code != 72
+            else StartEvidence.UNKNOWN
+        )
+
+    def _confirm_exec(self) -> StartEvidence:
+        if self.process.poll() is not None:
+            return self._exited_after_exec()
+        if identity_state(self.identity.pid, self.identity.start_token) == "live":
+            return StartEvidence.EXECUTED
+        # A short worker can exit between the poll and the identity check.
+        return self._exited_after_exec()
+
     def _observe_exec(self, status_fd: int) -> StartEvidence:
-        deadline = time.monotonic() + 1.0
+        deadline = time.monotonic() + _EXEC_REPORT_TIMEOUT
         protocol = b""
         while time.monotonic() < deadline:
             try:
@@ -75,18 +98,7 @@ class WorkerProcess:
             if not chunk:
                 if protocol != b"P":
                     break
-                code = self.process.poll()
-                if code is not None:
-                    return (
-                        StartEvidence.EXECUTED
-                        if code >= 0 and code != 72
-                        else StartEvidence.UNKNOWN
-                    )
-                return (
-                    StartEvidence.EXECUTED
-                    if identity_state(self.identity.pid, self.identity.start_token) == "live"
-                    else StartEvidence.UNKNOWN
-                )
+                return self._confirm_exec()
             protocol += chunk
             if protocol == b"PF":
                 return StartEvidence.STARTUP_FAILED
@@ -94,21 +106,49 @@ class WorkerProcess:
                 break
         return StartEvidence.UNKNOWN
 
+    @staticmethod
+    def _await_gate_ready(status_fd: int) -> bool:
+        # The gate reports "G" once its interpreter is up. Nothing executes before
+        # release, so a gate that never reports G has not run the worker.
+        try:
+            ready, _, _ = select.select([status_fd], [], [], _GATE_STARTUP_TIMEOUT)
+            reported = os.read(status_fd, 1) if ready else None
+        except (OSError, ValueError):
+            return False
+        if reported is None:
+            raise TimeoutError
+        return reported == b"G"
+
+    def _fail_startup(self) -> None:
+        # R was never written, so the worker command never executed.
+        with suppress(OSError):
+            self.process.kill()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            _ = self.process.wait(timeout=1)
+        self.start_evidence = StartEvidence.STARTUP_FAILED
+
     def release(self) -> None:
         if self._gate_fd is None:
             return
         gate_fd = self._gate_fd
         self._gate_fd = None
-        try:
-            with suppress(OSError):
-                _ = os.write(gate_fd, b"R")
-        finally:
-            os.close(gate_fd)
         status_fd = self._status_fd
         self._status_fd = None
+        try:
+            ready = status_fd is None or self._await_gate_ready(status_fd)
+        except TimeoutError:
+            self._fail_startup()
+            ready = False
+        try:
+            if ready:
+                with suppress(OSError):
+                    _ = os.write(gate_fd, b"R")
+        finally:
+            os.close(gate_fd)
         if status_fd is not None:
             try:
-                self.start_evidence = self._observe_exec(status_fd)
+                if ready:
+                    self.start_evidence = self._observe_exec(status_fd)
             finally:
                 os.close(status_fd)
 

@@ -79,8 +79,6 @@ def test_signal_death_before_release_is_not_exec_proof(
 def test_unlinked_release_skips_graph_initialization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import milknado.loop._process_startup as startup
-
     path = tmp_path / "absent.db"
     supervisor = psutil.Process()
     owner = WorkerOwner("runtime", supervisor.pid, supervisor.create_time())
@@ -89,7 +87,7 @@ def test_unlinked_release_skips_graph_initialization(
     def no_graph(_path: Path) -> MikadoGraph:
         pytest.fail("unlinked graph opened")
 
-    monkeypatch.setattr(startup, "MikadoGraph", no_graph)
+    monkeypatch.setattr("milknado.loop._process_startup.MikadoGraph", no_graph)
     worker = spawn_gated(_options((sys.executable, "-c", "pass")))
     try:
         _release_worker(worker, context)
@@ -168,7 +166,7 @@ def test_wrapper_error_after_readiness_is_not_startup_or_exec(
 
         monkeypatch.setattr(os, "execvpe", crash)
         assert exec_gate_main() == 72
-        assert os.read(status_read, 3) == b"PX"
+        assert os.read(status_read, 3) == b"GPX"
     finally:
         os.close(status_read)
 

@@ -94,7 +94,7 @@ raise SystemExit(11)
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(execute, run)
-            assert _until(stage.exists)
+            assert _until(lambda: stage.exists() and bool(owned))
             worker = owned[0]
             before = graph.runs.get_worker(worker.identity.invocation_id)
             assert before is not None and before.helper_pid is not None

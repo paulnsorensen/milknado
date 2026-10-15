@@ -29,4 +29,4 @@ def test_missing_worker_command_reports_failure_on_the_status_pipe() -> None:
         reported = status.read()
 
     assert exit_code == 72
-    assert reported == b"PF"
+    assert reported == b"GPF"

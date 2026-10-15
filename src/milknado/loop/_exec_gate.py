@@ -11,6 +11,7 @@ def main() -> int:
     if len(sys.argv) < 4:
         return 72
     gate_fd, status_fd = map(int, sys.argv[1:3])
+    _ = os.write(status_fd, b"G")
     try:
         release = os.read(gate_fd, 1)
     finally:
