@@ -1,5 +1,5 @@
 import { Profiler } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getState, resetStore } from '../../app/store';
 import { CoordinatorCockpit } from './CoordinatorCockpit';
@@ -44,7 +44,7 @@ describe('missing coordinator session', () => {
 
   it('ignores a late 404 from the previous selection', async () => {
     localStorage.setItem('milknado.coordinator.session', 'session-a');
-    let finishOld!: (value: Response) => void;
+    let finishOld: ((value: Response) => void) | undefined;
     vi.mocked(fetch).mockImplementation((input) => {
       const url = String(input);
       if (url === '/api/coordinators') return response([{ id: 'session-b', description: 'Goal B', provider: 'codex' }]);
@@ -52,9 +52,11 @@ describe('missing coordinator session', () => {
       return response(snapshot('session-b'));
     });
     render(<CoordinatorCockpit />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Goal B · codex' }));
+    const selectB = await screen.findByRole('button', { name: 'Goal B · codex' });
+    await waitFor(() => expect(finishOld).toBeDefined());
+    fireEvent.click(selectB);
     expect(await screen.findByText('Goal session-b', { selector: 'strong' })).toBeInTheDocument();
-    await act(async () => { finishOld(missing); });
+    await act(async () => { finishOld?.(missing); });
     expect(localStorage.getItem('milknado.coordinator.session')).toBe('session-b');
     expect(screen.getByText('Goal session-b', { selector: 'strong' })).toBeInTheDocument();
     expect(getState().notices).toEqual([]);
