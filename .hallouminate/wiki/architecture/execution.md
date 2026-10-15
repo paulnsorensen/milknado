@@ -855,3 +855,138 @@ _Source: PR #488 and the verified deep-module commits cited above · Updated: 20
 [^pr521-recovery-fence]: src/milknado/domains/coordinator/turn_fences.py (`clear_verified_fence`); src/milknado/domains/graph/_worker_persistence.py (`live_runtime_workers`).
 
 _Source: PR #521 native authority, recovery, and storage source contracts · Updated: 2026-10-09 · Supersedes: deferred receipt ownership, stream storage, and native guard claims._
+
+## Bounded node attempts
+
+Bounded node attempts add automatic retries only when `max_node_attempts` exceeds 1.
+The issue #495 implementation uses a graph-owned ledger and invocation-bound execution evidence without bypassing existing guards.[^attempt-status]
+The logical attempt model complements per-dispatch run identity; it does not introduce a coordinator-run alias.
+See the [domain model](../domain-model.md) for execution-context terms.
+The existing transient dispatch retry budget and vendor iteration budget remain separate.
+
+### ADR-bounded-node-attempts-001: Preserve default failure behavior [status: accepted]
+
+Bounded node attempts preserve FAILED when `max_node_attempts=1`; larger exhausted budgets produce BLOCKED.[^attempt-f1]
+
+- **Context:** The retry feature must preserve behavior when configuration is omitted.
+  A uniform exhaustion rule would change the default terminal result.
+- **Decision:** Default 1 disables automatic task retries and keeps FAILED.
+  Above 1, confirmed task failures requeue to PENDING below the limit.
+  Exhaustion produces BLOCKED and retains the last error and attempt number.
+- **Alternatives:** BLOCKED at every exhausted limit changes default behavior.
+  Deferring retries leaves the requested automatic retry behavior unavailable.
+- **Consequences:** The failure policy has an explicit default branch.
+  Strict-stop still stops the current scheduler, even when another attempt remains eligible.
+  RunLoop rescans eligible requeued tasks without requiring merge-back.
+
+### ADR-bounded-node-attempts-002: Count one logical task execution [status: accepted]
+
+Detached outer and worker failures consume one logical task attempt, not two failed run rows.[^attempt-f2]
+
+- **Context:** Detached execution can record outer and worker failures for one task execution.
+  Review redispatch also creates execution rows without creating another logical task attempt.[^attempt-rows]
+- **Decision:** A graph-owned `task_attempts` ledger records the canonical outcome.
+  `runs.attempt_id` links outer, worker, and review evidence.
+  One confirmed task-execution failure consumes one attempt.
+  Startup failure, cancellation, review blocking, and preserved ownership consume no failed-task attempt.
+  Forward-only schema setup adds current objects without historical backfill.
+- **Alternatives:** Counting failed rows can consume two attempts for one detached failure.
+  Inferring linkage from timestamps, identifiers, log paths, or pruned messages cannot establish durable identity.
+- **Consequences:** Schema and route wiring increase, but restart and callback replay retain one accounting identity.
+  After confirmed cleanup, one graph transaction records the outcome and node disposition under the current owner.
+  Replay returns the stored disposition; stale callbacks cannot release a newer owner.
+  Non-failure outcomes remain durable, so recovery cannot reinterpret them as retryable failures.
+  Historical associations remain unknown rather than reconstructed.
+
+### ADR-bounded-node-attempts-003: Retry native members before final publication [status: accepted]
+
+Native groups retry intermediate task failures above 1 without rewriting existing terminal member results.[^attempt-f3]
+
+- **Context:** Native reservation admission rejects a task that already has a terminal member result.[^attempt-native]
+  Publishing failure before deciding retry eligibility would prevent the next reservation.
+- **Decision:** An eligible intermediate failure leaves the member result unset.
+  The graph transaction records the failed attempt, requeues the node, and clears its active reservation together.
+  This transaction requires current ownership, confirmed worker cleanup, and an unset member result.
+  Success or exhausted budget permits final publication; existing terminal results remain immutable.
+- **Alternatives:** Rewriting a published terminal result breaks the result contract.
+  Excluding native groups narrows the approved retry scope.
+- **Consequences:** Native attempt completion and final member publication remain distinct.
+  Every new reservation retains predecessor ordering, review admission, and invocation-specific approval.
+  Cancellation and strict-stop remain authoritative; an available budget never overrides either.
+  Transaction failure must leave attempt, run, node, and group state unchanged.
+
+### ADR-bounded-node-attempts-004: Hold unknown execution starts [status: accepted]
+
+Unknown execution-start evidence above 1 preserves ownership, adds no failed count, and prevents automatic retry until evidence resolves.[^attempt-f4]
+
+- **Context:** Worker registration and protected gate release do not prove command execution.
+  The release gate precedes the command execution call; a crash can leave durable evidence incomplete.[^attempt-start]
+- **Decision:** Bind trusted start observations to the canonical attempt, active invocation, and current owner.
+  Distinguish confirmed command execution, confirmed startup failure, and unknown start.
+  Reject prior review-invocation observations as authority for the current invocation.
+  Confirmed startup failure keeps existing startup handling without consuming a failed-task attempt.
+  Confirmed task failure counts once. Default 1 retains its existing recovery behavior.
+- **Alternatives:** Counting every admitted launch misclassifies pre-execution failures.
+  Retrying an unknown start risks overlapping execution or spending the wrong budget.
+  Gate acknowledgments, pane creation, and worker stdout are not execution authority.
+- **Consequences:** Recovery can hold work until trusted evidence resolves.
+  Existing cancellation or abandonment can end held work under current checks; no new operator override is added.
+  No atomicity between operating-system execution and SQLite is claimed.
+  POSIX workers use a private close-on-exec status channel; tmux workers use nonce-bound atomic receipts.
+  A caught pre-exec wrapper error sends a non-execution marker before closing its status writer.
+  A live wrapper cannot prove that the target command executes.[^attempt-wrapper-proof]
+  Protected release checks the linked source run, current owner, and active invocation before accepting execution evidence.
+  Automatic dead-owner reclaim cannot release an active bounded attempt.[^attempt-implementation]
+
+### Protected successor invocation and source-run ownership
+
+A bounded task attempt admits a successor worker only after durable predecessor cleanup, with no other live worker for the node.
+The successor must retain the current owner and linked source-run identity.[^attempt-successor]
+Review rotation requires a RUNNING source run linked to the same node and logical attempt.
+Rotation rolls back both ownership updates when this source check fails.
+During the owner-seed window, only the latest linked source can bind; a delayed old-source worker cannot take the new invocation.[^attempt-successor]
+
+Protected startup prepares the graph connection before worker-registry activation.
+Workers without a graph run identifier skip graph initialization.
+A specified graph run identifier with no stored row denies worker release.
+Preparation does not replace registry admission, invocation fencing, or cancellation checks.[^attempt-startup-order]
+
+### Bounded attempt nonfailure accounting and recovery
+
+Bounded attempt recovery distinguishes failed task execution from preserved merge outcomes and cancellation.
+Both inline paths record an unmerged successful execution as `preserved`, keep the node FAILED, and retain its recovery pins.
+They do not count that result as a failed attempt or mark the unmerged deliverable DONE.[^attempt-preserved]
+Direct-PID recovery records persisted cancellation as a terminal nonfailure before ordinary failure policy.
+Cancellation counts no failed attempt and does not automatically retry, including when execution-start evidence remains unknown.[^attempt-recovery]
+
+After confirmed cleanup, stale linked RUNNING rows close even when their shared logical attempt has already settled.
+This closure changes neither the failed count nor the settled node disposition.[^attempt-recovery]
+Matching native failure replay completes a remaining coordinator transition without repeating attempt accounting.
+Matching persisted nonfailure results settle an active canonical attempt before completing replay.
+Both paths retain ownership fences, reject conflicting results, and preserve terminal member results.[^attempt-native-replay]
+
+Tmux execution evidence uses frozen typed receipts with nonce checks and positive integer PIDs.
+Live execution confirmation verifies the PID creation time and process status through `psutil`.
+The window waiter delivers evidence once after successful persistence; unresolved evidence keeps polling.
+Persistence errors propagate, and timeout and cancellation polling remain active.[^attempt-tmux-receipts]
+
+[^attempt-status]: Issue #495 approved policies F-1–F-4; implementation in graph/_task_attempts.py, coordinator/_task_attempt_workflow.py, execution/_node_attempts.py, dispatch/reconcile.py, and execution/run_loop/__init__.py. This source description does not claim publication or merge.
+[^attempt-f1]: User selection F-1, 2026-10-10: “A — Preserve default behavior (Recommended): at 1, keep failed; above 1, block after the retry budget is exhausted.”
+[^attempt-f2]: User selection F-2, 2026-10-10: “A — Count task attempts (Recommended): add durable linkage; one failed task execution consumes one attempt; no historical backfill.”
+[^attempt-f3]: User selection F-3, 2026-10-10: “A — Approve the guarded retry path (Recommended): include native groups without rewriting existing terminal results.”
+[^attempt-f4]: User selection F-4, 2026-10-10: “A — Approve the unknown-start recovery hold (Recommended)”. Approved scope: above 1, no count or automatic retry until evidence resolves; default 1 remains unchanged.
+[^attempt-rows]: Verified source checkout `7ee3e189b246d489f694c8885aeeb7f8d481351e`: src/milknado/app/loop.py:267-273; src/milknado/domains/execution/executor.py:541-575,680-685. These references identify that checkout, not implementation of issue #495.
+[^attempt-native]: Verified source checkout `7ee3e189b246d489f694c8885aeeb7f8d481351e`: src/milknado/domains/graph/_group_reservation.py:25-54; src/milknado/domains/graph/_execution_groups.py:251-275.
+[^attempt-start]: Verified source checkout `7ee3e189b246d489f694c8885aeeb7f8d481351e`: src/milknado/loop/_process_gate.py:44-52; src/milknado/loop/_exec_gate.py:14-20; src/milknado/adapters/tmux.py:110-149,166-199. Issue #495 grounding distinguishes gate release, pane-shell identity, and actual command execution.
+
+[^attempt-implementation]: src/milknado/loop/_process_startup.py (`_release_linked_worker`, `_activate_worker`); src/milknado/domains/graph/_task_attempt_binding.py (`bind_worker_invocation`); src/milknado/domains/graph/_owner_release.py; tests/test_process_exec_evidence.py; tests/test_unknown_attempt_reclaim.py; tests/test_tmux_exec_receipts.py.
+[^attempt-wrapper-proof]: src/milknado/loop/_exec_gate.py:29-36; src/milknado/loop/_process_gate.py:75-95; tests/test_attempt_proof_adversarial.py. A real child reaches a bounded exit callback after pre-exec failure; proof remains unresolved.
+
+[^attempt-successor]: src/milknado/domains/graph/_task_attempt_binding.py:7-53; src/milknado/domains/graph/_task_attempt_facade.py:40-71; tests/test_protected_successor_invocation.py; tests/test_attempt_fence_edges.py.
+[^attempt-startup-order]: src/milknado/loop/_process_startup.py:51-116; tests/test_process_exec_evidence.py. The user separately approves the source-seed and missing-linked-run release guards.
+[^attempt-preserved]: src/milknado/domains/dispatch/lifecycle.py:90-164; src/milknado/domains/dispatch/async_run.py:79-118.
+[^attempt-recovery]: src/milknado/domains/dispatch/reconcile.py:48-71,119-130,196-231.
+[^attempt-native-replay]: src/milknado/domains/coordinator/_task_attempt_workflow.py:74-126; src/milknado/domains/coordinator/workflow.py:221-241.
+[^attempt-tmux-receipts]: src/milknado/domains/dispatch/_tmux_receipt.py:9-41; src/milknado/domains/dispatch/_tmux_exec.py:24-71; src/milknado/domains/dispatch/tmux_run.py:89-167.
+
+_Source: Issue #495 approved policies, approved Cure guards, and verified implementation source · Updated: 2026-10-10 · Supersedes: pending-implementation status and shifted protected-release citations; accepted ownership and accounting terms remain unchanged._
