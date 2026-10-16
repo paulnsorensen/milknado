@@ -8,11 +8,17 @@ import time
 from contextlib import suppress
 from typing import final
 
+from milknado.domains.common import identity_state
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
-from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit, stop_failed_helper
+from milknado.loop._process_helper import (
+    HelperStart,
+    UnconfirmedHelperExit,
+    completion_result,
+    stop_failed_helper,
+)
 from milknado.loop._process_helper import start_helper as _start_helper
-from milknado.loop._process_identity import Descendant, identity_state
+from milknado.loop._process_identity import Descendant
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 from milknado.loop._process_observation import snapshot as _snapshot
 from milknado.loop._process_registry import LaunchTicket
@@ -239,20 +245,6 @@ class ProtectedWorker:
         finally:
             self.close_lifeline()
 
-    def _completion_result(
-        self, confirmed: bool, helper_error: UnconfirmedHelperExit | None = None
-    ) -> bool:
-        if self._failed:
-            if helper_error is not None:
-                message = "worker protection failed; lifeline helper exit unconfirmed"
-                raise RuntimeError(message) from helper_error
-            if not confirmed:
-                raise RuntimeError("worker protection failed; worker cleanup remains unresolved")
-            raise RuntimeError("worker protection failed")
-        if helper_error is not None:
-            raise helper_error
-        return confirmed
-
     def complete(self, *, graceful: bool) -> bool:
         deadline = time.monotonic() + 3
         if graceful:
@@ -264,8 +256,8 @@ class ProtectedWorker:
         try:
             confirmed = self.shutdown(deadline)
         except UnconfirmedHelperExit as exc:
-            return self._completion_result(False, exc)
-        return self._completion_result(confirmed)
+            return completion_result(self._failed, False, exc)
+        return completion_result(self._failed, confirmed)
 
     def cleanup(
         self,
@@ -293,7 +285,7 @@ class ProtectedWorker:
                 if pipe is not None:
                     with suppress(OSError, ValueError):
                         pipe.close()
-        return self._completion_result(confirmed and drained, helper_error)
+        return completion_result(self._failed, confirmed and drained, helper_error)
 
 
 def spawn_protected(options: SpawnOptions, context: ProtectionContext) -> ProtectedWorker:

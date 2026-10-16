@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
-from milknado.domains.common import NodeStatus, RunResult
+from milknado.domains.common import NodeStatus, RunFenceLostError, RunResult
+from milknado.domains.dispatch._attempt_completion import (
+    AttemptRef,
+    settle_counted_failure,
+    settle_node_terminal,
+    settle_nonfailure,
+)
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
+
+_logger = logging.getLogger(__name__)
 
 
 class SyncFailureRequest(Protocol):
@@ -55,13 +64,10 @@ def finish_attempt_exception(
     if attempt is None:
         raise ValueError(f"task attempt missing for run {run_id}")
     result = RunResult("failed", -1, False, now_iso(), error=f"{type(exc).__name__}: {exc}")
+    ref = AttemptRef(request.node_id, run_id, run_id, run_id)
     if attempt.start_state == "executed":
-        disposition = graph.task_attempts.fail(
-            FinalizeTaskFailure(
-                request.node_id, run_id, run_id, run_id, request.max_node_attempts, result
-            )
-        )
-        if disposition.status in {"lost_fence", "unknown_start"}:
+        failure = FinalizeTaskFailure(request.node_id, run_id, run_id, run_id, result)
+        if settle_counted_failure(graph, failure) == "unknown_start":
             raise RuntimeError(f"task attempt fence lost for run {run_id}")
         return
     if direct_process and isinstance(exc, OSError):
@@ -72,14 +78,9 @@ def finish_attempt_exception(
         return
     else:
         outcome = "preserved"
-    if not graph.task_attempts.record_nonfailure(run_id, run_id, outcome):
-        raise RuntimeError(f"task outcome fence lost for run {run_id}")
-    graph.runs.finish(run_id, result)
-    if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):
-        raise RuntimeError(f"terminal node fence lost for run {run_id}")
-
-
-def finish_sync_exception(
-    graph: MikadoGraph, request: SyncFailureRequest, run_id: str, exc: Exception
-) -> None:
-    finish_attempt_exception(graph, request, (run_id, True), exc)
+    settle_nonfailure(graph, ref, outcome)
+    try:
+        graph.runs.finish(run_id, result)
+    except RunFenceLostError:
+        _logger.info("sync dispatch failure run already finalized: run_id=%s", run_id)
+    _ = settle_node_terminal(graph, ref, NodeStatus.FAILED)

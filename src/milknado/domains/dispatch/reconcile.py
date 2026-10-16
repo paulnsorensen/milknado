@@ -9,6 +9,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from milknado.domains.common import MikadoNode, NodeStatus, RunResult, pid_alive
+from milknado.domains.dispatch._attempt_completion import (
+    AttemptRef,
+    settle_cancelled,
+    settle_counted_failure,
+    settle_node_terminal,
+    settle_preserved,
+)
+from milknado.domains.dispatch._runstate import exec_receipt_path
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
 from milknado.domains.dispatch.ports import ProcessTerminationPort, StaleRunPort
 from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
@@ -16,7 +24,7 @@ from milknado.domains.dispatch.tmux_run import read_exec_evidence
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, NodeWorkers
 
 if TYPE_CHECKING:
-    from milknado.domains.graph import RunRecord, TaskAttemptRecord
+    from milknado.domains.graph import RunRecord
 
 _logger = logging.getLogger(__name__)
 
@@ -35,7 +43,7 @@ def _observe_tmux_receipt(graph: StaleRunPort, state: dict[str, object]) -> None
     nonce = graph.runs.latest_message(run_id, "tmux_exec_nonce")
     if nonce is None:
         return
-    receipt = graph.db_path.parent / "runs" / f"{run_id}.{nonce}.exec.json"
+    receipt = exec_receipt_path(graph.db_path.parent, run_id, nonce)
     evidence = read_exec_evidence(receipt, nonce)
     attempt = graph.task_attempts.get(attempt_id)
     if attempt is None:
@@ -52,7 +60,7 @@ def _canonical_result(outcome: str, result: RunResult) -> RunResult:
     return replace(result, error="cancelled", detail=None)
 
 
-def _group_failure(graph: MikadoGraph, request: FinalizeTaskFailure) -> FinalizeTaskFailure:
+def _bind_group_failure(graph: MikadoGraph, request: FinalizeTaskFailure) -> FinalizeTaskFailure:
     """Bind a native group member's failure to its reservation so the fence resolves it."""
     group = graph.groups.for_task(request.node_id)
     if group is None:
@@ -78,15 +86,10 @@ def _finish_stale_run(
             graph.runs.finish(run_id, canonical)
             return canonical
         disposition = graph.task_attempts.fail(
-            _group_failure(
+            _bind_group_failure(
                 graph,
                 FinalizeTaskFailure(
-                    attempt.node_id,
-                    attempt_id,
-                    attempt.owner_run_id,
-                    run_id,
-                    attempt.max_node_attempts,
-                    result,
+                    attempt.node_id, attempt_id, attempt.owner_run_id, run_id, result
                 ),
             )
         )
@@ -167,6 +170,20 @@ def fail_stale_running_runs(
     return flipped
 
 
+def _reconcile_node(
+    graph: MikadoGraph, node: MikadoNode, process: ProcessTerminationPort
+) -> RunRecord | None:
+    assert node.run_id is not None
+    _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id, process)
+    terminal = graph.runs.latest_terminal(node.id, node.run_id)
+    if terminal is None or not reap_orphaned_workers(
+        graph, process, ReapRequest(NodeWorkers(node.id))
+    ):
+        return None
+    reconcile_node_status(graph, node.id, terminal["status"], run_id=node.run_id)
+    return terminal
+
+
 def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> list[RunRecord]:
     """Finalize and release orphaned nodes before a new coordinator dispatches."""
     get_all_nodes = getattr(graph, "get_all_nodes", None)
@@ -179,39 +196,20 @@ def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> l
         node = cast(MikadoNode, node_value)
         if node.status is not NodeStatus.RUNNING or node.run_id is None:
             continue
-        _ = fail_stale_running_runs(cast(StaleRunPort, graph), node.id, process)
-        terminal = typed_graph.runs.latest_terminal(node.id, node.run_id)
-        if terminal is None or not reap_orphaned_workers(
-            typed_graph, process, ReapRequest(NodeWorkers(node.id))
-        ):
+        try:
+            terminal = _reconcile_node(typed_graph, node, process)
+        except Exception:
+            # Leave the node unreconciled so the next sweep retries it.
+            _logger.exception("reconcile failed for node %s run %s", node.id, node.run_id)
             continue
-        reconcile_node_status(typed_graph, node.id, terminal["status"], run_id=node.run_id)
-        reconciled.append(terminal)
+        if terminal is not None:
+            reconciled.append(terminal)
     return reconciled
-
-
-def _complete_cancelled_node(graph: MikadoGraph, node_id: int, run_id: str) -> None:
-    """Fence the node into FAILED, accepting a worker that already did so canonically."""
-    if graph.mark_terminal(node_id, run_id, NodeStatus.FAILED):
-        return
-    current = graph.get_node(node_id)
-    if current is not None and current.status is NodeStatus.FAILED and current.run_id is None:
-        return
-    raise RuntimeError(f"cancelled node fence lost for run {run_id}")
 
 
 def _is_preserved_run(row: RunRecord) -> bool:
     """A clean worker exit whose merge-back did not rebase is a preserved attempt."""
     return row["rebased"] is False and row["exit_code"] == 0 and row["error"] is None
-
-
-def _complete_preserved(graph: MikadoGraph, run_id: str, attempt: TaskAttemptRecord) -> None:
-    """Apply the fenced FAILED write the live path would have, keeping the recovery pin."""
-    if attempt.outcome == "active" and not graph.task_attempts.record_nonfailure(
-        attempt.attempt_id, attempt.owner_run_id, "preserved"
-    ):
-        raise RuntimeError(f"preserved task attempt fence lost for run {run_id}")
-    _ = graph.mark_terminal(attempt.node_id, run_id, NodeStatus.FAILED, preserve_recovery=True)
 
 
 def _run_result_from_row(row: RunRecord) -> RunResult:
@@ -234,28 +232,21 @@ def _reconcile_failed_attempt(
     attempt = graph.task_attempts.get(attempt_id)
     if attempt is None:
         raise ValueError(f"task attempt {attempt_id} missing during recovery")
+    ref = AttemptRef(node.id, attempt_id, node.run_id, run_id)
     if row["error"] == "cancelled":
-        if not graph.task_attempts.record_nonfailure(attempt_id, node.run_id, "cancelled"):
-            raise RuntimeError(f"cancelled task attempt fence lost for run {run_id}")
-        _complete_cancelled_node(graph, node.id, run_id)
-        return
-    if attempt.outcome == "preserved" or (attempt.outcome == "active" and _is_preserved_run(row)):
-        _complete_preserved(graph, run_id, attempt)
-        return
-    if attempt.outcome == "startup_failed":
-        _ = graph.mark_terminal(node.id, run_id, NodeStatus.FAILED)
-        return
-    if attempt.outcome != "active":
-        return
-    request = FinalizeTaskFailure(
-        node.id,
-        attempt_id,
-        node.run_id,
-        run_id,
-        attempt.max_node_attempts,
-        _run_result_from_row(row),
-    )
-    _ = graph.task_attempts.fail(_group_failure(graph, request))
+        settle_cancelled(graph, ref)
+    elif attempt.outcome == "preserved" or (
+        attempt.outcome == "active" and _is_preserved_run(row)
+    ):
+        owned = replace(ref, owner_run_id=attempt.owner_run_id)
+        settle_preserved(graph, owned, record_outcome=attempt.outcome == "active")
+    elif attempt.outcome == "startup_failed":
+        _ = settle_node_terminal(graph, ref, NodeStatus.FAILED)
+    elif attempt.outcome == "active":
+        request = FinalizeTaskFailure(
+            node.id, attempt_id, node.run_id, run_id, _run_result_from_row(row)
+        )
+        _ = settle_counted_failure(graph, _bind_group_failure(graph, request))
 
 
 def reconcile_node_status(

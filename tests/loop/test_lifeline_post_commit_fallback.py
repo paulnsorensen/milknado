@@ -13,10 +13,15 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
+from milknado.domains.common import (
+    HelperIdentity,
+    ObservationKey,
+    WorkerIdentity,
+    WorkerOwner,
+    identity_state,
+)
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore, WorkerRecord
 from milknado.loop._lifeline import _cleanup  # pyright: ignore[reportPrivateUsage]
-from milknado.loop._process_identity import identity_state
 
 
 @pytest.fixture

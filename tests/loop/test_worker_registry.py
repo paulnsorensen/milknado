@@ -10,6 +10,7 @@ from pathlib import Path
 import psutil
 import pytest
 
+import milknado.adapters._loop_worker_release as release_module
 import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
@@ -152,7 +153,7 @@ def test_registry_remains_available_during_graph_preparation(
         except Exception as exc:
             errors.append(exc)
 
-    monkeypatch.setattr(startup, "MikadoGraph", delayed_graph)
+    monkeypatch.setattr(release_module, "MikadoGraph", delayed_graph)
     thread = threading.Thread(target=launch)
     try:
         thread.start()

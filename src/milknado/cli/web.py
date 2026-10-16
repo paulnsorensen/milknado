@@ -125,6 +125,7 @@ def _coordinator_host(
         turn_owner=turn_runtime.owner,
         turn_cancel=turn_runtime.cancel,
         runtime_session=turn_runtime.runtime_session,
+        max_node_attempts=config.max_node_attempts,
     )
     return CoordinatorControl(graph, project_root, services), turn_runtime
 

@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeStatus, RunResult
-from milknado.domains.dispatch._async_execution import finish_async_exception
 from milknado.domains.dispatch._async_types import AsyncRunRequest
-from milknado.domains.dispatch._sync_completion import finish_sync_exception
+from milknado.domains.dispatch._sync_completion import finish_attempt_exception
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 
 _NOW = "2026-01-01T00:00:00+00:00"
@@ -27,9 +26,9 @@ def _started_graph(
     return graph, node.id
 
 
-def _failure(node_id: int, *, limit: int = 2, status: str = "failed") -> FinalizeTaskFailure:
+def _failure(node_id: int, *, status: str = "failed") -> FinalizeTaskFailure:
     result = RunResult(status, 1, False, _NOW, error="worker failed")
-    return FinalizeTaskFailure(node_id, "attempt", "owner", "owner", limit, result)
+    return FinalizeTaskFailure(node_id, "attempt", "owner", "owner", result)
 
 
 @dataclass(frozen=True)
@@ -107,17 +106,13 @@ def test_invocation_and_nonfailure_fences_preserve_final_outcome(tmp_path: Path)
     graph.close()
 
 
-def test_failure_rejects_wrong_result_budget_and_missing_run(tmp_path: Path) -> None:
+def test_failure_rejects_wrong_result_and_missing_run(tmp_path: Path) -> None:
     graph, node_id = _started_graph(tmp_path / "graph.db")
     assert graph.task_attempts.confirm_execution("attempt", "owner", "owner")
-    with pytest.raises(ValueError, match="budget differs"):
-        _ = graph.task_attempts.fail(_failure(node_id, limit=3))
     with pytest.raises(ValueError, match="must be failed"):
         _ = graph.task_attempts.fail(_failure(node_id, status="done"))
     with pytest.raises(ValueError, match="does not belong"):
         _ = graph.task_attempts.fail(_failure(node_id + 1))
-    with pytest.raises(ValueError, match="must be positive"):
-        _ = graph.task_attempts.fail(_failure(node_id, limit=0))
     graph.runs.finish("owner", RunResult("done", 0, False, _NOW))
     assert graph.task_attempts.fail(_failure(node_id)).status == "lost_fence"
     assert graph.task_attempts.failed_count(node_id) == 0
@@ -155,9 +150,11 @@ def test_exception_after_exec_counts_once(tmp_path: Path, asynchronous: bool) ->
     assert graph.task_attempts.confirm_execution("owner", "owner", "owner")
     if asynchronous:
         request = _async_request(tmp_path, node_id)
-        finish_async_exception(graph, request, RuntimeError("crashed"), True)
+        finish_attempt_exception(graph, request, ("owner", True), RuntimeError("crashed"))
     else:
-        finish_sync_exception(graph, _SyncRequest(node_id), "owner", RuntimeError("crashed"))
+        finish_attempt_exception(
+            graph, _SyncRequest(node_id), ("owner", True), RuntimeError("crashed")
+        )
     assert graph.task_attempts.failed_count(node_id) == 1
     node = graph.get_node(node_id)
     assert node is not None and node.status is NodeStatus.PENDING
@@ -171,9 +168,11 @@ def test_unconfirmed_exception_holds_bounded_attempt(tmp_path: Path, asynchronou
     graph, node_id = _started_graph(tmp_path / "graph.db", attempt_id="owner")
     if asynchronous:
         request = _async_request(tmp_path, node_id)
-        finish_async_exception(graph, request, RuntimeError("no proof"), True)
+        finish_attempt_exception(graph, request, ("owner", True), RuntimeError("no proof"))
     else:
-        finish_sync_exception(graph, _SyncRequest(node_id), "owner", RuntimeError("no proof"))
+        finish_attempt_exception(
+            graph, _SyncRequest(node_id), ("owner", True), RuntimeError("no proof")
+        )
     assert graph.task_attempts.failed_count(node_id) == 0
     run = graph.runs.get("owner")
     assert run is not None and run["status"] == "running"
@@ -197,9 +196,9 @@ def test_preexec_exception_keeps_default_or_startup_policy(
     graph, node_id = _started_graph(tmp_path / "graph.db", limit=limit, attempt_id="owner")
     if asynchronous:
         request = _async_request(tmp_path, node_id, limit)
-        finish_async_exception(graph, request, error, True)
+        finish_attempt_exception(graph, request, ("owner", True), error)
     else:
-        finish_sync_exception(graph, _SyncRequest(node_id, limit), "owner", error)
+        finish_attempt_exception(graph, _SyncRequest(node_id, limit), ("owner", True), error)
     attempt = graph.task_attempts.get("owner")
     assert attempt is not None and attempt.outcome == expected_outcome
     assert graph.task_attempts.failed_count(node_id) == 0
@@ -213,7 +212,7 @@ def test_preexec_exception_keeps_default_or_startup_policy(
 def test_tmux_exception_without_exec_evidence_keeps_owner(tmp_path: Path) -> None:
     graph, node_id = _started_graph(tmp_path / "graph.db", attempt_id="owner")
     request = _async_request(tmp_path, node_id)
-    finish_async_exception(graph, request, OSError("pane lost"), False)
+    finish_attempt_exception(graph, request, ("owner", False), OSError("pane lost"))
     assert graph.task_attempts.failed_count(node_id) == 0
     node = graph.get_node(node_id)
     assert node is not None and node.status is NodeStatus.RUNNING

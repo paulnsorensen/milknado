@@ -9,7 +9,6 @@ from typing import Literal
 import msgspec
 
 import milknado.domains.coordinator.turns as turns
-from milknado.domains.common import default_config, load_config
 from milknado.domains.coordinator._command_lifecycle import CommandLifecycle
 from milknado.domains.coordinator.attempt_commands import apply_attempt_command
 from milknado.domains.coordinator.control_models import (
@@ -77,10 +76,8 @@ class CoordinatorControl:
     ) -> None:
         self._graph: MikadoGraph = graph
         self._root: Path = project_root
-        config_path = project_root / "milknado.toml"
-        config = load_config(config_path) if config_path.exists() else default_config(project_root)
-        self._max_node_attempts: int = config.max_node_attempts
         self._services: CoordinatorServices = services or CoordinatorServices()
+        self._max_node_attempts: int = self._services.max_node_attempts
         self._commands: CommandLifecycle = CommandLifecycle(lambda: self._conn)
 
     @property

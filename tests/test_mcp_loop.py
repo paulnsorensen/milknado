@@ -328,7 +328,7 @@ def test_spawn_failure_accepts_already_finalized_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from milknado.app import loop as loop_app
-    from milknado.app._loop_start_failure import LoopStartupFailure
+    from milknado.app._loop_start_failure import LoopStartupFailure, record_start_failure
     from milknado.domains.common import NodeStatus
     from milknado.domains.graph import RunFenceLostError
 
@@ -356,7 +356,7 @@ def test_spawn_failure_accepts_already_finalized_run(
 
     monkeypatch.setattr(graph.runs, "finish", fence_lost)
     try:
-        loop_app._record_start_failure(  # pyright: ignore[reportPrivateUsage]
+        record_start_failure(
             graph,
             LoopStartupFailure(
                 claim.node_id, claim.run_id, claim.run_id, True, OSError("spawn failed")
@@ -483,9 +483,8 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from milknado.app._loop_start_failure import LoopStartupFailure
+    from milknado.app._loop_start_failure import LoopStartupFailure, record_start_failure
     from milknado.domains.common import NodeStatus
-    from milknado.mcp.loop import _record_start_failure
 
     graph, _ = open_graph(tmp_path)
     node = graph.add_node("task")
@@ -497,7 +496,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
         + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END"
     )
     with pytest.raises(RuntimeError, match="start failure persistence failed"):
-        _record_start_failure(
+        record_start_failure(
             graph,
             LoopStartupFailure(node.id, run_id, run_id, True, OSError("missing runner")),
         )
@@ -510,8 +509,7 @@ def test_spawn_failure_still_releases_claim_when_run_persistence_fails(
 def test_spawn_failure_preserves_node_persistence_exception(tmp_path: Path) -> None:
     import sqlite3
 
-    from milknado.app._loop_start_failure import LoopStartupFailure
-    from milknado.mcp.loop import _record_start_failure
+    from milknado.app._loop_start_failure import LoopStartupFailure, record_start_failure
 
     graph, _ = open_graph(tmp_path)
     node = graph.add_node("task")
@@ -523,7 +521,7 @@ def test_spawn_failure_preserves_node_persistence_exception(tmp_path: Path) -> N
         + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'node database unavailable'); END"
     )
     with pytest.raises(RuntimeError, match="start failure persistence failed") as error:
-        _record_start_failure(
+        record_start_failure(
             graph,
             LoopStartupFailure(node.id, run_id, run_id, True, OSError("missing runner")),
         )

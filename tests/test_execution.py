@@ -107,7 +107,6 @@ def _assert_review_failure_replay(
             attempt_id,
             second.run_id,
             second.run_id,
-            3,
             RunResult("failed", None, False, terminal["ended_at"], detail="review worker failed"),
         )
     )
@@ -2021,7 +2020,7 @@ def test_dispatch_rejects_lost_run_id_fence(
     git = FakeGit()
     loop = FakeLoop(id_prefix="fence")
     executor = Executor(graph=graph, git=git, loop=loop, crg=FakeCrg())
-    monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
+    monkeypatch.setattr(graph.task_attempts, "adopt_owner", _fence_lost)
     with pytest.raises(ValueError, match="dispatch fence lost"):
         _ = executor.dispatch(1, config)
     assert len(loop.runs_started) == 1
@@ -2055,7 +2054,7 @@ def test_dispatch_fence_loss_unconfirmed_stop_preserves_worktree(
 
     monkeypatch.setattr(_executor_module, "make_run_id", fixed_run_id)
     monkeypatch.setattr(_node_attempts, "make_run_id", fixed_run_id)
-    monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
+    monkeypatch.setattr(graph.task_attempts, "adopt_owner", _fence_lost)
     retry_config = replace(config, dispatch_max_retries=1, dispatch_backoff_seconds=0)
     with pytest.raises(PreservedWorkerRun) as aborted:
         _ = executor.dispatch(1, retry_config)
@@ -2085,7 +2084,7 @@ def test_dispatch_fence_loss_force_stop_raise_preserves_worktree(
     loop = FakeLoop(id_prefix="raising-fence")
     loop.force_stop_raises = RuntimeError("loop manager wedged")
     executor = Executor(graph=graph, git=git, loop=loop, crg=FakeCrg())
-    monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
+    monkeypatch.setattr(graph.task_attempts, "adopt_owner", _fence_lost)
     with pytest.raises(PreservedWorkerRun) as aborted:
         _ = executor.dispatch(1, config)
     assert len(loop.runs_started) == 1
@@ -2208,7 +2207,7 @@ def test_unconfirmed_stop_aborted_run_finalized_when_loop_self_exits(
     loop = FakeLoop(live=True, id_prefix="selfexit")
     loop.force_stop_result = False
     executor = Executor(graph=graph, git=git, loop=loop, crg=FakeCrg())
-    monkeypatch.setattr(graph, "replace_run_id", _fence_lost)
+    monkeypatch.setattr(graph.task_attempts, "adopt_owner", _fence_lost)
     with pytest.raises(PreservedWorkerRun) as aborted:
         _ = executor.dispatch(1, config)
     assert len(loop.runs_started) == 1

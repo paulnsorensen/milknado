@@ -202,9 +202,6 @@ def _fail_first_attempt(
         control.send_coordinator_command(session.id, _turn("turn-1", first.attempt)).status
         == "accepted"
     )
-    assert graph.task_attempts.confirm_execution(
-        first.attempt.attempt_id, first.attempt.attempt_id, first.attempt.attempt_id
-    )
     workflow.finish_task(session, first.attempt, NodeLoopOutcome(task.id, False, "failed"))
     assert graph.groups.task_result(task.id) is None
 

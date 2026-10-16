@@ -91,11 +91,6 @@ def test_native_exhaustion_replays_only_final_result(tmp_path: Path) -> None:
     for number in range(1, 4):
         handoff = workflow.dispatch_task(session, group.id, task.id, f"run-{number}")
         _ = workflow.acknowledge_launch(session, handoff)
-        assert graph.task_attempts.confirm_execution(
-            handoff.attempt.attempt_id,
-            handoff.attempt.attempt_id,
-            handoff.attempt.attempt_id,
-        )
         outcome = NodeLoopOutcome(task.id, False, f"error-{number}")
         workflow.finish_task(session, handoff.attempt, outcome)
         assert graph.task_attempts.failed_count(task.id) == number
@@ -117,7 +112,6 @@ def test_native_failure_replay_finishes_dispatch_without_touching_new_reservatio
     workflow, session, task, first = _launched_task(graph, tmp_path, "run-1")
     group_id = first.group_id
     attempt_id = first.attempt_id
-    assert graph.task_attempts.confirm_execution(attempt_id, attempt_id, attempt_id)
     _ = graph.group_connection.execute(
         """CREATE TEMP TRIGGER reject_dispatch_finish
         BEFORE UPDATE OF state ON coordinator_dispatches
@@ -188,9 +182,9 @@ def test_native_nonfailure_replay_recovers_canonical_outcome(
     graph.close()
 
 
-def test_native_unknown_start_preserves_active_reservation(tmp_path: Path) -> None:
+def test_native_worker_failure_counts_without_manual_start_confirmation(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
-    workflow = CoordinatorWorkflow(graph, graph.group_connection, max_node_attempts=3)
+    workflow = CoordinatorWorkflow(graph, graph.group_connection, max_node_attempts=2)
     session = workflow.start_goal("Deliver", "codex")
     task = graph.add_node("Task", session.goal_id)
     group = workflow.create_group(
@@ -199,14 +193,13 @@ def test_native_unknown_start_preserves_active_reservation(tmp_path: Path) -> No
         (task.id,),
         GroupWorkspace(str(tmp_path / "group"), "branch", "provider"),
     )
-    handoff = workflow.dispatch_task(session, group.id, task.id, "run")
-    _ = workflow.acknowledge_launch(session, handoff)
-    workflow.finish_task(session, handoff.attempt, NodeLoopOutcome(task.id, False, "failed"))
-    assert _node_status(graph, task.id) == "running"
-    assert graph.groups.task_result(task.id) is None
-    assert graph.task_attempts.failed_count(task.id) == 0
-    assert _run_status(graph, handoff.attempt.attempt_id) == "running"
-    assert _reservation_id(graph, group.id) == handoff.attempt.attempt_id
+    for number, expected in ((1, "pending"), (2, "blocked")):
+        handoff = workflow.dispatch_task(session, group.id, task.id, f"run-{number}")
+        _ = workflow.acknowledge_launch(session, handoff)
+        outcome = NodeLoopOutcome(task.id, False, "failed")
+        workflow.finish_task(session, handoff.attempt, outcome)
+        assert _node_status(graph, task.id) == expected
+        assert graph.task_attempts.failed_count(task.id) == number
     graph.close()
 
 
@@ -225,7 +218,6 @@ def test_native_failure_transaction_rolls_back_every_row(tmp_path: Path) -> None
     handoff = workflow.dispatch_task(session, group.id, task.id, "run")
     _ = workflow.acknowledge_launch(session, handoff)
     attempt_id = handoff.attempt.attempt_id
-    assert graph.task_attempts.confirm_execution(attempt_id, attempt_id, attempt_id)
     before = _node_row(graph, task.id)
 
     _ = graph.group_connection.execute(
@@ -265,8 +257,6 @@ def test_native_retry_still_requires_goal_review_admission(tmp_path: Path) -> No
     )
     handoff = workflow.dispatch_task(session, group.id, task.id, "run-1")
     _ = workflow.acknowledge_launch(session, handoff)
-    attempt_id = handoff.attempt.attempt_id
-    assert graph.task_attempts.confirm_execution(attempt_id, attempt_id, attempt_id)
     workflow.finish_task(session, handoff.attempt, NodeLoopOutcome(task.id, False, "failed"))
     assert _node_status(graph, task.id) == "pending"
     _ = graph.request_goal_review(

@@ -28,7 +28,6 @@ from milknado.app.loop import (
     _DEFAULT_RUNNER,  # pyright: ignore[reportPrivateUsage]
     LoopClaim,
     LoopStartRequest,
-    _record_start_failure,  # pyright: ignore[reportPrivateUsage]
     _remove_reclaimed_worktree,  # pyright: ignore[reportPrivateUsage]
     _resolve_runner_cmd,  # pyright: ignore[reportPrivateUsage]
     start_loop_run,
@@ -53,7 +52,6 @@ __all__ = [
     "_DEFAULT_RUNNER",
     "LoopClaim",
     "LoopStartRequest",
-    "_record_start_failure",
     "_remove_reclaimed_worktree",
     "_resolve_runner_cmd",
     "milknado_run_loop_poll",

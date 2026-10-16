@@ -6,7 +6,11 @@ import sqlite3
 from typing import cast
 
 from milknado.domains.graph._sqlite_rows import fetchone
-from milknado.domains.graph._task_attempt_models import TaskAttemptRecord
+from milknado.domains.graph._task_attempt_models import (
+    AttemptOutcome,
+    StartState,
+    TaskAttemptRecord,
+)
 
 
 def _record(row: sqlite3.Row) -> TaskAttemptRecord:
@@ -16,8 +20,8 @@ def _record(row: sqlite3.Row) -> TaskAttemptRecord:
         cast(str, row["owner_run_id"]),
         cast(str, row["active_invocation_id"]),
         cast(int, row["max_node_attempts"]),
-        cast(str, row["start_state"]),
-        cast(str, row["outcome"]),
+        cast(StartState, row["start_state"]),
+        cast(AttemptOutcome, row["outcome"]),
         cast(int | None, row["failed_count"]),
         cast(str | None, row["disposition"]),
         cast(str | None, row["reason"]),

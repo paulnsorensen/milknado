@@ -15,7 +15,7 @@ import psutil
 import pytest
 
 import milknado.loop._process_identity as process_identity
-from milknado.domains.common import NodeStatus, WorktreeMode
+from milknado.domains.common import IdentityState, NodeStatus, WorktreeMode, identity_state
 from milknado.mcp._core import NodeSummary, RunDict
 from milknado.mcp.run import (
     milknado_run_cancel,
@@ -148,11 +148,11 @@ def test_inline_timeout_closes_descendant_before_retry(
                 pid, token = _child_identity(root / "child.pid")
                 result = cast(RunDict, future.result(timeout=12))
                 run_id = cast(str, result["run_id"])
-        assert process_identity.identity_state(pid, token) == "gone"
+        assert identity_state(pid, token) == "gone"
         _assert_worker_closed_and_requeued(root, run_id, node_id)
         assert result["timed_out"] is True
     finally:
-        if pid and process_identity.identity_state(pid, token) == "live":
+        if pid and identity_state(pid, token) == "live":
             os.kill(pid, signal.SIGKILL)
 
 
@@ -163,10 +163,10 @@ def test_inline_unresolved_cleanup_keeps_owner(
     root = tmp_path / "repo"
     node_id = _bounded_task(root)
 
-    def unresolved_group(_pgid: int) -> process_identity.IdentityState:
+    def unresolved_group(_pgid: int) -> IdentityState:
         return "unknown"
 
-    monkeypatch.setattr(process_identity, "_group_state", unresolved_group)
+    monkeypatch.setattr(process_identity, "group_state", unresolved_group)
     pid = 0
     token = 0.0
     helper: tuple[int, float] | None = None
@@ -188,9 +188,9 @@ def test_inline_unresolved_cleanup_keeps_owner(
                 _ = future.result(timeout=15)
         helper = _assert_owner_kept(root, node_id)
     finally:
-        if pid and process_identity.identity_state(pid, token) == "live":
+        if pid and identity_state(pid, token) == "live":
             os.kill(pid, signal.SIGKILL)
-        if helper is not None and process_identity.identity_state(*helper) == "live":
+        if helper is not None and identity_state(*helper) == "live":
             os.kill(helper[0], signal.SIGKILL)
 
 

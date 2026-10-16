@@ -104,7 +104,6 @@ def test_settled_attempt_closes_dead_linked_row_without_recount(tmp_path: Path) 
             "attempt",
             "owner",
             "owner",
-            2,
             RunResult("failed", 1, False, _NOW, error="worker failed"),
         )
     )

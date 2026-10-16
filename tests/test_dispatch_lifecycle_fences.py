@@ -12,6 +12,7 @@ import pytest
 
 from milknado.domains.common import NodeStatus, WorkerIdentity, WorkerOwner, WorktreeMode
 from milknado.domains.dispatch import lifecycle
+from milknado.domains.dispatch._attempt_completion import AttemptRef, settle_nonfailure
 from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
 from milknado.domains.dispatch.ports import ProcessPort, WorkerOutcomePort
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
@@ -27,8 +28,8 @@ def _attempt(tmp_path: Path, limit: int = 2) -> tuple[MikadoGraph, int]:
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("task")
     assert graph.claim_node(node.id, "owner", now=_NOW)
-    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "attempt", "owner", "owner", limit))
-    graph.runs.start("owner", node.id, "run.log", _NOW, None, attempt_id="attempt")
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "owner", "owner", "owner", limit))
+    graph.runs.start("owner", node.id, "run.log", _NOW, None, attempt_id="owner")
     return graph, node.id
 
 
@@ -56,12 +57,12 @@ def test_finish_refuses_while_the_run_still_has_a_worker(tmp_path: Path) -> None
 def test_counted_failure_rejects_a_run_whose_attempt_row_vanished(tmp_path: Path) -> None:
     graph, node_id = _attempt(tmp_path)
     with closing(sqlite3.connect(graph.db_path)) as raw:
-        _ = raw.execute("DELETE FROM task_attempts WHERE attempt_id = 'attempt'")
+        _ = raw.execute("DELETE FROM task_attempts WHERE attempt_id = 'owner'")
         raw.commit()
 
     with pytest.raises(ValueError, match="task attempt missing for run owner"):
-        _ = lifecycle._fail_counted_attempt(  # pyright: ignore[reportPrivateUsage]
-            graph, node_id, "owner", _WORKER, None
+        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+            graph, node_id, "owner", _WORKER, "failed", None
         )
     graph.close()
 
@@ -71,8 +72,8 @@ def test_counted_failure_rejects_a_lost_owner(tmp_path: Path) -> None:
     assert graph.replace_run_id(node_id, "owner", "next")
 
     with pytest.raises(RuntimeError, match="task attempt fence lost for run owner"):
-        _ = lifecycle._fail_counted_attempt(  # pyright: ignore[reportPrivateUsage]
-            graph, node_id, "owner", _WORKER, None
+        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+            graph, node_id, "owner", _WORKER, "failed", None
         )
 
     assert graph.task_attempts.failed_count(node_id) == 0
@@ -83,12 +84,10 @@ def test_nonfailure_outcome_rejects_a_lost_owner(tmp_path: Path) -> None:
     graph, node_id = _attempt(tmp_path)
     assert graph.replace_run_id(node_id, "owner", "next")
 
-    with pytest.raises(RuntimeError, match="task attempt outcome fence lost for run owner"):
-        lifecycle._record_attempt_nonfailure(  # pyright: ignore[reportPrivateUsage]
-            graph, "owner", "done"
-        )
+    with pytest.raises(RuntimeError, match="task outcome fence lost for run owner"):
+        settle_nonfailure(graph, AttemptRef(node_id, "owner", "owner", "owner"), "done")
 
-    attempt = graph.task_attempts.get("attempt")
+    attempt = graph.task_attempts.get("owner")
     assert attempt is not None and attempt.outcome == "active"
     graph.close()
 

@@ -12,7 +12,7 @@ preserve the worktree for inspection.
 from __future__ import annotations
 
 import logging
-from collections.abc import Generator
+from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
-_MAX_RETRY_SLOTS = 100
+_RETRY_SUFFIXES = ("", *(f"-retry{attempt}" for attempt in range(2, 101)))
 
 
 @dataclass(frozen=True)
@@ -92,19 +92,22 @@ def setup_group_worktree(  # noqa
         raise
 
 
-def _unoccupied_slot(
-    git: GitPort, wt_path: Path, worker_branch: str, root: Path
+def unoccupied_slot(
+    git: GitPort, base: tuple[Path, str], root: Path, suffixes: Sequence[str]
 ) -> tuple[Path, str]:
-    """Pick the first path and branch no earlier attempt holds, keeping prior work intact."""
-    for attempt in range(1, _MAX_RETRY_SLOTS + 1):
-        suffix = "" if attempt == 1 else f"-retry{attempt}"
+    """Pick the first path and branch no earlier attempt holds, keeping prior work intact.
+
+    `base` is the canonical (worktree path, branch); each suffix names one candidate slot.
+    """
+    wt_path, worker_branch = base
+    for suffix in suffixes:
         candidate = wt_path.with_name(wt_path.name + suffix)
         branch = worker_branch + suffix
         if not candidate.resolve().is_relative_to(root.resolve()):
             raise ValueError(f"worktree path resolves outside project_root: {candidate!r}")
         if not candidate.exists() and not git.branch_exists(branch):
             return candidate, branch
-    raise GitOperationError("isolated worktree slots", f"all {_MAX_RETRY_SLOTS} are occupied")
+    raise GitOperationError("isolated worktree slots", f"all {len(suffixes)} are occupied")
 
 
 def _create_node_worktree(
@@ -121,7 +124,8 @@ def _create_node_worktree(
     target_branch = git.current_branch()
     target_ref = f"refs/heads/{target_branch}"
     base_oid = git.resolve_ref(target_ref)
-    wt_path, worker_branch = _unoccupied_slot(git, wt_path, f"milknado/{node_id}-{slug}", root)
+    base = (wt_path, f"milknado/{node_id}-{slug}")
+    wt_path, worker_branch = unoccupied_slot(git, base, root, _RETRY_SUFFIXES)
     _ = git.create_worktree(wt_path, worker_branch)
     if git.resolve_ref(worker_branch) != base_oid:
         git.force_remove_worktree(wt_path)

@@ -26,6 +26,22 @@ class HelperStart:
     stop_deadline: Callable[[], float | None] | None = None
 
 
+def completion_result(
+    failed: bool, confirmed: bool, helper_error: UnconfirmedHelperExit | None = None
+) -> bool:
+    """Report a protected worker's cleanup, raising loudly when protection failed."""
+    if failed:
+        if helper_error is not None:
+            message = "worker protection failed; lifeline helper exit unconfirmed"
+            raise RuntimeError(message) from helper_error
+        if not confirmed:
+            raise RuntimeError("worker protection failed; worker cleanup remains unresolved")
+        raise RuntimeError("worker protection failed")
+    if helper_error is not None:
+        raise helper_error
+    return confirmed
+
+
 class UnconfirmedHelperExit(RuntimeError):
     pass
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import WorkerIdentity, WorkerOwner
-from milknado.domains.dispatch._sync_completion import finish_sync_exception
+from milknado.domains.dispatch._sync_completion import finish_attempt_exception
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
 _NOW = "2026-01-01T00:00:00+00:00"
@@ -34,5 +34,7 @@ def test_sibling_open_worker_blocks_the_terminal_node_write(tmp_path: Path) -> N
     )
 
     with pytest.raises(RuntimeError, match="terminal node fence lost for run owner"):
-        finish_sync_exception(graph, _SyncRequest(node.id, 1), "owner", RuntimeError("x"))
+        finish_attempt_exception(
+            graph, _SyncRequest(node.id, 1), ("owner", True), RuntimeError("x")
+        )
     graph.close()

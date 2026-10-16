@@ -61,8 +61,7 @@ def record_nonfailure(
 ) -> None:
     if context is None or context.attempt_id is None or node.run_id is None:
         return
-    if not graph.task_attempts.record_nonfailure(context.attempt_id, node.run_id, outcome):
-        raise ValueError(f"task attempt outcome fence lost for node {node.id}")
+    graph.task_attempts.require_nonfailure(context.attempt_id, node.run_id, outcome)
 
 
 def discard_worktree(
@@ -114,12 +113,7 @@ def fail_bounded_attempt(
     )
     disposition = runtime.graph.task_attempts.fail(
         FinalizeTaskFailure(
-            node.id,
-            context.attempt_id,
-            node.run_id,
-            context.worker_run_id,
-            attempt.max_node_attempts,
-            result,
+            node.id, context.attempt_id, node.run_id, context.worker_run_id, result
         )
     )
     if disposition.status == "lost_fence":

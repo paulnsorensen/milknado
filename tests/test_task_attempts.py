@@ -59,7 +59,7 @@ def test_failure_budget_and_run_linkage_survive_reopen(tmp_path: Path) -> None:
         _ = graph.task_attempts.confirm_execution(attempt_id, owner, owner)
         disposition = graph.task_attempts.fail(
             FinalizeTaskFailure(
-                node.id, attempt_id, owner, owner, 3, _failed_result(f"error-{number}")
+                node.id, attempt_id, owner, owner, _failed_result(f"error-{number}")
             )
         )
         assert disposition.failed_count == number
@@ -68,7 +68,7 @@ def test_failure_budget_and_run_linkage_survive_reopen(tmp_path: Path) -> None:
         assert _run(graph, owner)["attempt_id"] == attempt_id
         assert (
             graph.task_attempts.fail(
-                FinalizeTaskFailure(node.id, attempt_id, owner, owner, 3, _failed_result("replay"))
+                FinalizeTaskFailure(node.id, attempt_id, owner, owner, _failed_result("replay"))
             )
             == disposition
         )
@@ -105,7 +105,7 @@ def test_default_limit_keeps_failed_status(tmp_path: Path) -> None:
     graph.runs.start("owner", node.id, "run.log", _NOW, None, attempt_id="attempt")
     _ = graph.task_attempts.confirm_execution("attempt", "owner", "owner")
     disposition = graph.task_attempts.fail(
-        FinalizeTaskFailure(node.id, "attempt", "owner", "owner", 1, _failed_result("failure"))
+        FinalizeTaskFailure(node.id, "attempt", "owner", "owner", _failed_result("failure"))
     )
     assert disposition.status is NodeStatus.FAILED
     assert disposition.failed_count == 1
@@ -123,7 +123,7 @@ def test_unknown_start_holds_current_owner_without_spending_budget(tmp_path: Pat
     assert graph.task_attempts.record_release("attempt", "owner", "owner")
 
     disposition = graph.task_attempts.fail(
-        FinalizeTaskFailure(node.id, "attempt", "owner", "owner", 3, _failed_result("failure"))
+        FinalizeTaskFailure(node.id, "attempt", "owner", "owner", _failed_result("failure"))
     )
 
     assert disposition.status == "unknown_start"
@@ -173,7 +173,7 @@ def test_stale_owner_failure_is_not_unknown_start(tmp_path: Path) -> None:
     graph.runs.start("old-owner", node.id, "run.log", _NOW, None, attempt_id="attempt")
     assert graph.replace_run_id(node.id, "old-owner", "new-owner")
     disposition = graph.task_attempts.fail(
-        FinalizeTaskFailure(node.id, "attempt", "old-owner", "old-owner", 3, _failed_result("old"))
+        FinalizeTaskFailure(node.id, "attempt", "old-owner", "old-owner", _failed_result("old"))
     )
     assert disposition.status == "lost_fence"
     assert graph.task_attempts.failed_count(node.id) == 0
@@ -261,7 +261,7 @@ def test_two_connections_replay_one_failure_disposition(tmp_path: Path) -> None:
     first.runs.start("owner", node.id, "run.log", _NOW, None, attempt_id="attempt")
     assert first.task_attempts.confirm_execution("attempt", "owner", "owner")
     second = MikadoGraph(path)
-    request = FinalizeTaskFailure(node.id, "attempt", "owner", "owner", 3, _failed_result("race"))
+    request = FinalizeTaskFailure(node.id, "attempt", "owner", "owner", _failed_result("race"))
     barrier = Barrier(3)
 
     def finish(graph: MikadoGraph) -> object:

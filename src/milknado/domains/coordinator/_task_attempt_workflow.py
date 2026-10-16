@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 
 from milknado.domains.common import RunResult
@@ -13,6 +14,8 @@ from milknado.domains.graph import (
     TaskAttempt,
     TaskOutcome,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def link_task_run(graph: MikadoGraph, attempt: TaskAttempt, max_node_attempts: int) -> None:
@@ -44,13 +47,22 @@ def _fail_task(graph: MikadoGraph, attempt: TaskAttempt, outcome: NodeLoopOutcom
     record = graph.task_attempts.get(attempt.attempt_id)
     if record is None:
         raise ValueError("native task attempt is not linked")
+    attempt_id = attempt.attempt_id
+    if not graph.task_attempts.confirm_execution(
+        attempt_id, record.owner_run_id, record.active_invocation_id
+    ):
+        _logger.warning(
+            "start evidence not recorded: attempt=%s owner=%s invocation=%s",
+            attempt_id,
+            record.owner_run_id,
+            record.active_invocation_id,
+        )
     disposition = graph.task_attempts.fail(
         FinalizeTaskFailure(
             attempt.node_id,
-            attempt.attempt_id,
-            attempt.attempt_id,
-            attempt.attempt_id,
-            record.max_node_attempts,
+            attempt_id,
+            attempt_id,
+            attempt_id,
             RunResult("failed", None, False, datetime.now(UTC).isoformat(), detail=outcome.detail),
             group_id=attempt.group_id,
             group_result=outcome.detail or "",
@@ -63,12 +75,11 @@ def _fail_task(graph: MikadoGraph, attempt: TaskAttempt, outcome: NodeLoopOutcom
 
 def _finish_nonfailure(graph: MikadoGraph, attempt: TaskAttempt, status: str, detail: str) -> None:
     graph.groups.finish_task(attempt, TaskOutcome(status, detail))
-    if not graph.task_attempts.record_nonfailure(
+    graph.task_attempts.require_nonfailure(
         attempt.attempt_id,
         attempt.attempt_id,
         "done" if status == "done" else "preserved",
-    ):
-        raise ValueError("native task outcome fence lost")
+    )
 
 
 def _replay_failure(
@@ -111,10 +122,9 @@ def finish_task_attempt(
     elif status != "failed":
         canonical = "done" if status == "done" else "preserved"
         if record.outcome == "active":
-            if not graph.task_attempts.record_nonfailure(
+            graph.task_attempts.require_nonfailure(
                 attempt.attempt_id, attempt.attempt_id, canonical
-            ):
-                raise ValueError("native task outcome fence lost")
+            )
         elif record.outcome != canonical:
             raise ValueError("worker result conflicts with recorded task attempt")
     run = graph.runs.get(attempt.attempt_id)

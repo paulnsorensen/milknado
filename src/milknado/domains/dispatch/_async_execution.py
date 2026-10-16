@@ -5,21 +5,16 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from milknado.domains.dispatch._async_types import AsyncRunRequest, AsyncWorkerContext
+from milknado.domains.dispatch._async_types import AsyncWorkerContext
 from milknado.domains.dispatch._runstate import brief_path as _brief_path
+from milknado.domains.dispatch._runstate import exec_receipt_path
 from milknado.domains.dispatch._runstate import exit_code_path as _exit_code_path
 from milknado.domains.dispatch._runstate import now_iso as _now_iso
-from milknado.domains.dispatch._sync_completion import confirm_execution, finish_attempt_exception
+from milknado.domains.dispatch._sync_completion import confirm_execution
 from milknado.domains.dispatch.ports import RunWindow, TmuxPort
 from milknado.domains.dispatch.runner import build_worker_env, execute_cancellable
 from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
 from milknado.domains.graph import MikadoGraph
-
-
-def finish_async_exception(
-    graph: MikadoGraph, request: AsyncRunRequest, exc: Exception, direct_process: bool
-) -> None:
-    finish_attempt_exception(graph, request, (request.run_id, direct_process), exc)
 
 
 def run_worker_process(
@@ -68,7 +63,7 @@ def _run_in_tmux_window(
             executable=context.argv[0],
         ),
         brief_path=staged_brief,
-        exec_receipt_path=rdir / f"{run_id}.{nonce}.exec.json",
+        exec_receipt_path=exec_receipt_path(graph.db_path.parent, run_id, nonce),
         exec_nonce=nonce,
     )
     return _execute_in_window(

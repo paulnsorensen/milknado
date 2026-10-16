@@ -50,6 +50,7 @@ from milknado.domains.dispatch import (
     make_run_id,
     render_brief,
     runs_dir,
+    unoccupied_slot,
 )
 from milknado.domains.execution._host_slots import SlotLedger
 from milknado.domains.execution._models import (
@@ -206,7 +207,7 @@ def _preserve_run_logs(common: Path | None, worktree: Path, node_id: int) -> Non
         _logger.warning("Failed to preserve run logs for node %d: %s", node_id, exc)
 
 
-_MAX_RELOCATION_SLOTS = 100
+_RELOCATION_SUFFIXES = ("", *(f"-{n}" for n in range(2, 100)))
 
 
 def _is_transient(exc: BaseException) -> bool:
@@ -284,7 +285,7 @@ class WorktreeManager:
         self._worktrees[node_id] = wt_path
         _exclude_loop_scaffolding(self._git.git_common_dir(wt_path))
 
-    def relocate_occupied(self, wt_path: Path, branch: str) -> tuple[Path, str]:
+    def relocate_occupied(self, wt_path: Path, branch: str, root: Path) -> tuple[Path, str]:
         """Relocate a dispatch whose canonical path or branch is still taken.
 
         A refused (dirty/unlanded) orphan stays on disk at the node's canonical
@@ -296,22 +297,16 @@ class WorktreeManager:
         make `git worktree add -b` fail. The preserved orphan is left for a human
         or an explicit discard; the run loop is never blocked by it.
         """
-        if not wt_path.exists() and not self._git.branch_exists(branch):
-            return wt_path, branch
-        for n in range(2, _MAX_RELOCATION_SLOTS):
-            candidate = wt_path.with_name(f"{wt_path.name}-{n}")
-            candidate_branch = f"{branch}-{n}"
-            if not candidate.exists() and not self._git.branch_exists(candidate_branch):
-                _logger.warning(
-                    "Worktree path %s is occupied by a preserved orphan; "
-                    + "relocating dispatch to %s",
-                    wt_path,
-                    candidate,
-                )
-                return candidate, candidate_branch
-        raise RuntimeError(
-            f"no free worktree slot for {wt_path} after {_MAX_RELOCATION_SLOTS - 2} relocations"
+        candidate, candidate_branch = unoccupied_slot(
+            self._git, (wt_path, branch), root, _RELOCATION_SUFFIXES
         )
+        if candidate != wt_path:
+            _logger.warning(
+                "Worktree path %s is occupied by a preserved orphan; relocating dispatch to %s",
+                wt_path,
+                candidate,
+            )
+        return candidate, candidate_branch
 
     def ensure_clean(self, node_id: int) -> None:
         """Remove any tracked worktree for node_id; degrade on refusal.
@@ -560,7 +555,7 @@ class Executor:
         aborted_run_metadata: list[tuple[str, bool]] = []
         try:
             self._wt.ensure_clean(node_id)
-            wt_path, branch = self._wt.relocate_occupied(wt_path, branch)
+            wt_path, branch = self._wt.relocate_occupied(wt_path, branch, config.project_root)
             self._graph.set_worktree(node_id, owner_run_id, str(wt_path), branch)
             create_attempted = True
             self._wt.create(node_id, wt_path, branch)
@@ -578,11 +573,11 @@ class Executor:
                 attempt_id=attempt_id,
                 aborted_run_metadata=aborted_run_metadata,
             )
-            if not adopted and selected_run_id is None:
-                if not self._graph.replace_run_id(node_id, owner_run_id, run_id):
+            if selected_run_id is None and not adopted:
+                if not self._graph.task_attempts.adopt_owner(attempt_id, owner_run_id, run_id):
                     raise ValueError(f"dispatch fence lost for node {node_id}")
                 owner_run_id = run_id
-            if selected_run_id is None and not self._graph.task_attempts.bind_invocation(
+            elif selected_run_id is None and not self._graph.task_attempts.bind_invocation(
                 attempt_id, owner_run_id, run_id
             ):
                 raise ValueError(f"task attempt invocation fence lost for node {node_id}")

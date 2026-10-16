@@ -17,6 +17,19 @@ class StartTaskAttempt:
     max_node_attempts: int = 1
 
 
+StartState = Literal["unknown", "released", "executed", "startup_failed"]
+AttemptOutcome = Literal[
+    "active",
+    "done",
+    "cancelled",
+    "review_blocked",
+    "preserved",
+    "startup_failed",
+    "failed",
+    "reset",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class TaskAttemptRecord:
     node_id: int
@@ -24,8 +37,8 @@ class TaskAttemptRecord:
     owner_run_id: str
     active_invocation_id: str
     max_node_attempts: int
-    start_state: str
-    outcome: str
+    start_state: StartState
+    outcome: AttemptOutcome
     failed_count: int | None
     disposition: str | None
     reason: str | None
@@ -37,7 +50,6 @@ class FinalizeTaskFailure:
     attempt_id: str
     owner_run_id: str
     run_id: str
-    max_node_attempts: int
     result: RunResult
     group_id: str | None = None
     group_result: str | None = None

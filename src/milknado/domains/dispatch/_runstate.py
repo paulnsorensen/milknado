@@ -70,6 +70,13 @@ def exit_code_path(runs_dir: Path, run_id: str) -> Path:
     return runs_dir / f"{run_id}.rc"
 
 
+def exec_receipt_path(state_dir: Path, run_id: str, nonce: str) -> Path:
+    """Where a tmux window records its exec receipt, keyed off the graph's state dir."""
+    receipts = state_dir / "runs"
+    receipts.mkdir(parents=True, exist_ok=True)
+    return receipts / f"{run_id}.{nonce}.exec.json"
+
+
 def brief_path(runs_dir: Path, run_id: str) -> Path:
     """Where the run-inline tmux path stages the worker brief (stdin redirect)."""
     return runs_dir / f"{run_id}.brief"

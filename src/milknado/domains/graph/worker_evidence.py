@@ -76,6 +76,13 @@ def existing_standalone_worker_db(path: Path) -> bool:
     return True
 
 
+def _migrate_if_behind(path: Path) -> None:
+    with closing(sqlite3.connect(path)) as conn, conn:
+        row = fetchone(conn, "PRAGMA user_version")
+        if row is not None and cast(int, row[0]) < SCHEMA_VERSION:
+            migrate(conn)
+
+
 def open_standalone_worker_evidence(
     db_path: Path | None = None,
     *,
@@ -106,6 +113,8 @@ def open_standalone_worker_evidence(
             except Exception:
                 path.unlink()
                 raise
+        else:
+            _migrate_if_behind(path)
         _check_private(path, directory=False)
         return WorkerEvidenceStore(path, deadline=deadline)
 

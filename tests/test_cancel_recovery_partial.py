@@ -85,7 +85,7 @@ def test_cancel_still_fails_when_a_newer_owner_holds_the_node(
     assert graph.claim_node(node.id, "successor", now=_NOW)
     _stale_first_read(graph, stale, monkeypatch)
 
-    with pytest.raises(RuntimeError, match="cancelled node fence lost"):
+    with pytest.raises(RuntimeError, match="terminal node fence lost"):
         reconcile_node_status(graph, node.id, "failed", run_id="owner")
 
     current = graph.get_node(node.id)

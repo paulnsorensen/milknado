@@ -196,10 +196,6 @@ def _spawn_loop(
     return process.spawn_detached(tuple(argv), request.root, log_path, env)
 
 
-def _record_start_failure(graph: MikadoGraph, failure: LoopStartupFailure) -> None:
-    record_start_failure(graph, failure)
-
-
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
     """Claim a task node and spawn its detached loop, or return a deferred result."""
     max_node_attempts = load_project_config(request.root).max_node_attempts
@@ -255,7 +251,7 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
         run_started = True
         pid = _spawn_loop(ProcessAdapter(), tmux, request, claim, log_path)
     except Exception as exc:
-        _record_start_failure(
+        record_start_failure(
             graph, LoopStartupFailure(claim.node_id, claim.run_id, attempt_id, run_started, exc)
         )
         raise

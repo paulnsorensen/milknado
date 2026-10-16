@@ -17,11 +17,18 @@ from milknado.domains.common import (
     WorktreeMode,
 )
 from milknado.domains.common.protocols import HostCapacityPort
+from milknado.domains.dispatch._attempt_completion import (
+    AttemptRef,
+    settle_counted_failure,
+    settle_node_terminal,
+    settle_nonfailure,
+    settle_preserved,
+)
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch._sync_completion import (
     confirm_execution,
-    finish_sync_exception,
+    finish_attempt_exception,
     start_sync_attempt,
 )
 from milknado.domains.dispatch.brief import (
@@ -99,75 +106,31 @@ def _finish_dispatch(
     if graph.runs.live_workers(run_id=run_id):
         raise RuntimeError(f"worker cleanup unresolved for run {run_id}")
     preserved = merge is not None and not merge.rebased and worker_result.exit_code == 0
-    counted = terminal == "failed" and not preserved
-    if counted and _fail_counted_attempt(graph, node_id, run_id, worker_result, merge):
+    run_result = RunResult(
+        status=terminal,
+        exit_code=worker_result.exit_code,
+        timed_out=worker_result.timed_out,
+        ended_at=now_iso(),
+        rebased=merge.rebased if merge is not None else None,
+    )
+    if terminal == "failed" and not preserved:
+        attempt = graph.task_attempts.get(run_id)
+        if attempt is None:
+            raise ValueError(f"task attempt missing for run {run_id}")
+        failure = FinalizeTaskFailure(node_id, run_id, run_id, run_id, run_result)
+        _ = settle_counted_failure(graph, failure)
         return
     try:
-        graph.runs.finish(
-            run_id,
-            RunResult(
-                status=terminal,
-                exit_code=worker_result.exit_code,
-                timed_out=worker_result.timed_out,
-                ended_at=now_iso(),
-                rebased=merge.rebased if merge is not None else None,
-            ),
-        )
+        graph.runs.finish(run_id, run_result)
     except RunFenceLostError:
         _logger.info("sync dispatch terminal run already finalized: run_id=%s", run_id)
         return
+    ref = AttemptRef(node_id, run_id, run_id, run_id)
     if preserved:
-        _record_attempt_nonfailure(graph, run_id, "preserved")
-    status = NodeStatus.DONE if terminal == "done" and not preserved else NodeStatus.FAILED
-    marked = graph.mark_terminal(node_id, run_id, status, preserve_recovery=preserved)
-    if marked is False:
-        if graph.get_node(node_id) is None:
-            return
-        raise RuntimeError(f"terminal node write lost its fence for node {node_id}")
-    if not preserved:
-        _record_attempt_nonfailure(graph, run_id, "done")
-
-
-def _run_attempt_id(graph: MikadoGraph, run_id: str) -> str | None:
-    run = graph.runs.get(run_id)
-    attempt_id = run["attempt_id"] if run is not None else None
-    return attempt_id if isinstance(attempt_id, str) else None
-
-
-def _fail_counted_attempt(
-    graph: MikadoGraph,
-    node_id: int,
-    run_id: str,
-    worker_result: WorkerOutcomePort,
-    merge: MergeBackResult | None,
-) -> bool:
-    attempt_id = _run_attempt_id(graph, run_id)
-    if attempt_id is None:
-        return False
-    attempt = graph.task_attempts.get(attempt_id)
-    if attempt is None:
-        raise ValueError(f"task attempt missing for run {run_id}")
-    result = RunResult(
-        "failed",
-        worker_result.exit_code,
-        worker_result.timed_out,
-        now_iso(),
-        rebased=merge.rebased if merge else None,
-    )
-    failure = FinalizeTaskFailure(
-        node_id, attempt_id, run_id, run_id, attempt.max_node_attempts, result
-    )
-    if graph.task_attempts.fail(failure).status == "lost_fence":
-        raise RuntimeError(f"task attempt fence lost for run {run_id}")
-    return True
-
-
-def _record_attempt_nonfailure(graph: MikadoGraph, run_id: str, outcome: str) -> None:
-    attempt_id = _run_attempt_id(graph, run_id)
-    if attempt_id is not None and not graph.task_attempts.record_nonfailure(
-        attempt_id, run_id, outcome
-    ):
-        raise RuntimeError(f"task attempt outcome fence lost for run {run_id}")
+        settle_preserved(graph, ref)
+        return
+    if settle_node_terminal(graph, ref, NodeStatus.DONE):
+        settle_nonfailure(graph, ref, "done")
 
 
 def dispatch_node_sync(
@@ -240,7 +203,7 @@ def _run_claimed_node(
         _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
     except Exception as exc:
         if started:
-            finish_sync_exception(graph, request, run_id, exc)
+            finish_attempt_exception(graph, request, (run_id, True), exc)
             raise
         terminal_error: BaseException | None = None
         try:

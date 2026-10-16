@@ -18,7 +18,7 @@ import pytest
 
 import milknado.loop._process_lifecycle as lifecycle
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.domains.common import WorkerOwner
+from milknado.domains.common import WorkerOwner, identity_state
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import (
     AgentResult,
@@ -28,7 +28,6 @@ from milknado.loop._agent import (
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart
-from milknado.loop._process_identity import identity_state
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX identity cleanup is required")

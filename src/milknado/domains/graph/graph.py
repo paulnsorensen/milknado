@@ -51,6 +51,7 @@ from milknado.domains.graph._pipeline import (
     StatusPipeline,
     _PluginAsMiddleware,
 )
+from milknado.domains.graph._status_reclaim import try_reclaim
 from milknado.domains.graph._task_attempt_facade import TaskAttemptFacade
 from milknado.domains.graph.goal_review import (
     GoalAdmission,
@@ -606,7 +607,7 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
 
     @synchronized
     def try_reclaim(self, node_id: int, *, now: str) -> bool:
-        return _status.try_reclaim(self._pipeline, self._conn, node_id, now=now)
+        return try_reclaim(self._pipeline, self._conn, node_id, now=now)
 
     # ── Dispatch orchestration ───────────────────────────────────────────────
 

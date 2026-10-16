@@ -16,9 +16,8 @@ from typing import final
 
 import psutil
 
-from milknado.domains.common import WorkerIdentity
+from milknado.domains.common import WorkerIdentity, identity_state
 from milknado.loop._output import SUBPROCESS_TEXT_KWARGS
-from milknado.loop._process_identity import identity_state
 
 # Bounds interpreter startup of the gate (until it reports "G"), not worker exec.
 # Generous because a loaded host can take seconds to start Python.
@@ -149,6 +148,8 @@ class WorkerProcess:
             try:
                 if ready:
                     self.start_evidence = self._observe_exec(status_fd)
+                else:
+                    self.start_evidence = StartEvidence.STARTUP_FAILED
             finally:
                 os.close(status_fd)
 
@@ -199,6 +200,7 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
         status_read, status_write = os.pipe()
         command = (
             sys.executable,
+            "-P",
             "-m",
             "milknado.loop._exec_gate",
             str(gate_read),

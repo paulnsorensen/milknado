@@ -37,6 +37,7 @@ from milknado.domains.dispatch.isolate import (
     create_isolated_worktree,
     discard_isolated_worktree,
     setup_isolated_worktree,
+    unoccupied_slot,
 )
 from milknado.domains.dispatch.lifecycle import (
     SyncDispatchRequest,
@@ -119,6 +120,7 @@ __all__ = [
     "request_cancel",
     "setup_isolated_worktree",
     "discard_isolated_worktree",
+    "unoccupied_slot",
     "run_headless",
     "runs_dir",
     "tail",

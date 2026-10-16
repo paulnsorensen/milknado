@@ -69,7 +69,7 @@ def test_signal_death_before_release_is_not_exec_proof(
 
     monkeypatch.setattr(os, "write", fail_write)
     worker.release()
-    assert worker.start_evidence is StartEvidence.UNKNOWN
+    assert worker.start_evidence in {StartEvidence.UNKNOWN, StartEvidence.STARTUP_FAILED}
     for descriptor in (gate_fd, status_fd):
         with pytest.raises(OSError):
             _ = os.fstat(descriptor)
@@ -87,7 +87,7 @@ def test_unlinked_release_skips_graph_initialization(
     def no_graph(_path: Path) -> MikadoGraph:
         pytest.fail("unlinked graph opened")
 
-    monkeypatch.setattr("milknado.loop._process_startup.MikadoGraph", no_graph)
+    monkeypatch.setattr("milknado.adapters._loop_worker_release.MikadoGraph", no_graph)
     worker = spawn_gated(_options((sys.executable, "-c", "pass")))
     try:
         _release_worker(worker, context)

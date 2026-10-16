@@ -91,7 +91,7 @@ def test_live_pre_exec_wrapper_does_not_resolve_unknown_start(tmp_path: Path) ->
         attempt = graph.task_attempts.get("attempt")
         assert attempt is not None
         disposition = graph.task_attempts.fail(
-            FinalizeTaskFailure(node_id, "attempt", "owner", "worker", 3, _failed_result())
+            FinalizeTaskFailure(node_id, "attempt", "owner", "worker", _failed_result())
         )
         node = graph.get_node(node_id)
         assert node is not None

@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import NodeStatus
-from milknado.domains.dispatch._async_execution import finish_async_exception
 from milknado.domains.dispatch._async_types import AsyncRunRequest
 from milknado.domains.dispatch._sync_completion import (
+    SyncFailureRequest,
     confirm_execution,
-    finish_sync_exception,
+    finish_attempt_exception,
 )
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
@@ -42,16 +42,26 @@ def _async_request(root: Path, node_id: int, limit: int = 2) -> AsyncRunRequest:
     )
 
 
+def _finish_async(
+    graph: MikadoGraph, request: AsyncRunRequest, exc: Exception, direct: bool
+) -> None:
+    finish_attempt_exception(graph, request, (request.run_id, direct), exc)
+
+
+def _finish_sync(
+    graph: MikadoGraph, request: SyncFailureRequest, run_id: str, exc: Exception
+) -> None:
+    finish_attempt_exception(graph, request, (run_id, True), exc)
+
+
 @pytest.mark.parametrize("asynchronous", [False, True])
 def test_missing_attempt_is_not_silently_finished(tmp_path: Path, asynchronous: bool) -> None:
     graph, node_id = _graph(tmp_path / "graph.db", linked=False)
     with pytest.raises(ValueError, match="task attempt missing"):
         if asynchronous:
-            finish_async_exception(
-                graph, _async_request(tmp_path, node_id), RuntimeError("error"), True
-            )
+            _finish_async(graph, _async_request(tmp_path, node_id), RuntimeError("error"), True)
         else:
-            finish_sync_exception(graph, _SyncRequest(node_id, 2), "owner", RuntimeError("error"))
+            _finish_sync(graph, _SyncRequest(node_id, 2), "owner", RuntimeError("error"))
     run = graph.runs.get("owner")
     assert run is not None and run["status"] == "running"
     graph.close()
@@ -63,13 +73,11 @@ def test_lost_owner_rejects_startup_evidence(tmp_path: Path, asynchronous: bool)
     assert graph.replace_run_id(node_id, "owner", "next")
     with pytest.raises(RuntimeError, match="startup evidence fence lost"):
         if asynchronous:
-            finish_async_exception(
+            _finish_async(
                 graph, _async_request(tmp_path, node_id), FileNotFoundError("target"), True
             )
         else:
-            finish_sync_exception(
-                graph, _SyncRequest(node_id, 2), "owner", FileNotFoundError("target")
-            )
+            _finish_sync(graph, _SyncRequest(node_id, 2), "owner", FileNotFoundError("target"))
     assert graph.task_attempts.failed_count(node_id) == 0
     run = graph.runs.get("owner")
     assert run is not None and run["status"] == "running"
@@ -82,13 +90,11 @@ def test_lost_owner_rejects_default_nonfailure(tmp_path: Path, asynchronous: boo
     assert graph.replace_run_id(node_id, "owner", "next")
     with pytest.raises(RuntimeError, match="task outcome fence lost"):
         if asynchronous:
-            finish_async_exception(
+            _finish_async(
                 graph, _async_request(tmp_path, node_id, 1), RuntimeError("wrapper"), True
             )
         else:
-            finish_sync_exception(
-                graph, _SyncRequest(node_id, 1), "owner", RuntimeError("wrapper")
-            )
+            _finish_sync(graph, _SyncRequest(node_id, 1), "owner", RuntimeError("wrapper"))
     node = graph.get_node(node_id)
     assert node is not None and node.status is NodeStatus.RUNNING
     graph.close()
@@ -113,11 +119,9 @@ def test_executed_exception_rejects_lost_owner(tmp_path: Path, asynchronous: boo
     assert graph.replace_run_id(node_id, "owner", "next")
     with pytest.raises(RuntimeError, match="task attempt fence lost"):
         if asynchronous:
-            finish_async_exception(
-                graph, _async_request(tmp_path, node_id), RuntimeError("worker"), True
-            )
+            _finish_async(graph, _async_request(tmp_path, node_id), RuntimeError("worker"), True)
         else:
-            finish_sync_exception(graph, _SyncRequest(node_id, 2), "owner", RuntimeError("worker"))
+            _finish_sync(graph, _SyncRequest(node_id, 2), "owner", RuntimeError("worker"))
     assert graph.task_attempts.failed_count(node_id) == 0
     run = graph.runs.get("owner")
     assert run is not None and run["status"] == "running"

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from milknado.domains.graph._task_attempt_binding import bind_worker_invocation
 from milknado.domains.graph._task_attempt_models import (
     FailureDisposition,
@@ -9,15 +11,17 @@ from milknado.domains.graph._task_attempt_models import (
     StartTaskAttempt,
     TaskAttemptRecord,
 )
+from milknado.domains.graph._task_attempt_outcomes import record_nonfailure, swap_owner
 from milknado.domains.graph._task_attempt_reads import failed_count, get_attempt
 from milknado.domains.graph._task_attempts import (
     AttemptGraphPort,
-    LostAttemptFence,
     bind_invocation,
     finalize_failure,
     record_start_evidence,
     start_attempt,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 class TaskAttemptFacade:
@@ -42,32 +46,14 @@ class TaskAttemptFacade:
         if not new_owner or not invocation_id:
             raise ValueError("review owner and invocation must be nonempty")
         with self._graph.synchronization_lock:
-            conn = self._graph.group_connection
-            try:
-                with conn:
-                    _ = conn.execute("BEGIN IMMEDIATE")
-                    node = conn.execute(
-                        "UPDATE nodes SET run_id = ? WHERE id = "
-                        + "(SELECT node_id FROM task_attempts WHERE attempt_id = ?) "
-                        + "AND status = 'running' AND run_id = ?",
-                        (new_owner, attempt_id, old_owner),
-                    )
-                    if node.rowcount != 1:
-                        raise LostAttemptFence
-                    attempt = conn.execute(
-                        "UPDATE task_attempts SET owner_run_id = ?, active_invocation_id = ?, "
-                        + "start_state = 'unknown' WHERE attempt_id = ? AND owner_run_id = ? "
-                        + "AND outcome = 'active' AND EXISTS (SELECT 1 FROM runs "
-                        + "WHERE runs.run_id = ? AND runs.node_id = task_attempts.node_id "
-                        + "AND runs.attempt_id = task_attempts.attempt_id "
-                        + "AND runs.status = 'running')",
-                        (new_owner, invocation_id, attempt_id, old_owner, invocation_id),
-                    )
-                    if attempt.rowcount != 1:
-                        raise LostAttemptFence
-            except LostAttemptFence:
-                return False
-        return True
+            ids = (attempt_id, old_owner, new_owner, invocation_id)
+            return swap_owner(self._graph.group_connection, ids, review_round=True)
+
+    def adopt_owner(self, attempt_id: str, expected_run_id: str, run_id: str) -> bool:
+        """Swap the provisional node fence and bind the attempt to the new run atomically."""
+        with self._graph.synchronization_lock:
+            ids = (attempt_id, expected_run_id, run_id, run_id)
+            return swap_owner(self._graph.group_connection, ids, review_round=False)
 
     def bind_invocation(self, attempt_id: str, owner_run_id: str, invocation_id: str) -> bool:
         with self._graph.synchronization_lock:
@@ -106,27 +92,25 @@ class TaskAttemptFacade:
             )
 
     def record_nonfailure(self, attempt_id: str, owner_run_id: str, outcome: str) -> bool:
-        if outcome not in {"done", "cancelled", "review_blocked", "preserved", "startup_failed"}:
-            raise ValueError("invalid nonfailure task outcome")
         with self._graph.synchronization_lock:
-            conn = self._graph.group_connection
-            record = get_attempt(conn, attempt_id)
-            if record is None or record.owner_run_id != owner_run_id:
-                return False
-            if record.outcome == outcome:
-                return True
-            if record.outcome != "active":
-                return False
-            cursor = conn.execute(
-                "UPDATE task_attempts SET outcome = ? WHERE attempt_id = ? "
-                + "AND owner_run_id = ? AND outcome = 'active' "
-                + "AND EXISTS (SELECT 1 FROM nodes WHERE nodes.id = task_attempts.node_id "
-                + "AND nodes.run_id = ? "
-                + "AND nodes.status IN ('running', 'done', 'blocked', 'failed'))",
-                (outcome, attempt_id, owner_run_id, owner_run_id),
+            return record_nonfailure(
+                self._graph.group_connection, attempt_id, owner_run_id, outcome
             )
-            conn.commit()
-            return cursor.rowcount == 1
+
+    def require_nonfailure(self, attempt_id: str, owner_run_id: str, outcome: str) -> None:
+        if not self.record_nonfailure(attempt_id, owner_run_id, outcome):
+            raise ValueError(f"task outcome fence lost for attempt {attempt_id}")
 
     def fail(self, request: FinalizeTaskFailure) -> FailureDisposition:
-        return finalize_failure(self._graph, request)
+        disposition = finalize_failure(self._graph, request)
+        if disposition.status in {"unknown_start", "lost_fence"}:
+            _logger.warning(
+                "task failure not recorded as attempt: node_id=%d run_id=%s attempt_id=%s "
+                + "status=%s reason=%s",
+                request.node_id,
+                request.run_id,
+                request.attempt_id,
+                disposition.status,
+                disposition.reason,
+            )
+        return disposition

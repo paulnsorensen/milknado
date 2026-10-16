@@ -68,7 +68,7 @@ def test_node_reconcile_rejects_cancellation_it_cannot_record(tmp_path: Path) ->
     graph.runs.finish("owner", RunResult("failed", -1, False, _NOW, error="cancelled"))
     _settle_and_reclaim(graph, node_id)
 
-    with pytest.raises(RuntimeError, match="cancelled task attempt fence lost"):
+    with pytest.raises(RuntimeError, match="task outcome fence lost"):
         reconcile_node_status(graph, node_id, "failed", run_id="owner")
     node = graph.get_node(node_id)
     assert node is not None and node.run_id == "successor"
@@ -91,7 +91,7 @@ def test_node_reconcile_fails_node_after_startup_failure(tmp_path: Path) -> None
 def _settle_and_reclaim(graph: MikadoGraph, node_id: int) -> None:
     assert graph.task_attempts.confirm_execution("attempt", "owner", "owner")
     _ = graph.task_attempts.fail(
-        FinalizeTaskFailure(node_id, "attempt", "owner", "owner", 3, _FAILED)
+        FinalizeTaskFailure(node_id, "attempt", "owner", "owner", _FAILED)
     )
     assert graph.claim_node(node_id, "successor", now=_NOW)
 

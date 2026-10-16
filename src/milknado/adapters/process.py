@@ -11,20 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
-import psutil
-
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.domains.common import (
-    WorkerIdentity,
-    WorkerOwner,
-    default_config,
-    load_config,
-    pid_alive,
-)
+from milknado.adapters._protection import protection_from_env
+from milknado.domains.common import WorkerIdentity, identity_state, pid_alive
 from milknado.domains.dispatch import Descendant, ProcessOutcome, WorkerCleanupResult
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, StartEvidence
-from milknado.loop._process_identity import identity_state, observe_descendants
+from milknado.loop._process_identity import observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 from milknado.loop._process_lifecycle import spawn_protected
 
@@ -97,17 +89,9 @@ class ProcessAdapter:
                         args=(proc.stdin, stdin),
                         daemon=True,
                     ).start()
-                deadline = time.monotonic() + timeout
-                while proc.poll() is None:
-                    if cancel_requested():
-                        self._terminate(proc)
-                        cancelled = True
-                        break
-                    if time.monotonic() >= deadline:
-                        self._terminate(proc)
-                        timed_out = True
-                        break
-                    time.sleep(self._poll_interval)
+                timed_out, cancelled = self._wait(proc, timeout, cancel_requested)
+                if timed_out or cancelled:
+                    self._terminate(proc)
         return ProcessOutcome(
             exit_code=proc.returncode if proc.returncode is not None else -1,
             timed_out=timed_out,
@@ -116,18 +100,7 @@ class ProcessAdapter:
 
     @staticmethod
     def _protection_context(launch: _InlineLaunch) -> ProtectionContext:
-        root = Path(launch.env["MILKNADO_PROJECT_ROOT"])
-        config_path = root / "milknado.toml"
-        config = load_config(config_path) if config_path.exists() else default_config(root)
-        supervisor = psutil.Process()
-        owner = WorkerOwner(
-            launch.run_id,
-            supervisor.pid,
-            supervisor.create_time(),
-            launch.run_id,
-            int(launch.env["MILKNADO_NODE_ID"]),
-        )
-        return ProtectionContext(LoopWorkerEvidence(config.db_path), owner, config.db_path)
+        return protection_from_env(launch.env, launch.run_id)
 
     def _run_protected(self, launch: _InlineLaunch) -> ProcessOutcome:
         context = self._protection_context(launch)
@@ -180,9 +153,18 @@ class ProcessAdapter:
             threading.Thread(
                 target=self._write_stdin, args=(proc.stdin, launch.stdin), daemon=True
             ).start()
-        deadline = time.monotonic() + launch.timeout
+        return self._wait(proc, launch.timeout, launch.cancel_requested)
+
+    def _wait(
+        self,
+        proc: subprocess.Popen[bytes],
+        timeout: float,
+        cancel_requested: Callable[[], bool],
+    ) -> tuple[bool, bool]:
+        """Poll until exit, cancel, or deadline; return (timed_out, cancelled)."""
+        deadline = time.monotonic() + timeout
         while proc.poll() is None:
-            if launch.cancel_requested():
+            if cancel_requested():
                 return False, True
             if time.monotonic() >= deadline:
                 return True, False

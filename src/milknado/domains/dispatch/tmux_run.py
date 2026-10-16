@@ -12,16 +12,16 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import stat
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import msgspec
-import psutil
 
-from milknado.domains.common import pid_alive
+from milknado.domains.common import group_state, identity_state, pid_alive
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     is_cancel_requested,
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
+_RECEIPT_LIMIT_BYTES = 4096
 
 _PANE_POLL_SECS = 0.5
 _PANE_KILL_GRACE_SECS = 5.0
@@ -61,13 +62,7 @@ def ensure_tmux_ready(tmux: TmuxPort) -> None:
 
 
 def _group_alive(pgid: int) -> bool:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return group_state(pgid) != "gone"
 
 
 def _terminate_pane(pane_pid: int) -> None:
@@ -99,23 +94,41 @@ def read_exit_code(path: Path) -> int:
 
 
 def _live_target(pid: int, start_token: float) -> bool:
-    try:
-        process = psutil.Process(pid)
-        return (
-            process.create_time() == start_token
-            and process.status() not in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
-            and process.is_running()
-        )
-    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-        return False
+    return identity_state(pid, start_token) == "live"
 
 
-def read_exec_evidence(path: Path, nonce: str) -> str | None:
+def _read_receipt_bytes(path: Path) -> bytes | None:
+    """Read a bounded receipt without following symlinks or blocking on special files."""
     try:
-        if path.stat().st_size > 4096:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        _logger.warning("exec receipt %s rejected: %s", path, exc)
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            _logger.warning("exec receipt %s rejected: not a regular file", path)
             return None
-        receipt = cast(Receipt, msgspec.json.decode(path.read_bytes(), type=Receipt))
-    except (OSError, msgspec.DecodeError):
+        data = os.read(descriptor, _RECEIPT_LIMIT_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(data) > _RECEIPT_LIMIT_BYTES:
+        _logger.warning(
+            "exec receipt %s rejected: larger than %d bytes", path, _RECEIPT_LIMIT_BYTES
+        )
+        return None
+    return data
+
+
+def read_exec_evidence(path: Path, nonce: str) -> Literal["executed", "startup_failed"] | None:
+    data = _read_receipt_bytes(path)
+    if data is None:
+        return None
+    try:
+        receipt = cast(Receipt, msgspec.json.decode(data, type=Receipt))
+    except msgspec.DecodeError as exc:
+        _logger.warning("exec receipt %s rejected: %s", path, exc)
         return None
     if receipt.nonce != nonce:
         return None

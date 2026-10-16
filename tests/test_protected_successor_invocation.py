@@ -89,7 +89,7 @@ def test_successor_waits_for_durable_predecessor_cleanup(tmp_path: Path) -> None
         context.evidence.end_worker(second.identity.invocation_id, 0)
     result = RunResult("failed", 1, False, _NOW, error="worker failed")
     disposition = graph.task_attempts.fail(
-        FinalizeTaskFailure(node_id, "attempt", "owner", "source", 3, result)
+        FinalizeTaskFailure(node_id, "attempt", "owner", "source", result)
     )
     assert disposition.status is NodeStatus.PENDING
     assert disposition.failed_count == 1

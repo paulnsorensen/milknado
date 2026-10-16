@@ -47,7 +47,7 @@ def test_counted_failure_is_refused_while_a_worker_is_open(tmp_path: Path) -> No
     assert graph.task_attempts.confirm_execution("attempt", "owner", "owner")
     _open_worker(graph, node_id)
 
-    request = FinalizeTaskFailure(node_id, "attempt", "owner", "owner", 3, _FAILED)
+    request = FinalizeTaskFailure(node_id, "attempt", "owner", "owner", _FAILED)
     disposition = graph.task_attempts.fail(request)
 
     assert disposition.status == "lost_fence"
@@ -60,7 +60,7 @@ def test_startup_failure_is_refused_while_a_worker_is_open(tmp_path: Path) -> No
     assert graph.task_attempts.record_startup_failure("attempt", "owner", "owner")
     _open_worker(graph, node_id)
 
-    request = FinalizeTaskFailure(node_id, "attempt", "owner", "owner", 3, _FAILED)
+    request = FinalizeTaskFailure(node_id, "attempt", "owner", "owner", _FAILED)
     disposition = graph.task_attempts.fail(request)
 
     assert disposition.status == "lost_fence"
@@ -84,7 +84,7 @@ def test_group_failure_is_refused_when_its_task_already_has_a_result(tmp_path: P
         raw.commit()
 
     request = FinalizeTaskFailure(
-        node.id, "attempt", owner, owner, 1, _FAILED, group_id=group.id, group_result="failed"
+        node.id, "attempt", owner, owner, _FAILED, group_id=group.id, group_result="failed"
     )
     disposition = graph.task_attempts.fail(request)
 

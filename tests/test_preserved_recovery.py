@@ -8,6 +8,7 @@ import pytest
 
 from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import NodeStatus, RunResult
+from milknado.domains.dispatch import reconcile
 from milknado.domains.dispatch.reconcile import reconcile_orphaned_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
@@ -56,4 +57,35 @@ def test_recovery_does_not_report_unreconciled_run(tmp_path: Path) -> None:
     assert reconcile_orphaned_runs(graph, ProcessAdapter()) == []
     node = graph.get_node(1)
     assert node is not None and node.status is NodeStatus.FAILED
+    graph.close()
+
+
+def test_one_failing_node_does_not_abort_the_recovery_sweep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "g.db")
+    for name, run_id in (("broken", "r1"), ("healthy", "r2")):
+        node = graph.add_node(name)
+        assert graph.claim_node(node.id, run_id, now=_NOW, pid=_DEAD_PID)
+        _ = graph.task_attempts.start(StartTaskAttempt(node.id, run_id, run_id, run_id, 1))
+        graph.runs.start(run_id, node.id, "l", _NOW, 60, attempt_id=run_id)
+        graph.runs.finish(run_id, RunResult("failed", 0, False, _NOW, rebased=False))
+    settle = reconcile.reconcile_node_status
+
+    def settle_unless_broken(
+        graph: MikadoGraph, node_id: int, status: str, *, run_id: str
+    ) -> None:
+        if node_id == 1:
+            raise RuntimeError("injected settle failure")
+        settle(graph, node_id, status, run_id=run_id)
+
+    monkeypatch.setattr(reconcile, "reconcile_node_status", settle_unless_broken)
+
+    reconciled = reconcile_orphaned_runs(graph, ProcessAdapter())
+
+    assert [run["run_id"] for run in reconciled] == ["r2"]
+    broken = graph.get_node(1)
+    assert broken is not None and broken.status is NodeStatus.RUNNING
+    healthy = graph.get_node(2)
+    assert healthy is not None and healthy.status is NodeStatus.FAILED
     graph.close()

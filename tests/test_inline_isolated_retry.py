@@ -59,6 +59,12 @@ def test_isolated_retry_uses_unoccupied_worktree_and_keeps_failed_work(
 
     first = _run_attempt(root, node_id, worker_cmd, asynchronous)
     assert first["exit_code"] == 1
+    graph, _ = open_graph(root)
+    try:
+        after_first = graph.get_node(node_id)
+        assert after_first is not None and after_first.status is NodeStatus.PENDING
+    finally:
+        graph.close()
     first_worktree = next(root.glob("milknado-*-retry"))
     assert (first_worktree / "unlanded.txt").read_text().strip() == "wip"
 
@@ -69,6 +75,7 @@ def test_isolated_retry_uses_unoccupied_worktree_and_keeps_failed_work(
     assert not (first_worktree / "second.txt").exists()
     retry_worktrees = [path for path in root.glob("milknado-*") if path != first_worktree]
     assert len(retry_worktrees) == 1
+    assert retry_worktrees[0].name.endswith("-retry2")
     assert (retry_worktrees[0] / "second.txt").read_text().strip() == "second"
     graph, _ = open_graph(root)
     try:

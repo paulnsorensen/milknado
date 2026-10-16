@@ -27,9 +27,7 @@ class _Recorder:
 
 def _failure(node_id: int, group_id: str | None) -> FinalizeTaskFailure:
     result = RunResult(status="failed", exit_code=1, timed_out=False, ended_at=_NOW, error="boom")
-    return FinalizeTaskFailure(
-        node_id, "attempt-1", "run-1", "run-1", 3, result, group_id=group_id
-    )
+    return FinalizeTaskFailure(node_id, "attempt-1", "run-1", "run-1", result, group_id=group_id)
 
 
 def _running_attempt(graph: MikadoGraph, recorder: _Recorder) -> int:

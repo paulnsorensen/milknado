@@ -192,12 +192,21 @@ class CoordinatorWorkflow:  # noqa: V102
         )
         return DispatchHandoff(handoff.attempt, self._owned_attempt(session, handoff.attempt))
 
+    def _record_startup_failure(self, attempt_id: str) -> None:
+        record = self._graph.task_attempts.get(attempt_id)
+        if record is None:  # acknowledge_launch has not created the attempt row: no evidence yet
+            return
+        _ = self._graph.task_attempts.record_startup_failure(
+            attempt_id, record.owner_run_id, record.active_invocation_id
+        )
+
     def fail_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str
     ) -> None:
         state = self._owned_attempt(session, handoff.attempt)
         if state not in {"awaiting_launch", "launch_failed"} or not reason:
             raise ValueError("dispatch cannot record launch failure")
+        self._record_startup_failure(handoff.attempt.attempt_id)
         result = self._graph.groups.task_result(handoff.attempt.node_id)
         if result is None:
             self._graph.groups.fail_reserved_task(handoff.attempt, reason)

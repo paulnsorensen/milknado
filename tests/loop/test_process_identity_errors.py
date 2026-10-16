@@ -7,9 +7,8 @@ import time
 import psutil
 import pytest
 
-from milknado.domains.common import WorkerIdentity
+from milknado.domains.common import WorkerIdentity, identity_state
 from milknado.loop._process_identity import (
-    identity_state,
     observe_descendants,
     terminate_verified_result,
 )

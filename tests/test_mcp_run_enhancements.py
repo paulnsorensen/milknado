@@ -1873,12 +1873,16 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
+    from milknado.domains.graph import StartTaskAttempt
 
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
         node = graph.add_node("fenced task")
         graph.claim_node_for_dispatch(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
-        graph.runs.start("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+        _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+        graph.runs.start(
+            "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
+        )
         graph.runs.finish(
             "run-1",
             RunResult(
@@ -1889,14 +1893,15 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
             ),
         )
 
-        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
-            graph,
-            node.id,
-            "run-1",
-            SimpleNamespace(exit_code=1, timed_out=False),
-            "failed",
-            None,
-        )
+        with pytest.raises(RuntimeError, match="task attempt fence lost"):
+            lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+                graph,
+                node.id,
+                "run-1",
+                SimpleNamespace(exit_code=1, timed_out=False),
+                "failed",
+                None,
+            )
 
         final = graph.get_node(node.id)
         assert final is not None
@@ -1915,11 +1920,15 @@ def test_finish_dispatch_allows_deleted_node_after_lost_node_fence(
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
+    from milknado.domains.graph import StartTaskAttempt
 
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("task")
     assert graph.claim_node(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
-    graph.runs.start("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+    graph.runs.start(
+        "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
+    )
     mark_terminal = graph.mark_terminal
 
     def delete_before_mark(
@@ -1944,7 +1953,6 @@ def test_sync_dispatch_rejects_lost_terminal_fence(
 ) -> None:
     from milknado.domains.dispatch import lifecycle
     from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
-    from milknado.domains.graph import RunFenceLostError
 
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("task")
@@ -1967,10 +1975,12 @@ def test_sync_dispatch_rejects_lost_terminal_fence(
         process=cast(ProcessPort, object()),
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
-    with pytest.raises(RunFenceLostError, match="running-row fence"):
+    with pytest.raises(RuntimeError, match="worker failed"):
         _ = lifecycle.dispatch_node_sync(graph, _branch_git(), request)
     row = graph.runs.for_node(node.id)[0]
     assert row["status"] == "done"
+    failed = graph.get_node(node.id)
+    assert failed is not None and failed.status is NodeStatus.FAILED
     graph.close()
 
 
@@ -2113,13 +2123,17 @@ def test_finish_dispatch_rejects_lost_node_fence_when_node_remains(tmp_path: Pat
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
+    from milknado.domains.graph import StartTaskAttempt
 
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("task")
     assert graph.claim_node(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
-    graph.runs.start("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+    graph.runs.start(
+        "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
+    )
     assert graph.replace_run_id(node.id, "run-1", "next")
-    with pytest.raises(RuntimeError, match="terminal node write lost its fence"):
+    with pytest.raises(RuntimeError, match="terminal node fence lost"):
         lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
             graph,
             node.id,

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from typing import Protocol, cast
 
 from milknado.domains.common import NodeStatus
+from milknado.domains.graph._group_models import TaskAttempt
+from milknado.domains.graph._group_reservation import record_group_task, release_group_slot
 from milknado.domains.graph._run_persistence import finish_run
 from milknado.domains.graph._sqlite_rows import fetchone
 from milknado.domains.graph._task_attempt_models import (
@@ -144,22 +147,13 @@ def _group_failure(
 ) -> None:
     if request.group_id is None:
         return
-    cursor = conn.execute(
-        "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
-        + "active_attempt_id = NULL, active_node_status = NULL, active_node_run_id = NULL "
-        + "WHERE id = ? AND active_attempt_id = ? AND active_node_id = ?",
-        (request.group_id, request.attempt_id, request.node_id),
-    )
-    if cursor.rowcount != 1:
+    attempt = TaskAttempt(request.group_id, request.node_id, request.run_id, request.attempt_id)
+    if release_group_slot(conn, attempt) != 1:
         raise LostAttemptFence
-    if status is not NodeStatus.PENDING:
-        cursor = conn.execute(
-            "UPDATE execution_group_tasks SET status = ?, result = ? "
-            + "WHERE group_id = ? AND node_id = ? AND status IS NULL",
-            (status.value, request.group_result, request.group_id, request.node_id),
-        )
-        if cursor.rowcount != 1:
-            raise LostAttemptFence
+    if status is not NodeStatus.PENDING and (
+        record_group_task(conn, attempt, status.value, request.group_result) != 1
+    ):
+        raise LostAttemptFence
 
 
 def _failure_record(
@@ -168,8 +162,6 @@ def _failure_record(
     record = get_attempt(conn, request.attempt_id)
     if record is None or record.node_id != request.node_id:
         raise ValueError("task attempt does not belong to node")
-    if record.max_node_attempts != request.max_node_attempts:
-        raise ValueError("task attempt budget differs from persisted limit")
     if record.outcome == "failed":
         assert record.disposition is not None and record.failed_count is not None
         return record, FailureDisposition(
@@ -186,7 +178,7 @@ def _failure_record(
     if fetchone(conn, query, (node_id, request.owner_run_id)) is None:
         reason = "task attempt owner fence lost"
         return record, FailureDisposition("lost_fence", failed_count(conn, node_id), reason)
-    if request.max_node_attempts > 1 and record.start_state not in {"executed", "startup_failed"}:
+    if record.max_node_attempts > 1 and record.start_state not in {"executed", "startup_failed"}:
         reason = "task execution start is not confirmed"
         return record, FailureDisposition("unknown_start", failed_count(conn, node_id), reason)
     return record, None
@@ -214,16 +206,18 @@ def _finish_startup_failure(
 
 def _finish_counted_failure(
     graph: AttemptGraphPort,
-    conn: sqlite3.Connection,
     request: FinalizeTaskFailure,
+    record: TaskAttemptRecord,
     run_status: str,
 ) -> FailureDisposition:
+    conn = graph.group_connection
+    budget = record.max_node_attempts
     count = failed_count(conn, request.node_id) + 1
     status = (
         NodeStatus.FAILED
-        if request.max_node_attempts == 1
+        if budget == 1
         else NodeStatus.PENDING
-        if count < request.max_node_attempts
+        if count < budget
         else NodeStatus.BLOCKED
     )
     landed = (
@@ -235,11 +229,11 @@ def _finish_counted_failure(
     )
     if not landed:
         raise LostAttemptFence
-    if run_status == "running":
-        finish_run(conn, request.run_id, request.result)
-    reason = f"attempt {count}/{request.max_node_attempts}: " + (
+    reason = f"attempt {count}/{budget}: " + (
         request.result.error or request.result.detail or "node failed"
     )
+    if run_status == "running":
+        finish_run(conn, request.run_id, replace(request.result, error=reason))
     _group_failure(conn, request, status)
     _ = conn.execute(
         "UPDATE task_attempts SET outcome = 'failed', disposition = ?, "
@@ -266,12 +260,10 @@ def _finish_failure(
     run_status = cast(str, run[0])
     if record.start_state == "startup_failed":
         return _finish_startup_failure(graph, conn, request, run_status)
-    return _finish_counted_failure(graph, conn, request, run_status)
+    return _finish_counted_failure(graph, request, record, run_status)
 
 
 def finalize_failure(graph: AttemptGraphPort, request: FinalizeTaskFailure) -> FailureDisposition:
-    if type(request.max_node_attempts) is not int or request.max_node_attempts < 1:
-        raise ValueError("max_node_attempts must be positive")
     with graph.synchronization_lock:
         conn = graph.group_connection
         try:
@@ -282,3 +274,11 @@ def finalize_failure(graph: AttemptGraphPort, request: FinalizeTaskFailure) -> F
             return FailureDisposition(
                 "lost_fence", failed_count(conn, request.node_id), "task attempt owner fence lost"
             )
+
+
+def reset_failed_attempts(conn: sqlite3.Connection, node_id: int) -> None:
+    """Stop counting a node's earlier failed attempts after an operator reopen."""
+    _ = conn.execute(
+        "UPDATE task_attempts SET outcome = 'reset' WHERE node_id = ? AND outcome = 'failed'",
+        (node_id,),
+    )

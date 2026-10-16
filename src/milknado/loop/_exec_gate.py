@@ -27,6 +27,8 @@ def main() -> int:
         with suppress(OSError):
             _ = os.write(status_fd, b"F")
         return 72
+    # This is the child between fork and exec: any failure must report X on the
+    # status pipe and exit, never unwind into the parent's stack.
     except BaseException as exc:  # noqa: BLE001
         with suppress(OSError):
             _ = os.write(status_fd, b"X")

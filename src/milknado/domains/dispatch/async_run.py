@@ -7,13 +7,20 @@ import threading
 from contextlib import suppress
 from pathlib import Path
 
-from milknado.domains.common import GitPort, NodeStatus, RunFenceLostError, RunResult
-from milknado.domains.dispatch._async_execution import finish_async_exception, run_worker_process
+from milknado.domains.common import GitPort, RunFenceLostError, RunResult
+from milknado.domains.dispatch._async_execution import run_worker_process
 from milknado.domains.dispatch._async_types import (
     AsyncRunRequest as AsyncRunRequest,
 )
 from milknado.domains.dispatch._async_types import (
     AsyncWorkerContext as AsyncWorkerContext,
+)
+from milknado.domains.dispatch._attempt_completion import (
+    AttemptRef,
+    settle_cancelled,
+    settle_counted_failure,
+    settle_nonfailure,
+    settle_preserved,
 )
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
@@ -39,6 +46,7 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch._runstate import (
     tail as _tail,
 )
+from milknado.domains.dispatch._sync_completion import finish_attempt_exception
 from milknado.domains.dispatch.isolate import merge_back_if_done
 from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, TmuxPort
 from milknado.domains.dispatch.runner import AsyncStartRef, resolve_worker_cmd
@@ -63,15 +71,11 @@ def _async_worker(context: AsyncWorkerContext) -> None:
         # The worker owns the terminal write for a cancelled run: run_cancel only
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
+        ref = AttemptRef(request.node_id, run_id, run_id, run_id)
         if cancelled:
-            if not graph.task_attempts.record_nonfailure(run_id, run_id, "cancelled"):
-                raise RuntimeError(f"cancelled task attempt fence lost for run {run_id}")
-            graph.runs.finish(
-                run_id,
-                RunResult("failed", -1, timed_out, _now_iso(), error="cancelled"),
+            settle_cancelled(
+                graph, ref, RunResult("failed", -1, timed_out, _now_iso(), error="cancelled")
             )
-            if not graph.mark_terminal(request.node_id, run_id, NodeStatus.FAILED):
-                raise RuntimeError(f"cancelled node fence lost for run {run_id}")
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
             merge = merge_back_if_done(context.git, project_root, request.merge_ctx, terminal)
@@ -93,29 +97,14 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             )
             preserved = merge is not None and not merge.rebased and exit_code == 0
             if terminal == "failed" and not preserved:
-                disposition = graph.task_attempts.fail(
-                    FinalizeTaskFailure(
-                        request.node_id,
-                        run_id,
-                        run_id,
-                        run_id,
-                        request.max_node_attempts,
-                        result,
-                    )
-                )
-                if disposition.status == "lost_fence":
-                    raise RuntimeError(f"task attempt fence lost for run {run_id}")
+                failure = FinalizeTaskFailure(request.node_id, run_id, run_id, run_id, result)
+                _ = settle_counted_failure(graph, failure)
             else:
                 graph.runs.finish(run_id, result)
                 if preserved:
-                    if not graph.task_attempts.record_nonfailure(run_id, run_id, "preserved"):
-                        raise RuntimeError(f"task outcome fence lost for run {run_id}")
-                    if not graph.mark_terminal(
-                        request.node_id, run_id, NodeStatus.FAILED, preserve_recovery=True
-                    ):
-                        raise RuntimeError(f"terminal node write lost its fence for run {run_id}")
-                elif not graph.task_attempts.record_nonfailure(run_id, run_id, "done"):
-                    raise RuntimeError(f"task outcome fence lost for run {run_id}")
+                    settle_preserved(graph, ref)
+                else:
+                    settle_nonfailure(graph, ref, "done")
             _logger.info(
                 (
                     "async dispatch terminal: run_id=%s node_id=%d status=%s "
@@ -150,7 +139,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             pass
         if graph is not None:
             try:
-                finish_async_exception(graph, request, exc, context.tmux is None)
+                finish_attempt_exception(graph, request, (run_id, context.tmux is None), exc)
             except RunFenceLostError:
                 _logger.info("async worker failure run already finalized: run_id=%s", run_id)
             except Exception as persist_exc:
@@ -179,6 +168,27 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 staged.unlink()
 
 
+def _bind_attempt(graph: MikadoGraph, request: AsyncRunRequest, log_path: Path) -> None:
+    """Record the task attempt and its run row before the worker thread starts."""
+    _ = graph.task_attempts.start(
+        StartTaskAttempt(
+            request.node_id,
+            request.run_id,
+            request.run_id,
+            request.run_id,
+            request.max_node_attempts,
+        )
+    )
+    graph.runs.start(
+        request.run_id,
+        request.node_id,
+        str(log_path),
+        _now_iso(),
+        request.timeout_seconds,
+        attempt_id=request.run_id,
+    )
+
+
 def start_headless_async(
     request: AsyncRunRequest,
     graph_sessions: GraphSessionPort,
@@ -193,23 +203,7 @@ def start_headless_async(
         runs = _runs_dir(request.project_root)
         log_path = runs / f"{request.run_id}.log"
         log_path.touch()
-        _ = graph.task_attempts.start(
-            StartTaskAttempt(
-                request.node_id,
-                request.run_id,
-                request.run_id,
-                request.run_id,
-                request.max_node_attempts,
-            )
-        )
-        graph.runs.start(
-            request.run_id,
-            request.node_id,
-            str(log_path),
-            _now_iso(),
-            request.timeout_seconds,
-            attempt_id=request.run_id,
-        )
+        _bind_attempt(graph, request, log_path)
     finally:
         graph.close()
     context = AsyncWorkerContext(

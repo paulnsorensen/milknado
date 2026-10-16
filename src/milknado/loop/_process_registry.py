@@ -18,6 +18,7 @@ class LaunchTicket:
         self.graph_run_id = graph_run_id
         self._gate_close: Callable[[], None] | None = None
         self._shutdown: Callable[[float], bool] | None = None
+        self._stop_requested = False
 
     @property
     def cancelled(self) -> bool:
@@ -35,16 +36,24 @@ class LaunchTicket:
     def activate(
         self, release_gate: Callable[[], None], shutdown: Callable[[float], bool]
     ) -> bool:
+        # The gate release waits on exec observation and DB commits, so it runs
+        # outside the registry lock. A stop that lands meanwhile still takes the
+        # close-gate path; the re-check then aborts the start.
         with self._registry.lock:
             if self._registry.requested():
                 return False
+        release_gate()
+        with self._registry.lock:
+            if self._stop_requested or self._registry.requested():
+                return False
             self._shutdown = shutdown
-            release_gate()
             return True
 
     def stop(self, deadline: float) -> bool:
         with self._registry.lock:
             close_gate, shutdown = self._gate_close, self._shutdown
+            if shutdown is None:
+                self._stop_requested = True
         if shutdown is not None:
             return shutdown(deadline)
         if close_gate is not None:

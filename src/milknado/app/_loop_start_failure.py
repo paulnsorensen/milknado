@@ -42,17 +42,22 @@ def record_start_failure(graph: MikadoGraph, failure: LoopStartupFailure) -> Non
         except Exception as error:
             persistence_error = error
             _logger.exception("start failure run terminal write failed: run_id=%s", failure.run_id)
-    if graph.task_attempts.get(
-        failure.attempt_id
-    ) is not None and not graph.task_attempts.record_nonfailure(
-        failure.attempt_id, failure.run_id, "startup_failed"
-    ):
-        raise RuntimeError("start failure task outcome write failed")
+    outcome_error: Exception | None = None
+    try:
+        if graph.task_attempts.get(failure.attempt_id) is not None:
+            graph.task_attempts.require_nonfailure(
+                failure.attempt_id, failure.run_id, "startup_failed"
+            )
+    except Exception as error:
+        outcome_error = error
+        _logger.exception("start failure task outcome write failed: run_id=%s", failure.run_id)
     try:
         node_written = graph.mark_terminal(failure.node_id, failure.run_id, NodeStatus.FAILED)
     except Exception as error:
         persistence_error = persistence_error or error
         _logger.exception("start failure node terminal write failed: node_id=%d", failure.node_id)
+    if outcome_error is not None:
+        raise outcome_error
     if persistence_error is not None or node_written is False:
         detail = (
             "start failure persistence failed: terminal writes incomplete: "
