@@ -18,6 +18,10 @@ from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdenti
 from milknado.domains.graph._persistence import SCHEMA_VERSION, create_tables, migrate
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
+# Matches the graph connection's busy_timeout. A loaded host can hold one commit
+# (WAL fsync) for more than a second; a shorter wait aborts healthy workers.
+_WRITER_WAIT = 5.0
+
 
 @dataclass(frozen=True, slots=True)
 class NodeWorkers:
@@ -124,11 +128,11 @@ class WorkerEvidenceStore:
     def __init__(self, db_path: Path, *, deadline: float | None = None) -> None:
         if not db_path.is_file():
             raise FileNotFoundError(db_path)
-        remaining = 1 if deadline is None else deadline - time.monotonic()
+        remaining = _WRITER_WAIT if deadline is None else deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("worker evidence deadline expired")
         uri = f"{db_path.resolve().as_uri()}?mode=rw"
-        conn = sqlite3.connect(uri, uri=True, timeout=min(1, remaining))
+        conn = sqlite3.connect(uri, uri=True, timeout=min(_WRITER_WAIT, remaining))
         self._conn: sqlite3.Connection = conn
         self._db_path: Path = db_path
         self._deadline: float | None = deadline
@@ -171,7 +175,7 @@ class WorkerEvidenceStore:
         remaining_ms = int((self._deadline - time.monotonic()) * 1000)
         if remaining_ms <= 0:
             raise TimeoutError("worker evidence deadline expired")
-        _ = self._conn.execute(f"PRAGMA busy_timeout={min(1000, remaining_ms)}")
+        _ = self._conn.execute(f"PRAGMA busy_timeout={remaining_ms}")
 
     def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
         self._limit_wait()
