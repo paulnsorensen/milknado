@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 from milknado.domains.graph._reads import get_node
 from milknado.domains.graph._run_persistence import get_run
@@ -43,29 +42,3 @@ def begin_release(graph: AttemptGraphPort, run_id: str, invocation_id: str) -> R
         if not bind_worker_invocation(conn, (attempt_id, node.run_id, run_id, invocation_id)):
             raise RuntimeError("task attempt invocation fence lost before worker release")
         return ReleaseFence(attempt_id, node.run_id, invocation_id, attempt.max_node_attempts > 1)
-
-
-class _StartEvidenceWriter(Protocol):
-    def record_release(self, attempt_id: str, owner_run_id: str, invocation_id: str) -> bool: ...
-    def confirm_execution(
-        self, attempt_id: str, owner_run_id: str, invocation_id: str
-    ) -> bool: ...
-    def record_startup_failure(
-        self, attempt_id: str, owner_run_id: str, invocation_id: str
-    ) -> bool: ...
-
-
-def finish_release(
-    attempts: _StartEvidenceWriter, fence: ReleaseFence, start_evidence: str
-) -> None:
-    """Record the release and any confirmed start evidence under the attempt fence."""
-    if fence.budgeted and not attempts.record_release(*fence.ids):
-        raise RuntimeError("task attempt owner fence lost after worker release")
-    if start_evidence == "executed":
-        recorded = attempts.confirm_execution(*fence.ids)
-    elif start_evidence == "startup_failed":
-        recorded = attempts.record_startup_failure(*fence.ids)
-    else:
-        return
-    if not recorded:
-        raise RuntimeError("task attempt start evidence fence lost")

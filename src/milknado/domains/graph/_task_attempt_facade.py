@@ -17,11 +17,7 @@ from milknado.domains.graph._task_attempt_outcomes import (
     swap_owner,
 )
 from milknado.domains.graph._task_attempt_reads import failed_count, get_attempt
-from milknado.domains.graph._task_attempt_release import (
-    ReleaseFence,
-    begin_release,
-    finish_release,
-)
+from milknado.domains.graph._task_attempt_release import ReleaseFence, begin_release
 from milknado.domains.graph._task_attempts import (
     AttemptGraphPort,
     bind_invocation,
@@ -78,7 +74,17 @@ class TaskAttemptFacade:
         return begin_release(self._graph, run_id, invocation_id)
 
     def finish_release(self, fence: ReleaseFence, start_evidence: str) -> None:
-        finish_release(self, fence, start_evidence)
+        """Record the release and any confirmed start evidence under the attempt fence."""
+        if fence.budgeted and not self.record_release(*fence.ids):
+            raise RuntimeError("task attempt owner fence lost after worker release")
+        if start_evidence == "executed":
+            recorded = self.confirm_execution(*fence.ids)
+        elif start_evidence == "startup_failed":
+            recorded = self.record_startup_failure(*fence.ids)
+        else:
+            return
+        if not recorded:
+            raise RuntimeError("task attempt start evidence fence lost")
 
     def confirm_execution(self, attempt_id: str, owner_run_id: str, invocation_id: str) -> bool:
         with self._graph.synchronization_lock:

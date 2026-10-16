@@ -13,7 +13,6 @@ import pytest
 import milknado.adapters._loop_worker_release as release_module
 import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
@@ -30,7 +29,7 @@ def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> Prot
         owner,
         graph.db_path,
         registry,
-        release=LoopWorkerRelease(graph.db_path),
+        release=release_module.LoopWorkerRelease(graph.db_path),
     )
 
 

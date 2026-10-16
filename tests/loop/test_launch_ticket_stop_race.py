@@ -13,9 +13,11 @@ def test_stop_before_activate_never_releases_the_gate() -> None:
     ticket = registry.reserve()
     released: list[bool] = []
 
-    assert not ticket.stop(time.monotonic() + 1)
+    stopped = ticket.stop(time.monotonic() + 1)
+    activated = ticket.activate(lambda: released.append(True), lambda _: True)
 
-    assert not ticket.activate(lambda: released.append(True), lambda _: True)
+    assert not stopped
+    assert not activated
     assert released == [], "a stop requested before release must not let the worker exec"
     ticket.close()
 
@@ -25,9 +27,11 @@ def test_stop_before_bind_pending_closes_the_gate_and_refuses() -> None:
     ticket = registry.reserve()
     closed: list[bool] = []
 
-    assert not ticket.stop(time.monotonic() + 1)
+    stopped = ticket.stop(time.monotonic() + 1)
+    bound = ticket.bind_pending(lambda: closed.append(True))
 
-    assert not ticket.bind_pending(lambda: closed.append(True))
+    assert not stopped
+    assert not bound
     assert closed == [True]
     ticket.close()
 

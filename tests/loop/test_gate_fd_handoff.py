@@ -78,7 +78,7 @@ def test_concurrent_close_and_release_close_each_fd_once(
     def release() -> None:
         try:
             worker.release()
-        except BaseException as exc:
+        except Exception as exc:
             errors.append(exc)
 
     releaser = threading.Thread(target=release, name="releaser")
@@ -115,5 +115,5 @@ def test_gate_child_runs_isolated_from_cwd_imports(tmp_path: Path) -> None:
         _ = worker.process.wait(timeout=10)
     finally:
         worker.close_gate()
-    command = tuple(cast("Sequence[str]", popen.call_args_list[0].args[0]))
+    command = tuple(cast(Sequence[str], popen.call_args_list[0].args[0]))
     assert command[:3] == (sys.executable, "-P", "-m")
