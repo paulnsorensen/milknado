@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.loop._process_identity import Descendant
 from milknado.loop._process_registry import WorkerRegistry
+
+if TYPE_CHECKING:
+    from milknado.loop._process_gate import WorkerProcess
 
 
 class WorkerHandle(Protocol):
@@ -63,9 +66,14 @@ class WorkerEvidence(Protocol):
     ) -> None: ...
 
 
+class WorkerRelease(Protocol):
+    def release_worker(self, worker: WorkerProcess, owner: WorkerOwner) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ProtectionContext:
     evidence: WorkerEvidence
     owner: WorkerOwner
     db_path: Path
     registry: WorkerRegistry | None = None
+    release: WorkerRelease = field(kw_only=True)

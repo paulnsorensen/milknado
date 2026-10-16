@@ -13,10 +13,16 @@ import psutil
 import pytest
 
 import milknado.loop._lifeline as lifeline
-from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
+from milknado.domains.common import (
+    HelperIdentity,
+    IdentityState,
+    ObservationKey,
+    WorkerIdentity,
+    WorkerOwner,
+    identity_state,
+)
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 from milknado.loop._lifeline import _cleanup, run_lifeline  # pyright: ignore[reportPrivateUsage]
-from milknado.loop._process_identity import IdentityState, identity_state
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")

@@ -77,6 +77,7 @@ class CoordinatorControl:
         self._graph: MikadoGraph = graph
         self._root: Path = project_root
         self._services: CoordinatorServices = services or CoordinatorServices()
+        self._max_node_attempts: int = self._services.max_node_attempts
         self._commands: CommandLifecycle = CommandLifecycle(lambda: self._conn)
 
     @property
@@ -207,7 +208,7 @@ class CoordinatorControl:
     def _execute(
         self, session_id: str, command: CoordinatorCommand
     ) -> tuple[Literal["accepted", "unavailable", "unsupported"], object]:
-        workflow = CoordinatorWorkflow(self._graph, self._conn)
+        workflow = CoordinatorWorkflow(self._graph, self._conn, self._max_node_attempts)
         if isinstance(command, StartGoal):
             return "accepted", workflow.start_goal(command.description, command.provider)
         with self._graph.synchronization_lock:

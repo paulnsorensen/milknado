@@ -23,6 +23,7 @@ from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart, UnconfirmedHelperExit
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.fixture
@@ -51,7 +52,9 @@ def protected_record(tmp_path: Path) -> Iterator[tuple[MikadoGraph, ProtectedWor
         WorkerProcess(worker, identity, None),
         helper,
         write_fd,
-        ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path),
+        ProtectionContext(
+            LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+        ),
     )
     try:
         yield graph, protected
@@ -313,7 +316,9 @@ def test_dead_helper_with_unavailable_evidence_stops_owned_worker(
             subprocess.PIPE,
             subprocess.PIPE,
         ),
-        ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path),
+        ProtectionContext(
+            LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+        ),
     )
     helper = protected._helper  # pyright: ignore[reportPrivateUsage]
     try:

@@ -17,6 +17,7 @@ from milknado.domains.common import (
     CONTROLLER_MASTER_ENV,
     NodeKind,
     ProgressEvent,
+    RunResult,
     SessionInput,
     SessionView,
     TerminalRunOutcome,
@@ -40,10 +41,12 @@ from milknado.domains.execution.run_loop._scheduler import Scheduler
 from milknado.domains.execution.run_loop.state import RunLoopState, summarize_description
 from milknado.domains.graph import (
     ConcurrencyLimitReached,
+    FinalizeTaskFailure,
     GoalReviewDecision,
     GoalReviewDecisionRequest,
     GoalReviewRequest,
     MikadoGraph,
+    StartTaskAttempt,
 )
 from milknado.loop import RunStatus
 
@@ -559,14 +562,21 @@ def test_state_collects_configured_projection_facts(
         executor=executor,
         graph=graph,
         loop=fake_loop,
-        config=MilknadoConfig(dispatch_max_retries=4, stall_threshold_seconds=300),
+        config=MilknadoConfig(max_node_attempts=5, stall_threshold_seconds=300),
     )
     root = graph.add_node("ship controller")
     leaf = graph.add_node("build snapshots", parent_id=root.id)
+    now = "2026-01-01T00:00:00+00:00"
+    assert graph.claim_node(leaf.id, "old-run", now=now)
+    _ = graph.task_attempts.start(StartTaskAttempt(leaf.id, "old-run", "old-run", "old-run", 5))
+    graph.runs.start("old-run", leaf.id, "old.log", now, 1, attempt_id="old-run")
+    assert graph.task_attempts.confirm_execution("old-run", "old-run", "old-run")
+    failed = RunResult("failed", 1, False, now, error="boom")
+    request = FinalizeTaskFailure(leaf.id, "old-run", "old-run", "old-run", failed)
+    assert graph.task_attempts.fail(request).status is NodeStatus.PENDING
     graph.mark_running(leaf.id)
     scheduler = _scheduler(run_loop)
     scheduler.admit_run("run-1", leaf.id, 100.0)
-    scheduler.record_failure(leaf.id, strict=False)
     for duration in (10.0, 20.0, 30.0):
         scheduler.record_completion(duration)
     scheduler.record_progress(ProgressEvent(run_id="run-1", work=3, total=4))

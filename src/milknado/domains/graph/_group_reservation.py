@@ -107,14 +107,31 @@ def fail_reservation(conn: sqlite3.Connection, attempt: TaskAttempt, reason: str
     )
     if worker is not None:
         raise ValueError("reserved task has an unresolved worker")
-    _ = conn.execute(
-        "UPDATE execution_group_tasks SET status = 'failed', result = ? "
-        + "WHERE group_id = ? AND node_id = ?",
-        (reason, attempt.group_id, attempt.node_id),
+    _ = record_group_task(conn, attempt, "failed", reason)
+    _ = release_group_slot(conn, attempt)
+
+
+def record_group_task(
+    conn: sqlite3.Connection, attempt: TaskAttempt, status: str, result: str | None
+) -> int:
+    """Record the result of an open group task; return the rows changed.
+
+    The `status IS NULL` guard makes a second write a no-op; callers validate first.
+    """
+    cursor = conn.execute(
+        "UPDATE execution_group_tasks SET status = ?, result = ? "
+        + "WHERE group_id = ? AND node_id = ? AND status IS NULL",
+        (status, result, attempt.group_id, attempt.node_id),
     )
-    _ = conn.execute(
+    return cursor.rowcount
+
+
+def release_group_slot(conn: sqlite3.Connection, attempt: TaskAttempt) -> int:
+    """Clear the group's active writer slot held by this attempt; return the rows changed."""
+    cursor = conn.execute(
         "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
         + "active_attempt_id = NULL, active_node_status = NULL, active_node_run_id = NULL "
-        + "WHERE id = ? AND active_attempt_id = ?",
-        (attempt.group_id, attempt.attempt_id),
+        + "WHERE id = ? AND active_attempt_id = ? AND active_node_id = ?",
+        (attempt.group_id, attempt.attempt_id, attempt.node_id),
     )
+    return cursor.rowcount

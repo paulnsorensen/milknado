@@ -103,6 +103,17 @@ _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+def _drop_relative_pythonpath(env: dict[str, str]) -> None:
+    """Remove relative PYTHONPATH entries: they would resolve against the worker worktree."""
+    if "PYTHONPATH" not in env:
+        return
+    absolute = [p for p in env["PYTHONPATH"].split(os.pathsep) if Path(p).is_absolute()]
+    if absolute:
+        env["PYTHONPATH"] = os.pathsep.join(absolute)
+    else:
+        del env["PYTHONPATH"]
+
+
 def build_worker_env(
     extra: dict[str, str] | None = None, *, executable: str | None = None
 ) -> dict[str, str]:
@@ -116,6 +127,7 @@ def build_worker_env(
         for k, v in os.environ.items()
         if k in _WORKER_ENV_ALLOWLIST or k.startswith("MILKNADO_")
     }
+    _drop_relative_pythonpath(env)
     if executable == "omp" and "OPENROUTER_API_KEY" in os.environ:
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     if extra:
@@ -134,6 +146,7 @@ def _execute(
     *,
     canonical_root: Path | None = None,
     process: ProcessPort,
+    on_started: Callable[[int], None] | None = None,
 ) -> tuple[int, bool]:
     root = canonical_root or project_root
     extra = {
@@ -150,6 +163,7 @@ def _execute(
         stdin,
         build_worker_env(extra, executable=argv[0]),
         timeout,
+        on_started=on_started,
     )
     return outcome.exit_code, outcome.timed_out
 
@@ -200,6 +214,7 @@ def run_headless(
     default_cmd: str,
     cwd: Path | None = None,
     process: ProcessPort,
+    on_started: Callable[[int], None] | None = None,
 ) -> RunResult:
     argv = resolve_worker_cmd(worker_cmd, default_cmd)
     log_path = (
@@ -219,6 +234,7 @@ def run_headless(
         run_id,
         canonical_root=project_root,
         process=process,
+        on_started=on_started,
     )
     _logger.info(
         "worker dispatch terminal: run_id=%s node_id=%d exit_code=%d timed_out=%s",

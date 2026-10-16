@@ -81,7 +81,10 @@ profile = SimpleNamespace(
     review_max_rounds=0, review_timeout_seconds=1, on_reject=None,
     session_mode='redispatch', attempt_timeout_seconds=1, max_iterations=1,
 )
-cfg = SimpleNamespace(host_worker_limit=1, worktree_pattern='wt-{node}', commit_footer=None)
+cfg = SimpleNamespace(
+    host_worker_limit=1, worktree_pattern='wt-{node}',
+    commit_footer=None, max_node_attempts=1,
+)
 args = SimpleNamespace(
     project_root=root, run_id='run-1', node_id=1, target_branch='main', base_oid='base'
 )

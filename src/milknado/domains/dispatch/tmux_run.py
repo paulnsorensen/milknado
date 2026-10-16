@@ -12,16 +12,25 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import stat
 import time
 from collections.abc import Callable, Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
-from milknado.domains.common import pid_alive
+import msgspec
+
+from milknado.domains.common import group_state, identity_state, pid_alive
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE,
     is_cancel_requested,
+)
+from milknado.domains.dispatch._tmux_receipt import (
+    ExecutedReceipt,
+    FailedReceipt,
+    FinishedReceipt,
+    Receipt,
 )
 from milknado.domains.dispatch.ports import RunWindow, TmuxPort
 
@@ -29,6 +38,7 @@ if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 _logger = logging.getLogger(__name__)
+_RECEIPT_LIMIT_BYTES = 4096
 
 _PANE_POLL_SECS = 0.5
 _PANE_KILL_GRACE_SECS = 5.0
@@ -51,19 +61,25 @@ def ensure_tmux_ready(tmux: TmuxPort) -> None:
         raise ValueError(f"tmux server could not start: {exc}") from exc
 
 
+def _group_alive(pgid: int) -> bool:
+    return group_state(pgid) != "gone"
+
+
 def _terminate_pane(pane_pid: int) -> None:
     """SIGTERM the pane's process group, allow a grace window, then SIGKILL.
 
     The pane process is its own group leader, so group-signalling cannot touch
-    the MCP server. The window is left alone: remain-on-exit keeps the dead
-    pane around, honouring failed-run window preservation.
+    the MCP server. The pane shell dies on SIGTERM while its protected-exec
+    wrapper still confirms worker cleanup, so the wait covers the whole group.
+    The window is left alone: remain-on-exit keeps the dead pane around,
+    honouring failed-run window preservation.
     """
     with suppress(ProcessLookupError):
         os.killpg(pane_pid, signal.SIGTERM)
     deadline = time.monotonic() + _PANE_KILL_GRACE_SECS
-    while pid_alive(pane_pid) and time.monotonic() < deadline:
+    while _group_alive(pane_pid) and time.monotonic() < deadline:
         time.sleep(0.1)
-    if pid_alive(pane_pid):
+    if _group_alive(pane_pid):
         with suppress(ProcessLookupError):
             os.killpg(pane_pid, signal.SIGKILL)
 
@@ -77,6 +93,54 @@ def read_exit_code(path: Path) -> int:
         return -1
 
 
+def _live_target(pid: int, start_token: float) -> bool:
+    return identity_state(pid, start_token) == "live"
+
+
+def _read_receipt_bytes(path: Path) -> bytes | None:
+    """Read a bounded receipt without following symlinks or blocking on special files."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        _logger.warning("exec receipt %s rejected: %s", path, exc)
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            _logger.warning("exec receipt %s rejected: not a regular file", path)
+            return None
+        data = os.read(descriptor, _RECEIPT_LIMIT_BYTES + 1)
+    finally:
+        os.close(descriptor)
+    if len(data) > _RECEIPT_LIMIT_BYTES:
+        _logger.warning(
+            "exec receipt %s rejected: larger than %d bytes", path, _RECEIPT_LIMIT_BYTES
+        )
+        return None
+    return data
+
+
+def read_exec_evidence(path: Path, nonce: str) -> Literal["executed", "startup_failed"] | None:
+    data = _read_receipt_bytes(path)
+    if data is None:
+        return None
+    try:
+        receipt = cast(Receipt, msgspec.json.decode(data, type=Receipt))
+    except msgspec.DecodeError as exc:
+        _logger.warning("exec receipt %s rejected: %s", path, exc)
+        return None
+    if receipt.nonce != nonce:
+        return None
+    if isinstance(receipt, FailedReceipt):
+        return "startup_failed"
+    if isinstance(receipt, FinishedReceipt):
+        return "executed" if receipt.returncode >= 0 else None
+    if isinstance(receipt, ExecutedReceipt) and receipt.start_token is not None:
+        return "executed" if _live_target(receipt.pid, receipt.start_token) else None
+    return None
+
+
 def execute_in_window(
     tmux: TmuxPort,
     window: RunWindow,
@@ -85,13 +149,8 @@ def execute_in_window(
     *,
     on_start: Callable[[int], None] | None = None,
 ) -> tuple[int, bool, bool]:
-    """Run a run-inline worker inside a tmux window; mirrors ``execute_cancellable``.
+    """Wait for the pane and persist its PID; protected launch writes execution evidence.
 
-    The waiter polls the pane pid (there is no Popen handle — the process is a
-    child of the tmux server) and enforces the same cancel-sentinel and
-    timeout contract. ``on_start`` receives the pane pid as soon as the window
-    exists — callers persist it on the run row so pid-liveness (stale sweeps,
-    ``milknado_run_cancel``) can see a pane that outlives the MCP server.
     Returns ``(exit_code, timed_out, cancelled)``.
     """
     pane_pid = tmux.open_run_window(window)

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common import NodeKind, NodeSpec, RunResult
+from milknado.domains.common import NodeKind, NodeSpec
+from milknado.domains.coordinator._task_attempt_workflow import (
+    finish_task_attempt,
+    link_task_run,
+)
 from milknado.domains.coordinator.commands import (
     DispatchHandoff,
     get_dispatch_state,
@@ -24,15 +28,19 @@ from milknado.domains.graph import (
     GroupWorkspace,
     MikadoGraph,
     TaskAttempt,
-    TaskOutcome,
 )
 from milknado.domains.planning import Planner
 
+_logger = logging.getLogger(__name__)
+
 
 class CoordinatorWorkflow:  # noqa: V102
-    def __init__(self, graph: MikadoGraph, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self, graph: MikadoGraph, conn: sqlite3.Connection, max_node_attempts: int = 1
+    ) -> None:
         self._graph: MikadoGraph = graph
         self._conn: sqlite3.Connection = conn
+        self._max_node_attempts: int = max_node_attempts
         self._planning: CoordinatorPlanning = CoordinatorPlanning(graph, conn)
 
     def _event_once(self, session: CoordinatorSession, event: ControlEvent) -> None:
@@ -161,19 +169,14 @@ class CoordinatorWorkflow:  # noqa: V102
         if state not in {"awaiting_launch", "launched"}:
             raise ValueError("dispatch is not awaiting launch")
         self._graph.groups.launch_reserved_task(handoff.attempt)
+        link_task_run(self._graph, handoff.attempt, self._max_node_attempts)
         run = self._graph.runs.get(handoff.attempt.attempt_id)
-        group = self._graph.groups.get(handoff.attempt.group_id)
-        if group is None:
-            raise ValueError("execution group disappeared during launch")
-        if run is None:
-            self._graph.runs.start(
-                handoff.attempt.attempt_id,
-                handoff.attempt.node_id,
-                group.worktree_path,
-                datetime.now(UTC).isoformat(),
-                None,
-            )
-        elif run["node_id"] != handoff.attempt.node_id or run["status"] != "running":
+        if run is None or run["node_id"] != handoff.attempt.node_id:
+            raise ValueError("group run identity conflicts with launched writer")
+        if (
+            run["status"] != "running"
+            and self.dispatch_state(handoff.attempt.attempt_id) != "finished"
+        ):
             raise ValueError("group run identity conflicts with launched writer")
         with self._conn:
             _ = self._conn.execute(
@@ -192,6 +195,15 @@ class CoordinatorWorkflow:  # noqa: V102
         )
         return DispatchHandoff(handoff.attempt, self._owned_attempt(session, handoff.attempt))
 
+    def _record_startup_failure(self, attempt_id: str) -> None:
+        record = self._graph.task_attempts.get(attempt_id)
+        if record is None:  # acknowledge_launch has not created the attempt row: no evidence yet
+            return
+        if not self._graph.task_attempts.record_startup_failure(
+            attempt_id, record.owner_run_id, record.active_invocation_id
+        ):
+            _logger.warning("startup-failure evidence not recorded for attempt %s", attempt_id)
+
     def fail_launch(  # noqa: V105
         self, session: CoordinatorSession, handoff: DispatchHandoff, reason: str
     ) -> None:
@@ -203,6 +215,7 @@ class CoordinatorWorkflow:  # noqa: V102
             self._graph.groups.fail_reserved_task(handoff.attempt, reason)
         elif result != ("failed", reason):
             raise ValueError("launch failure conflicts with task result")
+        self._record_startup_failure(handoff.attempt.attempt_id)
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_dispatches SET state = 'launch_failed' WHERE attempt_id = ?",
@@ -224,23 +237,10 @@ class CoordinatorWorkflow:  # noqa: V102
         state = self._owned_attempt(session, attempt)
         if state not in {"launched", "finished"} or outcome.node_id != attempt.node_id:
             raise ValueError("worker result does not match a launched coordinator attempt")
-        status = (
-            "done" if outcome.success else "blocked" if outcome.ownership_preserved else "failed"
-        )
-        expected = (status, outcome.detail or "")
-        result = self._graph.groups.task_result(attempt.node_id)
-        if result is None:
-            self._graph.groups.finish_task(attempt, TaskOutcome(*expected))
-        elif result != expected:
-            raise ValueError("worker result conflicts with recorded task result")
-        run = self._graph.runs.get(attempt.attempt_id)
-        if run is not None and run["status"] == "running":
-            self._graph.runs.finish(
-                attempt.attempt_id,
-                RunResult(
-                    status, None, False, datetime.now(UTC).isoformat(), detail=outcome.detail
-                ),
-            )
+        link_task_run(self._graph, attempt, self._max_node_attempts)
+        status = finish_task_attempt(self._graph, attempt, outcome, state)
+        if status is None:
+            return
         with self._conn:
             _ = self._conn.execute(
                 "UPDATE coordinator_dispatches SET state = 'finished' WHERE attempt_id = ?",

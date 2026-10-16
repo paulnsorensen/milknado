@@ -12,6 +12,13 @@ from milknado.domains.dispatch._runstate import (
     tail,
     tail_latest_iteration_log,
 )
+from milknado.domains.dispatch._tmux_receipt import (
+    ExecutedReceipt,
+    FailedReceipt,
+    FinishedReceipt,
+    PreparedReceipt,
+    Receipt,
+)
 from milknado.domains.dispatch.async_run import (
     AsyncRunRequest,
     poll_async_run,
@@ -30,6 +37,7 @@ from milknado.domains.dispatch.isolate import (
     create_isolated_worktree,
     discard_isolated_worktree,
     setup_isolated_worktree,
+    unoccupied_slot,
 )
 from milknado.domains.dispatch.lifecycle import (
     SyncDispatchRequest,
@@ -78,6 +86,11 @@ __all__ = [
     "ProcessOutcome",
     "ProcessPort",
     "ProcessTerminationPort",
+    "ExecutedReceipt",
+    "FailedReceipt",
+    "FinishedReceipt",
+    "PreparedReceipt",
+    "Receipt",
     "RunWindow",
     "TmuxPort",
     "WorkerCleanupResult",
@@ -107,6 +120,7 @@ __all__ = [
     "request_cancel",
     "setup_isolated_worktree",
     "discard_isolated_worktree",
+    "unoccupied_slot",
     "run_headless",
     "runs_dir",
     "tail",

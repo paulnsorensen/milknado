@@ -74,3 +74,4 @@ class CoordinatorServices:
     turn_runtime: TurnRuntimePort | None = None
     turn_owner: Callable[[str], WorkerOwner] | None = None
     turn_cancel: Callable[[str], bool] | None = None
+    max_node_attempts: int = 1

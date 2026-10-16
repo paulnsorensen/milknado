@@ -131,7 +131,7 @@ def test_verified_cleanup_never_signals_after_deadline(
 
     monkeypatch.setattr(os, "kill", record_signal)
     monkeypatch.setattr(os, "killpg", record_signal)
-    monkeypatch.setattr(process_identity, "_group_state", group_gone)
+    monkeypatch.setattr(process_identity, "group_state", group_gone)
     worker = WorkerIdentity("inv-1", 2345, 2345, 123.5)
     result = terminate_verified(worker, (), time.monotonic() + 0.01)
     assert signals == []

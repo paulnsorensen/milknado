@@ -7,26 +7,13 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Literal, TypeAlias
+from typing import TypeAlias
 
 import psutil
 
-from milknado.domains.common import WorkerIdentity
+from milknado.domains.common import WorkerIdentity, group_state, identity_state
 
-IdentityState: TypeAlias = Literal["live", "gone", "mismatch", "unknown"]
 Descendant: TypeAlias = tuple[int, float, int]
-
-
-def identity_state(pid: int, token: float) -> IdentityState:
-    try:
-        process = psutil.Process(pid)
-        if process.create_time() != token:
-            return "mismatch"
-        return "gone" if process.status() == psutil.STATUS_ZOMBIE else "live"
-    except psutil.NoSuchProcess:
-        return "gone"
-    except (psutil.AccessDenied, OSError):
-        return "unknown"
 
 
 def observe_descendants(worker: WorkerIdentity) -> tuple[Descendant, ...]:
@@ -48,16 +35,6 @@ def observe_descendants(worker: WorkerIdentity) -> tuple[Descendant, ...]:
         except (psutil.AccessDenied, OSError):
             raise RuntimeError("worker descendant enumeration unresolved") from None
     return tuple(observed)
-
-
-def _group_state(pgid: int) -> IdentityState:
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return "gone"
-    except (PermissionError, OSError):
-        return "unknown"
-    return "live"
 
 
 def _signal_identity(pid: int, token: float, signum: int, deadline: float) -> bool:
@@ -125,10 +102,10 @@ def _confirm(
         state = identity_state(pid, token)
         if state != "gone":
             errors.add(f"descendant {pid} {state}")
-    group = _group_state(worker.pgid)
+    group = group_state(worker.pgid)
     while group != "gone" and time.monotonic() < deadline:
         time.sleep(max(0, min(0.05, deadline - time.monotonic())))
-        group = _group_state(worker.pgid)
+        group = group_state(worker.pgid)
     if group != "gone":
         errors.add(f"worker group {group}")
     return tuple(sorted(errors))

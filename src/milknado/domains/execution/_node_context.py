@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from milknado.domains.common import Gate, NodeAgentSession
@@ -12,6 +12,7 @@ class ExecutionConfig:
     quality_gates: tuple[Gate, ...] | None
     worktree_pattern: str
     project_root: Path
+    max_node_attempts: int = 1
     brief_prepend: str | None = None
     dispatch_max_retries: int = 2
     dispatch_backoff_seconds: float = 5.0
@@ -39,3 +40,4 @@ class NodeExecutionContext:
     base_oid: str | None
     review_round: int
     config: ExecutionConfig
+    attempt_id: str | None = field(default=None, kw_only=True)

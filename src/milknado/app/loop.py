@@ -9,17 +9,17 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 if TYPE_CHECKING:
     from milknado.domains.graph import MikadoGraph
 
 from milknado.adapters import FlockSlotPool, GitAdapter, ProcessAdapter, TmuxAdapter
+from milknado.app._loop_start_failure import LoopStartupFailure, record_start_failure
 from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import (
     NodeKind,
     NodeStatus,
-    RunFenceLostError,
-    RunResult,
     SlotLease,
     UnlandedWorkError,
     pid_alive,
@@ -40,7 +40,13 @@ from milknado.domains.dispatch import (
     reconcile_orphaned_runs,
     runs_dir,
 )
-from milknado.domains.graph import ConcurrencyLimitReached, HostCapacityFull, NodeWorkers
+from milknado.domains.graph import (
+    ConcurrencyLimitReached,
+    HostCapacityFull,
+    NodeWorkers,
+    StartTaskAttempt,
+)
+from milknado.project import load_project_config
 
 _logger = logging.getLogger(__name__)
 
@@ -190,45 +196,9 @@ def _spawn_loop(
     return process.spawn_detached(tuple(argv), request.root, log_path, env)
 
 
-def _record_start_failure(
-    graph: MikadoGraph, claim: LoopClaim, exc: Exception, *, run_started: bool
-) -> None:
-    node_written = False
-    persistence_error: Exception | None = None
-    if run_started:
-        try:
-            graph.runs.finish(
-                claim.run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=f"start failed: {type(exc).__name__}: {exc}",
-                ),
-            )
-        except RunFenceLostError:
-            _logger.info("start failure run already finalized: %s", claim.run_id)
-        except Exception as error:
-            persistence_error = error
-            _logger.exception("start failure run terminal write failed: run_id=%s", claim.run_id)
-    try:
-        node_written = graph.mark_terminal(claim.node_id, claim.run_id, NodeStatus.FAILED)
-    except Exception as error:
-        persistence_error = persistence_error or error
-        _logger.exception("start failure node terminal write failed: node_id=%d", claim.node_id)
-    if persistence_error is not None or node_written is False:
-        detail = (
-            f"start failure persistence failed: terminal writes incomplete: "
-            f"node_written={node_written}"
-        )
-        _logger.error("%s run_id=%s node_id=%d", detail, claim.run_id, claim.node_id)
-        raise RuntimeError(detail) from persistence_error
-
-
 def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, object]:
     """Claim a task node and spawn its detached loop, or return a deferred result."""
+    max_node_attempts = load_project_config(request.root).max_node_attempts
     graph.register_controller_master()
     reconcile_loop_workers(graph)
     _ = reconcile_orphaned_runs(graph, ProcessAdapter())
@@ -260,7 +230,13 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
             ),
         }
     run_started = False
+    attempt_id = uuid4().hex
     try:
+        _ = graph.task_attempts.start(
+            StartTaskAttempt(
+                request.node_id, attempt_id, claim.run_id, claim.run_id, max_node_attempts
+            )
+        )
         _remove_reclaimed_worktree(git, claim)
         log_path = runs_dir(request.root) / f"{claim.run_id}.log"
         log_path.touch()
@@ -270,11 +246,14 @@ def start_loop_run(graph: MikadoGraph, request: LoopStartRequest) -> dict[str, o
             str(log_path),
             now_iso(),
             request.timeout_seconds,
+            attempt_id=attempt_id,
         )
         run_started = True
         pid = _spawn_loop(ProcessAdapter(), tmux, request, claim, log_path)
     except Exception as exc:
-        _record_start_failure(graph, claim, exc, run_started=run_started)
+        record_start_failure(
+            graph, LoopStartupFailure(claim.node_id, claim.run_id, attempt_id, run_started, exc)
+        )
         raise
     finally:
         if claim.lease is not None:

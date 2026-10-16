@@ -9,8 +9,8 @@ import sqlite3
 import time
 from typing import Protocol
 
-from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity
-from milknado.loop._process_identity import Descendant, identity_state, observe_descendants
+from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, identity_state
+from milknado.loop._process_identity import Descendant, observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
 _log = logging.getLogger(__name__)

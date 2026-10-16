@@ -16,6 +16,7 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX helper uses passed file descriptors")
@@ -27,7 +28,9 @@ def test_shutdown_cancels_held_replacement_ready_without_release(
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+    )
     options = SpawnOptions(
         (sys.executable, "-c", "import time; time.sleep(30)"),
         tmp_path,

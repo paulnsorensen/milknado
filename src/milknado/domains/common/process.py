@@ -8,7 +8,9 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
+
+import psutil
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,3 +84,31 @@ def pid_alive(pid: object) -> bool:
     except OSError:
         return False
     return True
+
+
+IdentityState: TypeAlias = Literal["live", "gone", "mismatch", "unknown"]
+
+
+def identity_state(pid: int, token: float) -> IdentityState:
+    """Classify a pid against its recorded create-time token."""
+    try:
+        process = psutil.Process(pid)
+        if process.create_time() != token:
+            return "mismatch"
+        dead = process.status() in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+        return "gone" if dead else "live"
+    except psutil.NoSuchProcess:
+        return "gone"
+    except (psutil.AccessDenied, OSError):
+        return "unknown"
+
+
+def group_state(pgid: int) -> IdentityState:
+    """Probe a process group with signal 0; the probe is deliberate."""
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return "gone"
+    except (PermissionError, OSError):
+        return "unknown"
+    return "live"

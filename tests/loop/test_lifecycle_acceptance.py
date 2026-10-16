@@ -18,6 +18,7 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
@@ -39,13 +40,16 @@ import time
 from pathlib import Path
 import psutil
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
 
 db_path, marker = map(Path, sys.argv[1:3])
 supervisor = psutil.Process()
 owner = WorkerOwner('run-1', supervisor.pid, supervisor.create_time(), 'run-1', int(sys.argv[3]))
-context = ProtectionContext(LoopWorkerEvidence(db_path), owner, db_path)
+context = ProtectionContext(
+    LoopWorkerEvidence(db_path), owner, db_path, release=LoopWorkerRelease(db_path)
+)
 worker = spawn_protected(SpawnOptions(
     (sys.executable, '-c', 'import time; time.sleep(60)'),
     db_path.parent, None, False, subprocess.DEVNULL, subprocess.PIPE, subprocess.PIPE,
@@ -99,6 +103,7 @@ def _protected(
         LoopWorkerEvidence(graph.db_path),
         WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id),
         graph.db_path,
+        release=PlainWorkerRelease(),
     )
     options = SpawnOptions(
         (sys.executable, "-c", program),
@@ -123,6 +128,7 @@ def test_protected_executable_only_command_runs_after_ready(tmp_path: Path) -> N
         LoopWorkerEvidence(graph.db_path),
         WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id),
         graph.db_path,
+        release=PlainWorkerRelease(),
     )
     worker = spawn_protected(
         SpawnOptions((str(command),), tmp_path, None, False, subprocess.DEVNULL, None, None),

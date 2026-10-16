@@ -69,6 +69,7 @@ def _run_record(status: str = "running", error: str | None = None) -> RunRecord:
         "run_id": RUN_ID,
         "node_id": 2,
         "status": status,
+        "attempt_id": None,
         "pid": None,
         "log_path": "",
         "started_at": "",

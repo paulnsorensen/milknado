@@ -44,6 +44,20 @@ class _StartupAcquisition:
     helper: subprocess.Popen[str] | None = None
     write_fd: int | None = None
     protected: _ProtectedStart | None = None
+    monitor_started: bool = False
+
+
+def _activate_worker(
+    worker: WorkerProcess, context: ProtectionContext, protected: _ProtectedStart
+) -> None:
+    def release() -> None:
+        context.release.release_worker(worker, context.owner)
+
+    ticket = protected.ticket
+    if ticket is None:
+        release()
+    elif not ticket.activate(release, protected.shutdown):
+        raise RuntimeError("worker admission closed before READY")
 
 
 def spawn_protected(
@@ -83,11 +97,8 @@ def spawn_protected(
         protected = worker_type(worker, acquired.helper, acquired.write_fd, context)
         acquired.protected = protected
         protected.ticket = ticket
-        if ticket is not None:
-            if not ticket.activate(worker.release, protected.shutdown):
-                raise RuntimeError("worker admission closed before READY")
-        else:
-            worker.release()
+        _activate_worker(worker, context, protected)
+        acquired.monitor_started = True
         protected.start_monitor()
         return protected
     except Exception:
@@ -100,7 +111,7 @@ def _abort_start(acquired: _StartupAcquisition) -> None:
     deadline = time.monotonic() + 3
     worker.close_gate()
     try:
-        if acquired.protected is not None:
+        if acquired.protected is not None and acquired.monitor_started:
             _ = acquired.protected.cleanup(deadline=deadline)
         elif acquired.recorded:
             _end_unprotected(worker, acquired.context, deadline)

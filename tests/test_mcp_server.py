@@ -888,17 +888,21 @@ class TestTodoAsyncRun:
         tree = _call_tree(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == "failed"
 
+    @pytest.mark.parametrize("max_node_attempts,expected_status", [(1, "failed"), (2, "pending")])
     def test_start_reconciles_orphaned_terminal_runs(
-        self, tmp_path: Path, worker_stub: Callable[[str], str]
+        self,
+        tmp_path: Path,
+        worker_stub: Callable[[str], str],
+        max_node_attempts: int,
+        expected_status: str,
     ) -> None:
-        """If a worker finished but nobody polled, the next start should reconcile
-        and not be locked out by the RUNNING guard. A 'failed' orphan reconciles to
-        FAILED, which the atomic claim can re-acquire for a retry (a 'done' orphan
-        reconciles to DONE and is correctly refused — a completed node is not
-        silently re-run)."""
+        """A terminal writer accounts for failure before poll; explicit restart remains valid."""
         root = str(tmp_path)
+        _ = (tmp_path / "milknado.toml").write_text(
+            f"[milknado]\nmax_node_attempts = {max_node_attempts}\n"
+        )
         task = _call(milknado_todo_add, description="orphan", kind="task", project_root=root)
-        # First run: finishes (failed), but we never poll → node stays RUNNING.
+        # The first run finishes without a poll.
         first = _call_this_branch(
             milknado_run_inline_start,
             node_id=task["id"],
@@ -915,10 +919,15 @@ class TestTodoAsyncRun:
             if state["status"] in ("done", "failed"):
                 break
             time.sleep(0.05)
-        # Sanity: graph still thinks the node is running (no poll yet).
+        # The failure is accounted for before polling. A manual start is still allowed.
         tree = _call_tree(milknado_todo_tree, project_root=root)
-        assert tree[0]["status"] == "running"
-        # Second start: should reconcile the orphan, then start a fresh run.
+        assert tree[0]["status"] == expected_status
+        graph, _ = open_graph(tmp_path)
+        try:
+            assert graph.task_attempts.failed_count(task["id"]) == 1
+        finally:
+            graph.close()
+        # A second explicit start begins a distinct logical execution.
         second = _call_this_branch(
             milknado_run_inline_start,
             node_id=task["id"],
@@ -928,6 +937,11 @@ class TestTodoAsyncRun:
         )
         assert second["run_id"] != first["run_id"]
         _ = _wait_for_terminal(second["run_id"], root, timeout=3.0)
+        graph, _ = open_graph(tmp_path)
+        try:
+            assert graph.task_attempts.failed_count(task["id"]) == 2
+        finally:
+            graph.close()
 
     def test_fail_stale_running_runs_flips_orphaned_run(self, tmp_path: Path) -> None:
         """A 'running' run past its timeout (worker thread vanished without writing

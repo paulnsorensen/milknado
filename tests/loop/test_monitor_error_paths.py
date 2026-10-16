@@ -19,6 +19,7 @@ from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_lifecycle import spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
@@ -124,7 +125,9 @@ def test_sqlite_observation_failure_stops_worker_and_keeps_marker(
             subprocess.PIPE,
             subprocess.PIPE,
         ),
-        ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path),
+        ProtectionContext(
+            LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+        ),
     )
     try:
 

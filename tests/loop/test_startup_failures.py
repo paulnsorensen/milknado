@@ -17,6 +17,7 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_lifecycle import spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
@@ -28,7 +29,9 @@ def test_helper_start_failure_closes_gated_worker_and_parent_pipes(
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+    )
     acquired: list[WorkerProcess] = []
 
     def fail_helper(worker: WorkerProcess, *_args: object) -> None:

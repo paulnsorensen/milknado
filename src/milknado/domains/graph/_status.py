@@ -9,15 +9,16 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from typing import cast
 
 import milknado.domains.graph._goal_review as _goal_review
+import milknado.domains.graph._owner_release as _owner_release
 import milknado.domains.graph._reads as _reads
 import milknado.domains.graph._transitions as _transitions
-from milknado.domains.common import MikadoNode, NodeStatus, pid_alive
+from milknado.domains.common import MikadoNode, NodeStatus
 from milknado.domains.graph._pipeline import StatusPipeline
 from milknado.domains.graph._sqlite_rows import as_tuple as _values
 from milknado.domains.graph._sqlite_rows import fetchone
+from milknado.domains.graph._task_attempts import reset_failed_attempts
 from milknado.domains.graph._verification import validate_done_verification
 from milknado.domains.graph.status_flow import (
     subtree_post_order,
@@ -49,6 +50,7 @@ def _apply_subtree_status(
         return False
     for step in todo_status_steps(node.status, target):
         if step is NodeStatus.PENDING:
+            reset_failed_attempts(conn, node.id)
             mark_pending(pipeline, conn, node.id)
         else:
             transition_status(pipeline, conn, node.id, step)
@@ -248,13 +250,13 @@ def release(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, ru
 
     Used by dispatch cleanup to undo a claim whose startup failed, without
     clobbering a node already re-claimed under a different run. Fenced on both
-    run_id and status = 'running' (see _transitions.release), so a node that
+    run_id and status = 'running' (see _owner_release.release), so a node that
     completed DONE between the caller's read and this write is never walked
     back to PENDING. Returns whether the release landed.
     """
 
     def mutate() -> bool:
-        return _transitions.release(conn, node_id, run_id)
+        return _owner_release.release(conn, node_id, run_id)
 
     return pipeline.run(
         lambda nid: _reads.get_node(conn, nid),
@@ -299,43 +301,4 @@ def mark_blocked_fenced(
         NodeStatus.RUNNING,
         NodeStatus.BLOCKED,
         lambda: _transitions.mark_blocked(conn, node_id, run_id),
-    )
-
-
-def try_reclaim(
-    pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, *, now: str
-) -> bool:
-    """Free a RUNNING node whose owner process is provably dead.
-
-    Reads the current owner (run_id, pid); if the pid is recorded and no longer
-    alive, releases the node back to PENDING so the next dispatch can claim it
-    without waiting out the stale-running timeout. A live (or pid-unknown) owner
-    is left intact — a failed claim refuses the new caller instead.
-
-    Returns True iff a dead owner was actually released, so the dispatch boundary
-    can log the recovery (an operationally interesting event on the worker path).
-    """
-    # Kept for symmetry with claim_node/mark_terminal's now= convention;
-    # pid_alive is the sole signal here.
-    _ = now
-    row = fetchone(conn, "SELECT status, run_id, pid FROM nodes WHERE id = ?", (node_id,))
-    if row is None:
-        return False
-    values = _values(row)
-    if NodeStatus(cast(str, values[0])) != NodeStatus.RUNNING:
-        return False
-    owner_run_id = cast(str | None, values[1])
-    pid = cast(int | None, values[2])
-    if owner_run_id is None or pid is None or pid_alive(pid):
-        return False
-
-    def mutate() -> bool:
-        return _transitions.release(conn, node_id, owner_run_id)
-
-    return pipeline.run(
-        lambda nid: _reads.get_node(conn, nid),
-        node_id,
-        NodeStatus.RUNNING,
-        NodeStatus.PENDING,
-        mutate,
     )

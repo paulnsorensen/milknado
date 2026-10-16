@@ -7,6 +7,7 @@ class RunRow(TypedDict):
     run_id: str
     node_id: int
     status: str
+    attempt_id: str | None
     pid: int | None
     log_path: str
     started_at: str
@@ -25,6 +26,7 @@ class RunRecord(TypedDict):
     run_id: str
     node_id: int
     status: str
+    attempt_id: str | None
     pid: int | None
     log_path: str
     started_at: str

@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from milknado.domains.dispatch import RunWindow
@@ -34,6 +35,22 @@ def session_name_for(project_root: Path) -> str:
     """
     sanitized = re.sub(r"[^A-Za-z0-9_-]+", "-", project_root.name).strip("-")
     return f"milknado-{sanitized or 'project'}"
+
+
+def _exec_receipt_command(window: RunWindow) -> tuple[str, ...]:
+    """Wrap the worker argv in the protected executor that writes the exec receipt."""
+    if window.exec_nonce is None:
+        raise ValueError("tmux execution receipt requires an invocation nonce")
+    return (
+        sys.executable,
+        "-P",
+        "-m",
+        "milknado.adapters._tmux_exec",
+        window.exec_nonce,
+        str(window.exec_receipt_path),
+        str(window.brief_path) if window.brief_path is not None else "-",
+        *window.argv,
+    )
 
 
 class TmuxAdapter:
@@ -181,8 +198,9 @@ class TmuxAdapter:
         - A successful run kills its own window; a failed run leaves it behind.
         """
         assignments = (shlex.quote(f"{k}={v}") for k, v in window.env.items())
-        runner = " ".join(["env", "-i", *assignments, shlex.join(window.argv)])
-        if window.brief_path is not None:
+        command = _exec_receipt_command(window) if window.exec_receipt_path else window.argv
+        runner = " ".join(["env", "-i", *assignments, shlex.join(command)])
+        if window.exec_receipt_path is None and window.brief_path is not None:
             runner += f" < {shlex.quote(str(window.brief_path))}"
         rc = shlex.quote(str(window.exit_code_path))
         log = shlex.quote(str(window.log_path))

@@ -5,12 +5,22 @@ from __future__ import annotations
 import logging
 import threading
 from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from milknado.domains.common import GitPort, RunFenceLostError, RunResult
-from milknado.domains.common.protocols import SlotLease
+from milknado.domains.dispatch._async_execution import run_worker_process
+from milknado.domains.dispatch._async_types import (
+    AsyncRunRequest as AsyncRunRequest,
+)
+from milknado.domains.dispatch._async_types import (
+    AsyncWorkerContext as AsyncWorkerContext,
+)
+from milknado.domains.dispatch._attempt_completion import (
+    AttemptRef,
+    settle_cancelled,
+    settle_counted_failure,
+    settle_preserved,
+)
 from milknado.domains.dispatch._runstate import (
     RUN_ID_RE as _RUN_ID_RE,
 )
@@ -35,143 +45,13 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch._runstate import (
     tail as _tail,
 )
-from milknado.domains.dispatch.isolate import IsolateContext, merge_back_if_done
-from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, RunWindow, TmuxPort
-from milknado.domains.dispatch.runner import (
-    AsyncStartRef,
-    build_worker_env,
-    execute_cancellable,
-    resolve_worker_cmd,
-)
-from milknado.domains.dispatch.tmux_run import execute_in_window as _execute_in_window
-
-if TYPE_CHECKING:
-    from milknado.domains.graph import MikadoGraph
+from milknado.domains.dispatch._sync_completion import finish_attempt_exception
+from milknado.domains.dispatch.isolate import merge_back_if_done
+from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, TmuxPort
+from milknado.domains.dispatch.runner import AsyncStartRef, resolve_worker_cmd
+from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 
 _logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class AsyncRunRequest:
-    project_root: Path
-    node_id: int
-    brief: str
-    worker_cmd: str | None
-    timeout_seconds: int
-    run_id: str
-    default_cmd: str
-    cwd: Path
-    merge_ctx: IsolateContext | None = None
-    lease: SlotLease | None = None
-
-
-@dataclass(frozen=True)
-class AsyncWorkerContext:
-    request: AsyncRunRequest
-    log_path: Path
-    argv: tuple[str, ...]
-    graph_sessions: GraphSessionPort
-    git: GitPort
-    process: ProcessPort
-    tmux: TmuxPort | None = None
-
-
-def _run_worker_process(
-    cwd: Path,
-    log_path: Path,
-    brief: str,
-    argv: list[str],
-    *,
-    timeout: int,
-    request: AsyncRunRequest,
-    rdir: Path,
-    tmux: TmuxPort | None,
-    graph: MikadoGraph,
-    process: ProcessPort,
-) -> tuple[int, bool, bool]:
-    """Execute the worker on the requested substrate: tmux window or subprocess.
-
-    `cwd` is the working tree the worker runs in — the shared checkout under
-    THIS_BRANCH, or the isolated worktree under ISOLATE. Both paths honour the
-    same contract — brief on stdin, combined output in the run log, cancel-
-    sentinel + timeout enforcement — and return ``(exit_code, timed_out,
-    cancelled)``.
-    """
-    if tmux is None:
-        return execute_cancellable(
-            cwd,
-            request.node_id,
-            log_path,
-            brief,
-            argv,
-            timeout,
-            runs_dir=rdir,
-            run_id=request.run_id,
-            project_root=request.project_root,
-            process=process,
-            on_started=lambda pid: graph.runs.set_pid(request.run_id, pid),
-        )
-    return _run_in_tmux_window(
-        cwd,
-        log_path,
-        brief,
-        argv,
-        timeout=timeout,
-        request=request,
-        rdir=rdir,
-        tmux=tmux,
-        graph=graph,
-    )
-
-
-def _run_in_tmux_window(
-    cwd: Path,
-    log_path: Path,
-    brief: str,
-    argv: list[str],
-    *,
-    timeout: int,
-    request: AsyncRunRequest,
-    rdir: Path,
-    tmux: TmuxPort,
-    graph: MikadoGraph,
-) -> tuple[int, bool, bool]:
-    """Stage the brief and run the worker inside its named tmux window.
-
-    No stdin pipe into a tmux pane: the brief is staged to a file the window
-    wrapper redirects into the worker. `cwd` is the worker's working tree.
-    """
-    run_id = request.run_id
-    staged_brief = _brief_path(rdir, run_id)
-    _ = staged_brief.write_text(brief, encoding="utf-8")
-    log_path.touch()
-    window = RunWindow(
-        run_id=run_id,
-        argv=tuple(argv),
-        cwd=cwd,
-        log_path=log_path,
-        exit_code_path=_exit_code_path(rdir, run_id),
-        env=build_worker_env(
-            {
-                "MILKNADO_NODE_ID": str(request.node_id),
-                "MILKNADO_RUN_ID": run_id,
-                "MILKNADO_PROJECT_ROOT": str(request.project_root.resolve()),
-            },
-            executable=argv[0],
-        ),
-        brief_path=staged_brief,
-    )
-    # Persist the pane pid on the run row (fenced on status='running'): a tmux
-    # pane outlives an MCP-server restart, so the stale sweep's pid-liveness
-    # skip and milknado_run_cancel's group-kill must be able to see it —
-    # unlike the in-process subprocess path, which dies with the server.
-    return _execute_in_window(
-        tmux,
-        window,
-        timeout,
-        rdir,
-        on_start=lambda pane_pid: graph.runs.set_pid(run_id, pane_pid),
-    )
 
 
 def _async_worker(context: AsyncWorkerContext) -> None:
@@ -184,31 +64,16 @@ def _async_worker(context: AsyncWorkerContext) -> None:
     try:
         graph, _cfg = context.graph_sessions.open_graph(project_root)
         _logger.info("async dispatch started: run_id=%s node_id=%d", run_id, request.node_id)
-        exit_code, timed_out, cancelled = _run_worker_process(
-            request.cwd,
-            log_path,
-            request.brief,
-            list(context.argv),
-            timeout=request.timeout_seconds,
-            request=request,
-            rdir=rdir,
-            tmux=context.tmux,
-            process=context.process,
-            graph=graph,
-        )
+        exit_code, timed_out, cancelled = run_worker_process(context, graph, rdir)
+        if graph.runs.live_workers(run_id=run_id):
+            raise RuntimeError(f"worker cleanup unresolved for run {run_id}")
         # The worker owns the terminal write for a cancelled run: run_cancel only
         # requests cancellation, so finalizing here (not there) is what closes the
         # state-clobber race the old signal-then-overwrite path left open.
+        ref = AttemptRef(request.node_id, run_id, run_id, run_id)
         if cancelled:
-            graph.runs.finish(
-                run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=timed_out,
-                    ended_at=_now_iso(),
-                    error="cancelled",
-                ),
+            settle_cancelled(
+                graph, ref, RunResult("failed", -1, timed_out, _now_iso(), error="cancelled")
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
@@ -221,17 +86,26 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             # Persist a preserved (un-torn-down) worktree via the run row's `detail`
             # column so milknado_run_inline_poll surfaces `worktree_preserved`,
             # matching the sync dispatch path and milknado_run_cancel.
-            graph.runs.finish(
-                run_id,
-                RunResult(
-                    status=terminal,
-                    exit_code=exit_code,
-                    timed_out=timed_out,
-                    ended_at=_now_iso(),
-                    rebased=merge.rebased if merge is not None else None,
-                    detail=merge.worktree_preserved if merge is not None else None,
-                ),
+            result = RunResult(
+                status=terminal,
+                exit_code=exit_code,
+                timed_out=timed_out,
+                ended_at=_now_iso(),
+                rebased=merge.rebased if merge is not None else None,
+                detail=merge.worktree_preserved if merge is not None else None,
             )
+            preserved = merge is not None and not merge.rebased and exit_code == 0
+            if terminal == "failed" and not preserved:
+                failure = FinalizeTaskFailure(request.node_id, run_id, run_id, run_id, result)
+                _ = settle_counted_failure(graph, failure)
+            else:
+                graph.runs.finish(run_id, result)
+                if preserved:
+                    settle_preserved(graph, ref)
+                else:
+                    graph.task_attempts.require_nonfailure(
+                        ref.attempt_id, ref.owner_run_id, "done"
+                    )
             _logger.info(
                 (
                     "async dispatch terminal: run_id=%s node_id=%d status=%s "
@@ -266,16 +140,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             pass
         if graph is not None:
             try:
-                graph.runs.finish(
-                    run_id,
-                    RunResult(
-                        status="failed",
-                        exit_code=-1,
-                        timed_out=False,
-                        ended_at=_now_iso(),
-                        error=original_detail,
-                    ),
-                )
+                finish_attempt_exception(graph, request, (run_id, context.tmux is None), exc)
             except RunFenceLostError:
                 _logger.info("async worker failure run already finalized: run_id=%s", run_id)
             except Exception as persist_exc:
@@ -304,6 +169,27 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 staged.unlink()
 
 
+def _bind_attempt(graph: MikadoGraph, request: AsyncRunRequest, log_path: Path) -> None:
+    """Record the task attempt and its run row before the worker thread starts."""
+    _ = graph.task_attempts.start(
+        StartTaskAttempt(
+            request.node_id,
+            request.run_id,
+            request.run_id,
+            request.run_id,
+            request.max_node_attempts,
+        )
+    )
+    graph.runs.start(
+        request.run_id,
+        request.node_id,
+        str(log_path),
+        _now_iso(),
+        request.timeout_seconds,
+        attempt_id=request.run_id,
+    )
+
+
 def start_headless_async(
     request: AsyncRunRequest,
     graph_sessions: GraphSessionPort,
@@ -318,13 +204,7 @@ def start_headless_async(
         runs = _runs_dir(request.project_root)
         log_path = runs / f"{request.run_id}.log"
         log_path.touch()
-        graph.runs.start(
-            request.run_id,
-            request.node_id,
-            str(log_path),
-            _now_iso(),
-            request.timeout_seconds,
-        )
+        _bind_attempt(graph, request, log_path)
     finally:
         graph.close()
     context = AsyncWorkerContext(

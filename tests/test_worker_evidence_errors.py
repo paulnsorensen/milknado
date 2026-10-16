@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from threading import Barrier, Lock
+from typing import cast
 
 import pytest
 
@@ -19,6 +20,7 @@ from milknado.domains.graph import (
     existing_standalone_worker_db,
     open_standalone_worker_evidence,
 )
+from milknado.domains.graph._persistence import SCHEMA_VERSION
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX private worker store")
 
@@ -69,6 +71,23 @@ def test_unsafe_parent_refuses_store_creation(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="not private"):
         _ = open_standalone_worker_evidence(path)
     assert not path.exists()
+
+
+def test_unsafe_existing_store_is_refused_before_migration(tmp_path: Path) -> None:
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    path = parent / "workers.db"
+    with closing(sqlite3.connect(path)) as conn:
+        _ = conn.execute("CREATE TABLE stale (id INTEGER)")
+    path.chmod(0o644)
+
+    with pytest.raises(RuntimeError, match="not private"):
+        _ = open_standalone_worker_evidence(path)
+
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone() == (0,)
+        tables = conn.execute("SELECT name FROM sqlite_master").fetchall()
+    assert tables == [("stale",)]
 
 
 def test_symlink_parent_refuses_store_creation(tmp_path: Path) -> None:
@@ -187,3 +206,18 @@ def test_invalid_worker_owner_never_writes_evidence(tmp_path: Path, owner: Worke
         with pytest.raises(ValueError):
             store.record_worker(owner, WorkerIdentity("inv-1", 2345, 2345, 123.5))
         assert store.live_workers(UnassociatedWorkers()) == ()
+
+
+def test_existing_store_below_current_schema_migrates_forward(tmp_path: Path) -> None:
+    path = tmp_path / "workers.db"
+    with open_standalone_worker_evidence(path):
+        pass
+    with closing(sqlite3.connect(path)) as conn:
+        _ = conn.execute("PRAGMA user_version = 60")
+
+    with open_standalone_worker_evidence(path) as store:
+        assert store.db_path == path
+
+    with closing(sqlite3.connect(path)) as conn:
+        version = cast(int, conn.execute("PRAGMA user_version").fetchone()[0])
+    assert version == SCHEMA_VERSION

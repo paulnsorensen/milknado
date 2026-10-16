@@ -17,6 +17,7 @@ from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import WorkerProcess
 from milknado.loop._process_lifecycle import ProtectedWorker
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
@@ -41,7 +42,9 @@ def test_periodic_observation_uses_one_second_clock(
         WorkerProcess(worker, identity, None),
         helper,
         write_fd,
-        ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path),
+        ProtectionContext(
+            LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+        ),
     )
 
     class PollClock:

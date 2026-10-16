@@ -12,6 +12,12 @@ from milknado.domains.graph._goal_review_scope import top_level_goal
 from milknado.domains.graph._group_binding import bind_execution_group_provider
 from milknado.domains.graph._plan_transaction import graph_revision
 from milknado.domains.graph._run_persistence import RunRecord
+from milknado.domains.graph._task_attempt_models import (
+    FailureDisposition,
+    FinalizeTaskFailure,
+    StartTaskAttempt,
+    TaskAttemptRecord,
+)
 from milknado.domains.graph._transitions import ConcurrencyLimitReached, HostCapacityFull
 from milknado.domains.graph._worker_persistence import WorkerRecord, live_runtime_workers
 from milknado.domains.graph.commands import (
@@ -89,6 +95,10 @@ __all__ = [
     "GroupWorkspace",
     "TaskAttempt",
     "TaskOutcome",
+    "FailureDisposition",
+    "FinalizeTaskFailure",
+    "StartTaskAttempt",
+    "TaskAttemptRecord",
     "ConcurrencyLimitReached",
     "HostCapacityFull",
     "connect_readonly",

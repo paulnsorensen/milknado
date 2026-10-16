@@ -264,3 +264,15 @@ def test_worker_launcher_preserves_subprocess_contract(
     assert result.log_path.read_text(encoding="utf-8") == (
         "argv=<first two words>\nstdin=<brief-marker>\n"
     )
+
+
+def test_relative_pythonpath_entries_are_dropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PYTHONPATH", "rel:/abs/one:./dot::/abs/two")
+    assert build_worker_env()["PYTHONPATH"] == "/abs/one:/abs/two"
+
+
+def test_pythonpath_with_only_relative_entries_is_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYTHONPATH", "rel:.")
+    assert "PYTHONPATH" not in build_worker_env()

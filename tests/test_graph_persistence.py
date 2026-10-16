@@ -620,6 +620,7 @@ class TestPruneRunMessages:
 
     def _seed_runs(self, conn: sqlite3.Connection) -> None:
         """One run left running, one driven to a terminal status."""
+        _ = conn.execute("ALTER TABLE runs ADD COLUMN attempt_id TEXT")
         _persistence.start_run(conn, "live", 1, "/l", self.OLD, 600)
         _persistence.start_run(conn, "done", 1, "/l", self.OLD, 600)
         _ = _persistence.finish_run(

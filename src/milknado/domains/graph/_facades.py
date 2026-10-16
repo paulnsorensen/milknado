@@ -47,9 +47,10 @@ class _RunFacade(_SubFacade):
         started_at: str,
         timeout_seconds: int | None,
         pid: int | None = None,
+        attempt_id: str | None = None,
     ) -> None:
         _run_persistence.start_run(
-            self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid
+            self._conn, run_id, node_id, log_path, started_at, timeout_seconds, pid, attempt_id
         )
 
     @synchronized

@@ -133,6 +133,7 @@ def _detail_fixture() -> tuple[MikadoNode, NodeDetailSnapshot]:
         "run_id": "run-42",
         "node_id": 9,
         "status": "failed",
+        "attempt_id": None,
         "pid": None,
         "log_path": "run.log",
         "started_at": "2026-09-12T00:00:00+00:00",

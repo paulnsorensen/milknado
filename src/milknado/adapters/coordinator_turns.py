@@ -15,7 +15,7 @@ from milknado.adapters._group_action_session import (
     drain_group_commands,
     record_group_command,
 )
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._protection import loop_protection
 from milknado.adapters.recovery import ExistingWorktreeRecovery
 from milknado.domains.common import (
     MilknadoConfig,
@@ -119,12 +119,8 @@ class NativeCoordinatorTurns:
         return spawn_protected(options, self._protection(turn_id, None))
 
     def _protection(self, turn_id: str, attempt: TaskAttempt | None) -> ProtectionContext:
-        return ProtectionContext(
-            LoopWorkerEvidence(self.config.db_path),
-            self.owner(turn_id, attempt),
-            self.config.db_path,
-            self._workers,
-        )
+        owner = self.owner(turn_id, attempt)
+        return loop_protection(self.config.db_path, owner, self._workers)
 
     def _command(self, provider: str, cwd: Path) -> list[str]:
         override = self.config.execution_agent if provider == self.config.agent_family else None

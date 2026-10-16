@@ -22,6 +22,7 @@ from milknado.loop._process_helper import HelperStart, start_helper
 from milknado.loop._process_identity import terminate_verified_result
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
+from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
@@ -42,7 +43,13 @@ def _context(
 ) -> ProtectionContext:
     supervisor = psutil.Process()
     owner = WorkerOwner(run_id, supervisor.pid, supervisor.create_time(), run_id, node_id)
-    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+    return ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        registry,
+        release=PlainWorkerRelease(),
+    )
 
 
 def _graph(tmp_path: Path) -> tuple[MikadoGraph, int]:

@@ -10,6 +10,7 @@ from pathlib import Path
 import psutil
 import pytest
 
+import milknado.adapters._loop_worker_release as release_module
 import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
@@ -23,7 +24,13 @@ from milknado.loop._process_registry import WorkerRegistry
 def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> ProtectionContext:
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
-    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+    return ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        registry,
+        release=release_module.LoopWorkerRelease(graph.db_path),
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX protected launch is required")
@@ -110,6 +117,64 @@ def test_registry_abort_covers_popen_returning_after_stop(
         assert graph.runs.live_workers(run_id="run-1") == ()
     finally:
         release.set()
+        thread.join(timeout=5)
+        graph.close()
+
+
+def _marker_options(path: Path, marker: Path) -> SpawnOptions:
+    return SpawnOptions(
+        (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"),
+        path,
+        None,
+        False,
+        subprocess.DEVNULL,
+        subprocess.PIPE,
+        subprocess.PIPE,
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
+def test_registry_remains_available_during_graph_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    registry = WorkerRegistry()
+    entered, resume = threading.Event(), threading.Event()
+    marker = tmp_path / "worked"
+    errors: list[Exception] = []
+
+    def delayed_graph(path: Path) -> MikadoGraph:
+        entered.set()
+        assert resume.wait(timeout=5)
+        return MikadoGraph(path)
+
+    def launch() -> None:
+        try:
+            _ = spawn_protected(
+                _marker_options(tmp_path, marker),
+                _context(graph, node.id, registry),
+            )
+        except Exception as exc:
+            errors.append(exc)
+
+    monkeypatch.setattr(release_module, "MikadoGraph", delayed_graph)
+    thread = threading.Thread(target=launch)
+    try:
+        thread.start()
+        assert entered.wait(timeout=5)
+        assert registry.lock.acquire(blocking=False)
+        registry.lock.release()
+        assert registry.stop_all(time.monotonic() + 1) is False
+        resume.set()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        assert len(errors) == 1 and str(errors[0]) == "worker admission closed before READY"
+        assert not marker.exists()
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        resume.set()
         thread.join(timeout=5)
         graph.close()
 

@@ -7,13 +7,31 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
-from milknado.domains.common import WorkerIdentity, pid_alive
+from milknado.adapters._protection import protection_from_env
+from milknado.domains.common import WorkerIdentity, identity_state, pid_alive
 from milknado.domains.dispatch import Descendant, ProcessOutcome, WorkerCleanupResult
-from milknado.loop._process_identity import identity_state, observe_descendants
+from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_gate import SpawnOptions, StartEvidence
+from milknado.loop._process_identity import observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
+from milknado.loop._process_lifecycle import spawn_protected
+
+
+@dataclass(frozen=True, slots=True)
+class _InlineLaunch:
+    argv: tuple[str, ...]
+    cwd: Path
+    log_path: Path
+    stdin: bytes
+    env: dict[str, str]
+    timeout: float
+    run_id: str
+    cancel_requested: Callable[[], bool] | None
+    on_started: Callable[[int], None]
 
 
 class ProcessAdapter:
@@ -33,8 +51,12 @@ class ProcessAdapter:
         cancel_requested: Callable[[], bool] | None = None,
         on_started: Callable[[int], None] | None = None,
     ) -> ProcessOutcome:
-        timed_out = False
-        cancelled = False
+        if on_started is not None and (run_id := env.get("MILKNADO_RUN_ID")):
+            return self._run_protected(
+                _InlineLaunch(
+                    argv, cwd, log_path, stdin, env, timeout, run_id, cancel_requested, on_started
+                )
+            )
         with log_path.open("wb") as log:
             proc = subprocess.Popen(
                 argv,
@@ -51,36 +73,98 @@ class ProcessAdapter:
                     proc.kill()
                     _ = proc.communicate()
                     raise
-            if cancel_requested is None:
-                try:
-                    _ = proc.communicate(input=stdin, timeout=timeout)
-                except subprocess.TimeoutExpired:
+            timed_out, cancelled = self._wait_for_exit(proc, stdin, timeout, cancel_requested)
+            if timed_out or cancelled:
+                if cancel_requested is None:
                     proc.kill()
                     _ = proc.wait()
-                    timed_out = True
-            else:
-                if proc.stdin is not None:
-                    threading.Thread(
-                        target=self._write_stdin,
-                        args=(proc.stdin, stdin),
-                        daemon=True,
-                    ).start()
-                deadline = time.monotonic() + timeout
-                while proc.poll() is None:
-                    if cancel_requested():
-                        self._terminate(proc)
-                        cancelled = True
-                        break
-                    if time.monotonic() >= deadline:
-                        self._terminate(proc)
-                        timed_out = True
-                        break
-                    time.sleep(self._poll_interval)
+                else:
+                    self._terminate(proc)
         return ProcessOutcome(
             exit_code=proc.returncode if proc.returncode is not None else -1,
             timed_out=timed_out,
             cancelled=cancelled,
         )
+
+    @staticmethod
+    def _protection_context(launch: _InlineLaunch) -> ProtectionContext:
+        return protection_from_env(launch.env, launch.run_id)
+
+    def _run_protected(self, launch: _InlineLaunch) -> ProcessOutcome:
+        context = self._protection_context(launch)
+        with launch.log_path.open("wb") as log:
+            options = SpawnOptions(
+                launch.argv,
+                launch.cwd,
+                launch.env,
+                False,
+                subprocess.PIPE,
+                log.fileno(),
+                log.fileno(),
+                launch.run_id,
+            )
+            worker = spawn_protected(options, context)
+            try:
+                if worker.worker.start_evidence is StartEvidence.EXECUTED:
+                    launch.on_started(worker.process.pid)
+                # SpawnOptions uses text=False, so this subprocess carries bytes.
+                proc = cast(subprocess.Popen[bytes], worker.process)
+                timed_out, cancelled = self._wait_for_exit(
+                    proc, launch.stdin, launch.timeout, launch.cancel_requested
+                )
+                if not worker.complete(graceful=not (timed_out or cancelled)):
+                    raise RuntimeError(f"worker cleanup unresolved for run {launch.run_id}")
+            except BaseException as exc:
+                if not worker.cleanup():
+                    raise RuntimeError(
+                        f"worker cleanup unresolved for run {launch.run_id}"
+                    ) from exc
+                raise
+        if worker.worker.start_evidence is StartEvidence.STARTUP_FAILED:
+            raise OSError(f"worker command failed before execution for run {launch.run_id}")
+        if worker.worker.start_evidence is StartEvidence.UNKNOWN:
+            raise RuntimeError(f"worker execution start unknown for run {launch.run_id}")
+        return ProcessOutcome(
+            worker.process.returncode if worker.process.returncode is not None else -1,
+            timed_out,
+            cancelled,
+        )
+
+    def _wait_for_exit(
+        self,
+        proc: subprocess.Popen[bytes],
+        stdin: bytes,
+        timeout: float,
+        cancel_requested: Callable[[], bool] | None,
+    ) -> tuple[bool, bool]:
+        """Feed stdin and wait for exit; return (timed_out, cancelled). Callers terminate."""
+        if cancel_requested is None:
+            try:
+                _ = proc.communicate(input=stdin, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return True, False
+            return False, False
+        if proc.stdin is not None:
+            threading.Thread(
+                target=self._write_stdin, args=(proc.stdin, stdin), daemon=True
+            ).start()
+        return self._wait(proc, timeout, cancel_requested)
+
+    def _wait(
+        self,
+        proc: subprocess.Popen[bytes],
+        timeout: float,
+        cancel_requested: Callable[[], bool],
+    ) -> tuple[bool, bool]:
+        """Poll until exit, cancel, or deadline; return (timed_out, cancelled)."""
+        deadline = time.monotonic() + timeout
+        while proc.poll() is None:
+            if cancel_requested():
+                return False, True
+            if time.monotonic() >= deadline:
+                return True, False
+            time.sleep(self._poll_interval)
+        return False, False
 
     def spawn_detached(
         self,

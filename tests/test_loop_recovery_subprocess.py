@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from typing import TypedDict
 
@@ -15,7 +17,7 @@ import pytest
 from milknado.adapters import GitAdapter, ProcessAdapter
 from milknado.app.loop import LoopStartRequest, start_loop_run
 from milknado.app.project import open_graph
-from milknado.domains.common import NodeSpec, ObservationKey, pid_alive
+from milknado.domains.common import NodeSpec, NodeStatus, ObservationKey, pid_alive
 from milknado.domains.dispatch import cancel_run, fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, WorkerRecord
 
@@ -47,7 +49,7 @@ def _wait_for_exit(pid: int) -> None:
     assert not pid_alive(pid), f"supervisor status={status}"
 
 
-def _freeze_after_snapshot(graph: MikadoGraph, worker: WorkerRecord, pid: int) -> WorkerRecord:
+def freeze_after_snapshot(graph: MikadoGraph, worker: WorkerRecord, pid: int) -> WorkerRecord:
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         record = graph.runs.get_worker(worker.invocation_id)
@@ -59,6 +61,18 @@ def _freeze_after_snapshot(graph: MikadoGraph, worker: WorkerRecord, pid: int) -
                 time.sleep(0.01)
             frozen = graph.runs.get_worker(worker.invocation_id)
             if frozen is not None and frozen.observation_owner is None:
+                try:
+                    with closing(sqlite3.connect(graph.db_path, timeout=0)) as probe:
+                        _ = probe.execute("BEGIN IMMEDIATE")
+                        probe.rollback()
+                except sqlite3.Error as exc:
+                    os.kill(pid, signal.SIGCONT)
+                    if not isinstance(exc, sqlite3.OperationalError) or (
+                        exc.sqlite_errorcode != sqlite3.SQLITE_BUSY
+                    ):
+                        raise
+                    time.sleep(0.01)
+                    continue
                 return frozen
             os.kill(pid, signal.SIGCONT)
         time.sleep(0.01)
@@ -88,6 +102,7 @@ def running_project(
     )
     _ = agent.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("HOME", str(tmp_path))
     _ = (root / "milknado.toml").write_text(
         "\n".join(
             (
@@ -102,20 +117,8 @@ def running_project(
     )
     _ = subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
     _ = subprocess.run(["git", "add", "milknado.toml"], cwd=root, check=True)
-    _ = subprocess.run(
-        [
-            "git",
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-qm",
-            "initial",
-        ],
-        cwd=root,
-        check=True,
-    )
+    git_identity = ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid"]
+    _ = subprocess.run([*git_identity, "commit", "-qm", "initial"], cwd=root, check=True)
     graph, _ = open_graph(root)
     groups: list[int] = []
     try:
@@ -138,6 +141,58 @@ def _start(root: Path, graph: MikadoGraph, node_id: int, groups: list[int]) -> _
     assert isinstance(run_id, str) and isinstance(pid, int)
     groups.append(pid)
     return {"run_id": run_id, "pid": pid}
+
+
+def _wait_for_detached_failure(graph: MikadoGraph, outer_id: str, inner_id: str) -> None:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        outer, inner = graph.runs.get(outer_id), graph.runs.get(inner_id)
+        if outer is not None and inner is not None:
+            if outer["status"] != "running" and inner["status"] != "running":
+                return
+        time.sleep(0.05)
+    raise AssertionError("detached failure did not complete")
+
+
+def test_detached_runner_reuses_one_linked_task_attempt(
+    running_project: tuple[Path, MikadoGraph, int, list[int]],
+) -> None:
+    root, graph, node_id, groups = running_project
+    config_path = root / "milknado.toml"
+    _ = config_path.write_text(config_path.read_text() + "max_node_attempts = 3\n")
+    run = _start(root, graph, node_id, groups)
+    worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
+    groups.append(worker.pgid)
+    outer = graph.runs.get(run["run_id"])
+    assert outer is not None and outer["attempt_id"] is not None
+    attempt_id = str(outer["attempt_id"])
+    assert worker.graph_run_id is not None
+    os.kill(worker.pid, signal.SIGKILL)
+    _wait_for_exit(worker.pid)
+    _wait_for_detached_failure(graph, run["run_id"], worker.graph_run_id)
+    _wait_for_exit(run["pid"])
+    graph.close()
+    reopened, _ = open_graph(root)
+    try:
+        outer = reopened.runs.get(run["run_id"])
+        inner = reopened.runs.get(worker.graph_run_id)
+        attempt = reopened.task_attempts.get(attempt_id)
+        current = reopened.get_node(node_id)
+        evidence = reopened.runs.get_worker(worker.invocation_id)
+        assert outer is not None and inner is not None
+        assert (outer["status"], inner["status"]) == ("failed", "failed")
+        assert (outer["attempt_id"], inner["attempt_id"]) == (attempt_id, attempt_id)
+        assert attempt is not None
+        assert (attempt.outcome, attempt.disposition) == ("failed", "pending")
+        assert current is not None and current.status is NodeStatus.PENDING
+        assert evidence is not None and evidence.ended_at is not None
+        assert reopened.task_attempts.failed_count(node_id) == 1
+        assert fail_stale_running_runs(reopened, node_id, ProcessAdapter()) == []
+        assert reopened.task_attempts.failed_count(node_id) == 1
+        replayed = (reopened.runs.get(run["run_id"]), reopened.runs.get(worker.graph_run_id))
+        assert all(row is not None and row["status"] == "failed" for row in replayed)
+    finally:
+        reopened.close()
 
 
 def test_actual_runner_cancel_waits_for_worker_exit(
@@ -164,7 +219,7 @@ def test_start_reclaims_only_after_actual_old_worker_exits(
     old_worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(old_worker.pid)
     assert pid_alive(old_worker.pid)
-    _ = _freeze_after_snapshot(graph, old_worker, old_run["pid"])
+    _ = freeze_after_snapshot(graph, old_worker, old_run["pid"])
     os.kill(old_run["pid"], signal.SIGKILL)
     _wait_for_exit(old_run["pid"])
     replacement = _start(root, graph, node_id, groups)
@@ -182,7 +237,7 @@ def test_stale_sweep_waits_for_actual_old_worker_exit(
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
     assert pid_alive(worker.pid)
-    _ = _freeze_after_snapshot(graph, worker, run["pid"])
+    _ = freeze_after_snapshot(graph, worker, run["pid"])
     os.kill(run["pid"], signal.SIGKILL)
     _wait_for_exit(run["pid"])
     changed = fail_stale_running_runs(graph, node_id, ProcessAdapter())
@@ -200,7 +255,7 @@ def test_dead_owner_cancel_recovers_actual_worker(
     run = _start(root, graph, node_id, groups)
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
-    _ = _freeze_after_snapshot(graph, worker, run["pid"])
+    _ = freeze_after_snapshot(graph, worker, run["pid"])
     os.kill(run["pid"], signal.SIGKILL)
     _wait_for_exit(run["pid"])
     result = cancel_run(graph, GitAdapter(root), ProcessAdapter(), root, run["run_id"])
@@ -218,7 +273,7 @@ def test_start_preserves_actual_worker_with_interrupted_observation(
     run = _start(root, graph, node_id, groups)
     worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
     groups.append(worker.pid)
-    frozen = _freeze_after_snapshot(graph, worker, run["pid"])
+    frozen = freeze_after_snapshot(graph, worker, run["pid"])
     key = ObservationKey(
         worker.invocation_id,
         "supervisor",

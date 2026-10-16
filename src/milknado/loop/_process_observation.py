@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import psutil
 
-from milknado.domains.common import ObservationKey
+from milknado.domains.common import ObservationKey, identity_state
 from milknado.loop._process_contract import WorkerEvidence
 from milknado.loop._process_gate import WorkerProcess
-from milknado.loop._process_identity import identity_state, observe_descendants
+from milknado.loop._process_identity import observe_descendants
 
 
 def snapshot(worker: WorkerProcess, evidence: WorkerEvidence) -> int:

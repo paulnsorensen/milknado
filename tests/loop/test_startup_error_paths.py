@@ -17,6 +17,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, spawn_gated
 from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 def _options(tmp_path: Path, command: tuple[str, ...]) -> SpawnOptions:
@@ -31,7 +32,7 @@ def test_empty_command_fails_before_process_creation(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
-def test_popen_failure_closes_both_gate_fds(
+def test_popen_failure_closes_gate_and_proof_fds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real_pipe = os.pipe
@@ -49,7 +50,7 @@ def test_popen_failure_closes_both_gate_fds(
     monkeypatch.setattr(subprocess, "Popen", fail_popen)
     with pytest.raises(OSError, match="spawn denied"):
         _ = spawn_gated(_options(tmp_path, (sys.executable, "-c", "pass")))
-    assert len(gate_fds) == 2
+    assert len(gate_fds) == 4
     for fd in gate_fds:
         with pytest.raises(OSError):
             _ = os.fstat(fd)
@@ -105,7 +106,13 @@ def test_registry_ticket_closes_when_spawn_fails(tmp_path: Path) -> None:
     registry = WorkerRegistry()
     current = psutil.Process()
     owner = WorkerOwner("run", current.pid, current.create_time(), "run", node.id)
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        registry,
+        release=PlainWorkerRelease(),
+    )
     try:
         with pytest.raises(ValueError, match="worker command is empty"):
             _ = spawn_protected(_options(tmp_path, ()), context)

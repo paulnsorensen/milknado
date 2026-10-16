@@ -22,6 +22,8 @@ from milknado.domains.graph._group_policy import validate_membership, validate_t
 from milknado.domains.graph._group_reservation import (
     admit_writer,
     fail_reservation,
+    record_group_task,
+    release_group_slot,
     reserved_workspace,
 )
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
@@ -263,17 +265,8 @@ class ExecutionGroupStore:
                     landed = self._graph.mark_terminal(attempt.node_id, attempt.attempt_id, status)
                 if not landed:
                     raise ValueError("execution group writer fence lost")
-                _ = conn.execute(
-                    "UPDATE execution_group_tasks SET status = ?, result = ? "
-                    + "WHERE group_id = ? AND node_id = ?",
-                    (outcome.status, outcome.result, attempt.group_id, attempt.node_id),
-                )
-                _ = conn.execute(
-                    "UPDATE execution_groups SET active_node_id = NULL, active_run_id = NULL, "
-                    + "active_attempt_id = NULL, active_node_status = NULL, "
-                    + "active_node_run_id = NULL WHERE id = ? AND active_attempt_id = ?",
-                    (attempt.group_id, attempt.attempt_id),
-                )
+                _ = record_group_task(conn, attempt, outcome.status, outcome.result)
+                _ = release_group_slot(conn, attempt)
 
     def task_result(self, node_id: int) -> tuple[str, str] | None:  # noqa: V105
         with closing(self._connect()) as conn:

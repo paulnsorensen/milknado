@@ -457,11 +457,13 @@ class TestMergeBackReuse:
         assert len(calls) == 1
         assert calls[0][0] == "refs/heads/main"
 
+    @pytest.mark.parametrize("asynchronous", [False, True])
     def test_branch_switch_cannot_redirect_merge_target(
-        self, tmp_path: Path, worker_stub: Callable[[str], str]
+        self, tmp_path: Path, worker_stub: Callable[[str], str], asynchronous: bool
     ) -> None:
         root = tmp_path / "repo"
         _init_repo(root)
+        _ = (root / "milknado.toml").write_text("[milknado]\nmax_node_attempts = 2\n")
         worker = tmp_path / "switch-worker.py"
         _ = worker.write_text(
             "import pathlib, subprocess\n"
@@ -479,19 +481,33 @@ class TestMergeBackReuse:
                 project_root=str(root),
             ),
         )
+        command = milknado_run_inline_start if asynchronous else milknado_run_inline
         result = cast(
             RunDict,
             _call(
-                milknado_run_inline,
+                command,
                 node_id=task["id"],
                 worker_cmd=worker_stub(f"{sys.executable} {worker}"),
                 project_root=str(root),
             ),
         )
+        if asynchronous:
+            result = _wait_for_terminal(cast(str, result["run_id"]), str(root))
         assert result["status"] == "failed"
         assert _git(root, "branch", "--show-current").strip() == "diversion"
         assert not (root / "landed.txt").exists()
         assert result["worktree_preserved"]
+        graph, _ = open_graph(root)
+        try:
+            node = graph.get_node(task["id"])
+            attempt = graph.task_attempts.get(cast(str, result["run_id"]))
+            assert node is not None and node.status.value == "failed"
+            assert node.worktree_path == result["worktree_preserved"]
+            assert node.branch_name is not None
+            assert attempt is not None and attempt.outcome == "preserved"
+            assert graph.task_attempts.failed_count(task["id"]) == 0
+        finally:
+            graph.close()
 
 
 class TestIsolateAsync:
@@ -603,7 +619,8 @@ class TestMergeBackFailure:
         assert preserved is not None
         assert preserved == str(root / "milknado-1-conflict")
         assert Path(preserved).exists()
-        assert node.worktree_path is None
+        assert node.worktree_path == preserved
+        assert node.branch_name == "milknado/1-conflict"
         assert [record.message for record in caplog.records if record.levelname == "WARNING"] == [
             "ISOLATE merge-back for branch milknado/1-conflict did not tear down; "
             + f"preserved worktree {preserved}"
@@ -819,6 +836,70 @@ class TestIsolateWorkerFailure:
         assert _node(root, task["id"]).status.value == "failed"
 
 
+def test_sync_inline_uses_persisted_node_budget(
+    tmp_path: Path, worker_stub: Callable[[str], str]
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    _ = (root / "milknado.toml").write_text("[milknado]\nmax_node_attempts = 2\n")
+    task = cast(
+        NodeSummary,
+        _call(milknado_todo_add, description="retry", kind="task", project_root=str(root)),
+    )
+    for number, expected in ((1, "pending"), (2, "blocked")):
+        result = cast(
+            RunDict,
+            _call(
+                milknado_run_inline,
+                node_id=task["id"],
+                worker_cmd=worker_stub("sh -c 'exit 7'"),
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+            ),
+        )
+        assert result["status"] == expected
+        graph, _ = open_graph(root)
+        try:
+            assert graph.task_attempts.failed_count(task["id"]) == number
+            run = graph.runs.get(cast(str, result["run_id"]))
+            assert run is not None and run["attempt_id"] is not None
+        finally:
+            graph.close()
+
+
+def test_async_inline_uses_persisted_node_budget(
+    tmp_path: Path, worker_stub: Callable[[str], str]
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    _ = (root / "milknado.toml").write_text("[milknado]\nmax_node_attempts = 2\n")
+    task = cast(
+        NodeSummary,
+        _call(milknado_todo_add, description="retry", kind="task", project_root=str(root)),
+    )
+    for number, expected in ((1, "pending"), (2, "blocked")):
+        ref = cast(
+            RunDict,
+            _call(
+                milknado_run_inline_start,
+                node_id=task["id"],
+                worker_cmd=worker_stub("sh -c 'exit 7'"),
+                worktree=WorktreeMode.THIS_BRANCH,
+                project_root=str(root),
+            ),
+        )
+        final = _wait_for_terminal(cast(str, ref["run_id"]), str(root))
+        assert final["status"] == "failed"
+        assert _node(root, task["id"]).status.value == expected
+        graph, _ = open_graph(root)
+        try:
+            assert graph.task_attempts.failed_count(task["id"]) == number
+            run = graph.runs.get(cast(str, ref["run_id"]))
+            assert run is not None and run["attempt_id"] is not None
+        finally:
+            graph.close()
+
+
 class TestAsyncStartFailure:
     """A startup failure AFTER the node is claimed must finalize the node FAILED
     (never strand it RUNNING) and re-raise — the app-layer claim-release seam in
@@ -927,6 +1008,10 @@ def test_isolated_worktree_removes_checkout_when_base_moves(tmp_path: Path) -> N
         def git_common_dir(self, worktree: Path) -> Path | None:
             _ = worktree
             return None
+
+        def branch_exists(self, branch: str) -> bool:
+            _ = branch
+            return False
 
         def create_worktree(self, path: Path, _branch: str) -> None:
             path.mkdir(parents=True)

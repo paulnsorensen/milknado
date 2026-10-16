@@ -203,7 +203,7 @@ class RunLoop:
             stall_threshold_seconds=(
                 cfg.stall_threshold_seconds if cfg else _STALL_THRESHOLD_DEFAULT
             ),
-            max_attempts=cfg.dispatch_max_retries + 1 if cfg else 3,
+            max_attempts=cfg.max_node_attempts if cfg else 1,
         )
         return project_state(facts, time.monotonic())
 
@@ -222,7 +222,7 @@ class RunLoop:
             output=tuple(self._loop.get_run_output_tail(run_id, 30)),
             pending_guidance=tuple(self._loop.get_run_guidance(run_id)),
             dispatched_at=active.dispatched_at,
-            prior_attempts=active.prior_attempts,
+            prior_attempts=self._graph.task_attempts.failed_count(active.node_id),
             progress_message=progress.message if progress else "",
             progress_work=progress.work if progress else None,
             progress_total=progress.total if progress else None,

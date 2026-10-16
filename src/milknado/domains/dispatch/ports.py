@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from milknado.domains.common import NodeStatus, RunResult, WorkerIdentity
+from milknado.domains.common import RunResult, WorkerIdentity
 from milknado.domains.common.config import MilknadoConfig
 from milknado.domains.graph import MikadoGraph
 
@@ -19,6 +19,8 @@ class RunWindow:
     exit_code_path: Path
     env: dict[str, str] = field(default_factory=dict)
     brief_path: Path | None = None
+    exec_receipt_path: Path | None = None
+    exec_nonce: str | None = None
 
 
 class FinishRunFacadePort(Protocol):
@@ -35,16 +37,6 @@ class RunReaderFacadePort(Protocol):
 
 class RunFinalizerFacadePort(FinishRunFacadePort, Protocol):
     def get(self, run_id: str, /) -> Mapping[str, object] | None: ...
-
-
-class FinishDispatchPort(Protocol):
-    """The graph capability required to persist a worker terminal result."""
-
-    @property
-    def runs(self) -> FinishRunFacadePort: ...
-
-    def mark_terminal(self, node_id: int, run_id: str, status: NodeStatus, /) -> bool: ...
-    def get_node(self, node_id: int, /) -> object | None: ...
 
 
 class RunReaderPort(Protocol):

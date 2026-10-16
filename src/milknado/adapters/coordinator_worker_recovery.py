@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.domains.common import WorkerIdentity
+from milknado.domains.common import WorkerIdentity, identity_state
 from milknado.domains.graph import RuntimeWorkers, WorkerEvidenceStore
-from milknado.loop._process_identity import identity_state, terminate_verified
+from milknado.loop._process_identity import terminate_verified
 
 
 @dataclass(frozen=True, slots=True)

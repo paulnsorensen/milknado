@@ -18,6 +18,9 @@ class LaunchTicket:
         self.graph_run_id = graph_run_id
         self._gate_close: Callable[[], None] | None = None
         self._shutdown: Callable[[float], bool] | None = None
+        self._stop_requested = False
+        self._activating = False
+        self._activation_done = threading.Condition(registry.lock)
 
     @property
     def cancelled(self) -> bool:
@@ -27,7 +30,7 @@ class LaunchTicket:
     def bind_pending(self, close_gate: Callable[[], None]) -> bool:
         with self._registry.lock:
             self._gate_close = close_gate
-            cancelled = self._registry.requested()
+            cancelled = self._stop_requested or self._registry.requested()
         if cancelled:
             close_gate()
         return not cancelled
@@ -35,15 +38,32 @@ class LaunchTicket:
     def activate(
         self, release_gate: Callable[[], None], shutdown: Callable[[float], bool]
     ) -> bool:
+        # The gate release waits on exec observation and DB commits, so it runs
+        # outside the registry lock. A stop that lands meanwhile waits for the
+        # release to finish, then shuts the released worker down.
         with self._registry.lock:
-            if self._registry.requested():
+            if self._stop_requested or self._registry.requested():
                 return False
-            self._shutdown = shutdown
+            self._activating = True
+        try:
             release_gate()
-            return True
+        except BaseException:
+            _ = self._finish_activation(None)
+            raise
+        return self._finish_activation(shutdown)
+
+    def _finish_activation(self, shutdown: Callable[[float], bool] | None) -> bool:
+        with self._registry.lock:
+            self._shutdown = shutdown
+            self._activating = False
+            self._activation_done.notify_all()
+            return not (self._stop_requested or self._registry.requested())
 
     def stop(self, deadline: float) -> bool:
         with self._registry.lock:
+            self._stop_requested = True
+            while self._activating and (remaining := deadline - time.monotonic()) > 0:
+                _ = self._activation_done.wait(remaining)
             close_gate, shutdown = self._gate_close, self._shutdown
         if shutdown is not None:
             return shutdown(deadline)

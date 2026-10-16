@@ -17,9 +17,15 @@ import pytest
 from typing_extensions import override
 
 from milknado.adapters import ProcessAdapter
-from milknado.domains.common import GitPort, MilknadoConfig, NodeKind, RunResult, WorktreeMode
+from milknado.domains.common import (
+    GitPort,
+    MilknadoConfig,
+    NodeKind,
+    NodeStatus,
+    RunResult,
+    WorktreeMode,
+)
 from milknado.domains.dispatch import (
-    GraphSessionPort,
     ProcessOutcome,
     ProcessPort,
     ProcessTerminationPort,
@@ -773,49 +779,23 @@ class TestDispatchLifecycleGuards:
     def test_sync_dispatch_detects_node_deleted_after_worker(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from milknado.domains.common import NodeKind
         from milknado.domains.dispatch import SyncDispatchRequest, dispatch_node_sync, lifecycle
         from milknado.domains.dispatch.runner import RunResult as WorkerResult
 
-        node = type("TaskNode", (), {"kind": NodeKind.TASK})()
+        graph = MikadoGraph(tmp_path / "graph.db")
+        node = graph.add_node("task")
+        monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-        class Graph:
-            def register_controller_master(self) -> None:
-                pass
+        def delete_after_worker(*_args: object, **_kwargs: object) -> WorkerResult:
+            conn = graph.group_connection
+            _ = conn.execute("DELETE FROM runs WHERE node_id = ?", (node.id,))
+            _ = conn.execute("DELETE FROM nodes WHERE id = ?", (node.id,))
+            conn.commit()
+            return WorkerResult(0, tmp_path / "run.log", "", False)
 
-            def __init__(self) -> None:
-                self.reads: int = 0
-                self.runs: Graph = self
-
-            def get_node(self, node_id: int) -> object | None:  # pyright: ignore[reportUnusedParameter]
-                self.reads += 1
-                return node if self.reads == 1 else None
-
-            def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
-                pass
-
-            def start(self, *_args: object, **_kwargs: object) -> None:
-                pass
-
-            def finish(self, *_args: object, **_kwargs: object) -> None:
-                pass
-
-            def mark_terminal(self, *_args: object, **_kwargs: object) -> None:
-                pass
-
-        monkeypatch.setattr(lifecycle, "render_brief", lambda *args, **kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-        monkeypatch.setattr(
-            lifecycle,
-            "run_headless",
-            lambda *args, **kwargs: WorkerResult(  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-                exit_code=0,
-                log_path=tmp_path / "run.log",
-                summary="",
-                timed_out=False,
-            ),
-        )
+        monkeypatch.setattr(lifecycle, "run_headless", delete_after_worker)
         request = SyncDispatchRequest(
-            node_id=7,
+            node_id=node.id,
             project_root=tmp_path,
             worker_cmd=None,
             timeout_seconds=1,
@@ -824,9 +804,8 @@ class TestDispatchLifecycleGuards:
             worktree_mode=WorktreeMode.THIS_BRANCH,
         )
         with pytest.raises(RuntimeError, match="not found after run completed"):
-            _ = dispatch_node_sync(
-                cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
-            )
+            _ = dispatch_node_sync(graph, _branch_git(), request)
+        graph.close()
 
 
 def test_stale_sweep_logs_and_skips_malformed_started_at(
@@ -1894,12 +1873,16 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
+    from milknado.domains.graph import StartTaskAttempt
 
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
         node = graph.add_node("fenced task")
         graph.claim_node_for_dispatch(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
-        graph.runs.start("run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1)
+        _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+        graph.runs.start(
+            "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
+        )
         graph.runs.finish(
             "run-1",
             RunResult(
@@ -1910,14 +1893,15 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
             ),
         )
 
-        lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
-            graph,
-            node.id,
-            "run-1",
-            SimpleNamespace(exit_code=1, timed_out=False),
-            "failed",
-            None,
-        )
+        with pytest.raises(RuntimeError, match="task attempt fence lost"):
+            lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+                graph,
+                node.id,
+                "run-1",
+                SimpleNamespace(exit_code=1, timed_out=False),
+                "failed",
+                None,
+            )
 
         final = graph.get_node(node.id)
         assert final is not None
@@ -1930,71 +1914,60 @@ def test_finish_dispatch_does_not_mark_node_after_lost_run_fence(tmp_path: Path)
         graph.close()
 
 
-def test_finish_dispatch_allows_deleted_node_after_lost_node_fence() -> None:
-    from types import SimpleNamespace
-
-    from milknado.domains.dispatch import lifecycle
-
-    class Graph:
-        def register_controller_master(self) -> None:
-            pass
-
-        def __init__(self) -> None:
-            self.runs: Graph = self
-
-        def finish(self, *_args: object) -> None:
-            pass
-
-        def mark_terminal(self, *_args: object) -> bool:
-            return False
-
-        def get_node(self, _node_id: int) -> None:
-            return None
-
-    lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
-        Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
-    )
-
-
-def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
+def test_finish_dispatch_allows_deleted_node_after_lost_node_fence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
-    from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
-    from milknado.domains.graph import RunFenceLostError
+    from milknado.domains.graph import StartTaskAttempt
 
-    class Graph:
-        def register_controller_master(self) -> None:
-            pass
-
-        def __init__(self) -> None:
-            self.runs: Graph = self
-
-        def get_node(self, _node_id: int):
-            return SimpleNamespace(kind=NodeKind.TASK)
-
-        def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def start(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def finish(self, *_args: object, **_kwargs: object) -> None:
-            raise RunFenceLostError("finish_run lost its running-row fence")
-
-        def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
-            return True
-
-    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
-    monkeypatch.setattr(
-        lifecycle,
-        "run_headless",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("task")
+    assert graph.claim_node(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+    graph.runs.start(
+        "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
     )
+    mark_terminal = graph.mark_terminal
+
+    def delete_before_mark(
+        node_id: int, run_id: str, status: NodeStatus, *, preserve_recovery: bool = False
+    ) -> bool:
+        conn = graph.group_connection
+        _ = conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+        _ = conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+        conn.commit()
+        return mark_terminal(node_id, run_id, status, preserve_recovery=preserve_recovery)
+
+    monkeypatch.setattr(graph, "mark_terminal", delete_before_mark)
+    lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
+        graph, node.id, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+    )
+    assert graph.get_node(node.id) is None
+    graph.close()
+
+
+def test_sync_dispatch_rejects_lost_terminal_fence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from milknado.domains.dispatch import lifecycle
+    from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
+
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("task")
+    monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+
+    def finish_before_error(*_args: object, **kwargs: object) -> None:
+        graph.runs.finish(
+            cast(str, kwargs["run_id"]),
+            RunResult("done", 0, False, "2026-01-01T00:01:00+00:00"),
+        )
+        raise RuntimeError("worker failed")
+
+    monkeypatch.setattr(lifecycle, "run_headless", finish_before_error)
     request = SyncDispatchRequest(
-        node_id=1,
+        node_id=node.id,
         project_root=tmp_path,
         worker_cmd=None,
         timeout_seconds=1,
@@ -2003,9 +1976,12 @@ def test_sync_dispatch_preserves_worker_error_after_lost_terminal_fence(
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
     with pytest.raises(RuntimeError, match="worker failed"):
-        _ = lifecycle.dispatch_node_sync(
-            cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
-        )
+        _ = lifecycle.dispatch_node_sync(graph, _branch_git(), request)
+    row = graph.runs.for_node(node.id)[0]
+    assert row["status"] == "done"
+    failed = graph.get_node(node.id)
+    assert failed is not None and failed.status is NodeStatus.FAILED
+    graph.close()
 
 
 def test_cancel_finalize_adopts_late_terminal_winner() -> None:
@@ -2057,6 +2033,11 @@ def test_stale_reconcile_rejects_lost_terminal_fence(tmp_path: Path) -> None:
         _ = reconcile.fail_stale_running_runs(Graph(), 1, ProcessAdapter())
 
 
+class _RealGraphSessions:
+    def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:
+        return open_graph(project_root)
+
+
 def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2076,33 +2057,39 @@ def test_async_worker_writes_terminal_error_sidecar_on_persistence_exception(
     log_path.parent.mkdir(parents=True)
     log_path.touch()
 
-    class Graph:
-        def __init__(self) -> None:
-            self.runs: Graph = self
+    from milknado.domains.graph import StartTaskAttempt
 
-        def finish(self, *_args: object) -> None:
-            raise RuntimeError("database unavailable")
-
-        def close(self) -> None:
-            return None
-
-    class Sessions:
-        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:  # pyright: ignore[reportUnusedParameter]
-            return (
-                cast(MikadoGraph, cast(object, Graph())),
-                cast(MilknadoConfig, cast(object, None)),
-            )
+    graph, _ = open_graph(tmp_path)
+    node = graph.add_node("task")
+    assert node.id == request.node_id
+    assert graph.claim_node(node.id, request.run_id, now="2026-01-01T00:00:00+00:00")
+    _ = graph.task_attempts.start(
+        StartTaskAttempt(node.id, request.run_id, request.run_id, request.run_id, 1)
+    )
+    graph.runs.start(
+        request.run_id,
+        node.id,
+        str(log_path),
+        "2026-01-01T00:00:00+00:00",
+        1,
+        attempt_id=request.run_id,
+    )
+    _ = graph.group_connection.execute(
+        "CREATE TRIGGER refuse_failed_run BEFORE UPDATE OF status ON runs "
+        + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END"
+    )
+    graph.close()
 
     monkeypatch.setattr(
         async_run,
-        "_run_worker_process",
+        "run_worker_process",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     context = async_run.AsyncWorkerContext(
         request=request,
         log_path=log_path,
         argv=("claude",),
-        graph_sessions=Sessions(),
+        graph_sessions=_RealGraphSessions(),
         git=_branch_git(),
         process=cast(ProcessPort, object()),
     )
@@ -2132,63 +2119,46 @@ def test_poll_async_run_reports_terminal_error_sidecar(tmp_path: Path) -> None:
     assert result["error"] == "persistence failed"
 
 
-def test_finish_dispatch_rejects_lost_node_fence_when_node_remains() -> None:
+def test_finish_dispatch_rejects_lost_node_fence_when_node_remains(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
     from milknado.domains.dispatch import lifecycle
+    from milknado.domains.graph import StartTaskAttempt
 
-    class Graph:
-        def register_controller_master(self) -> None:
-            pass
-
-        def __init__(self) -> None:
-            self.runs: Graph = self
-
-        def finish(self, *_args: object) -> None:
-            pass
-
-        def mark_terminal(self, *_args: object) -> bool:
-            return False
-
-        def get_node(self, _node_id: int):
-            return SimpleNamespace(id=_node_id)
-
-    with pytest.raises(RuntimeError, match="terminal node write lost its fence"):
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("task")
+    assert graph.claim_node(node.id, "run-1", now="2026-01-01T00:00:00+00:00")
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "run-1", "run-1", "run-1", 1))
+    graph.runs.start(
+        "run-1", node.id, "run.log", "2026-01-01T00:00:00+00:00", 1, attempt_id="run-1"
+    )
+    assert graph.replace_run_id(node.id, "run-1", "next")
+    with pytest.raises(RuntimeError, match="terminal node fence lost"):
         lifecycle._finish_dispatch(  # pyright: ignore[reportPrivateUsage]
-            Graph(), 1, "run-1", SimpleNamespace(exit_code=0, timed_out=False), "done", None
+            graph,
+            node.id,
+            "run-1",
+            SimpleNamespace(exit_code=0, timed_out=False),
+            "done",
+            None,
         )
+    graph.close()
 
 
 def test_sync_dispatch_preserves_terminal_persistence_exception(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from types import SimpleNamespace
+    import sqlite3
 
     from milknado.domains.dispatch import lifecycle
     from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
 
-    class Graph:
-        def register_controller_master(self) -> None:
-            pass
-
-        def __init__(self) -> None:
-            self.runs: Graph = self
-
-        def get_node(self, _node_id: int):
-            return SimpleNamespace(kind=NodeKind.TASK)
-
-        def claim_node_for_dispatch(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def start(self, *_args: object, **_kwargs: object) -> None:
-            return None
-
-        def finish(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def mark_terminal(self, *_args: object, **_kwargs: object) -> bool:
-            raise RuntimeError("database unavailable")
-
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("task")
+    _ = graph.group_connection.execute(
+        "CREATE TRIGGER refuse_failed_node BEFORE UPDATE OF status ON nodes "
+        + "WHEN NEW.status = 'failed' BEGIN SELECT RAISE(ABORT, 'database unavailable'); END"
+    )
     monkeypatch.setattr(lifecycle, "render_brief", lambda *_args, **_kwargs: "")  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setattr(
         lifecycle,
@@ -2196,7 +2166,7 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("worker failed")),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     request = SyncDispatchRequest(
-        node_id=1,
+        node_id=node.id,
         project_root=tmp_path,
         worker_cmd=None,
         timeout_seconds=1,
@@ -2204,10 +2174,9 @@ def test_sync_dispatch_preserves_terminal_persistence_exception(
         process=cast(ProcessPort, object()),
         worktree_mode=WorktreeMode.THIS_BRANCH,
     )
-    with pytest.raises(RuntimeError, match="database unavailable"):
-        _ = lifecycle.dispatch_node_sync(
-            cast(MikadoGraph, cast(object, Graph())), _branch_git(), request
-        )
+    with pytest.raises(sqlite3.IntegrityError, match="database unavailable"):
+        _ = lifecycle.dispatch_node_sync(graph, _branch_git(), request)
+    graph.close()
 
 
 def test_async_worker_reports_cancelled_run_fence_loss(
@@ -2229,35 +2198,36 @@ def test_async_worker_reports_cancelled_run_fence_loss(
     log_path.parent.mkdir(parents=True)
     log_path.touch()
 
-    from milknado.domains.graph import RunFenceLostError
+    from milknado.domains.graph import StartTaskAttempt
 
-    class Graph:
-        def __init__(self) -> None:
-            self.runs: Graph = self
-
-        def finish(self, *_args: object) -> None:
-            raise RunFenceLostError("running-row fence already finalized")
-
-        def close(self) -> None:
-            return None
-
-    class Sessions:
-        def open_graph(self, project_root: Path) -> tuple[MikadoGraph, MilknadoConfig]:  # pyright: ignore[reportUnusedParameter]
-            return (
-                cast(MikadoGraph, cast(object, Graph())),
-                cast(MilknadoConfig, cast(object, None)),
-            )
+    graph, _ = open_graph(tmp_path)
+    node = graph.add_node("task")
+    assert node.id == request.node_id
+    assert graph.claim_node(node.id, request.run_id, now="2026-01-01T00:00:00+00:00")
+    _ = graph.task_attempts.start(
+        StartTaskAttempt(node.id, request.run_id, request.run_id, request.run_id, 1)
+    )
+    graph.runs.start(
+        request.run_id,
+        node.id,
+        str(log_path),
+        "2026-01-01T00:00:00+00:00",
+        1,
+        attempt_id=request.run_id,
+    )
+    graph.runs.finish(request.run_id, RunResult("done", 0, False, "2026-01-01T00:01:00+00:00"))
+    graph.close()
 
     monkeypatch.setattr(
         async_run,
-        "_run_worker_process",
+        "run_worker_process",
         lambda *_args, **_kwargs: (0, False, True),  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     )
     context = async_run.AsyncWorkerContext(
         request=request,
         log_path=log_path,
         argv=("claude",),
-        graph_sessions=cast(GraphSessionPort, Sessions()),
+        graph_sessions=_RealGraphSessions(),
         git=_branch_git(),
         process=cast(ProcessPort, object()),
     )
