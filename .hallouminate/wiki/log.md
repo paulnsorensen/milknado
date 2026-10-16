@@ -116,3 +116,20 @@
 
 2026-10-10 · 26ad8ac695db06c8 · new-page · gotchas/coordinator-polling-session-ownership.md · Record the approved session-ID match check and controlled RED5/5 to GREEN5/5 regression. Four frozen probes pass at ranks1,2,1,2. No existing page owns frontend effect scope; backend recovery remains separate. Hash lookup follows an earlier broad orientation search, not strict pre-search ordering.
 
+2026-10-10 · 734f6d3d6752aa18 · merged · architecture/execution.md · Record accepted issue #495 ADRs F-1–F-4, pending implementation. Preserve default FAILED, logical-attempt accounting, immutable native results, and unknown-start holds.
+2026-10-10 · 734f6d3d6752aa18 · merged · domain-model.md · Extend execution-context terms without replacing existing ownership definitions. Both exact probes pass; both domain natural probes rank 1 after one bounded repair.
+2026-10-10 · 734f6d3d6752aa18 · retrieval-warning · architecture/execution.md · Frozen unknown execution-start recovery query returns intended owner at rank 4; top three are domain-model.md, roadmaps/milestone-0-3-0/interactive-run-steering.md, and gotchas/owner-run-idle-exit.md. Preserve accepted content. Corpus reconciliation remains in-flight/pending.
+
+2026-10-10 · c31c07d0e190a87f · merged · architecture/execution.md · Record issue495 implementation mechanisms and source fences. Exact and natural probes pass; index reconciliation remains pending.
+2026-10-10 · c31c07d0e190a87f · merged · domain-model.md · Map accepted task-attempt terms to implementation. Preserve ownership terms. One bounded heading repair restores exact rank1.
+
+2026-10-10 · ae4fe6bbcb8ad308 · merged · architecture/execution.md · Record the live pre-exec wrapper proof hazard and private non-execution marker. Preserve unresolved release evidence and the unknown-start hold.
+
+
+2026-10-10 · 4faafdc99b08e738 · merged · architecture/execution.md · Record approved successor/source-seed and missing-linked-run guards, startup preparation, nonfailure recovery, native replay, and typed once-delivered tmux evidence. Four frozen probes rank first. No integrated gate or startup contention cause is claimed.
+2026-10-10 · 4faafdc99b08e738 · merged · domain-model.md · Extend logical attempt, run row, worker invocation, and protected release definitions. Preserve canonical ownership terms and refresh moved citations. Three frozen probes rank 1, 1, and 2. Recovery search reports ripgrep-unresolved, but all required ranks pass; corpus stats reports 74 indexed and 0 unindexed files.
+
+
+
+2026-10-10 · 4cba4cf6250b4b91 · merged · history/review-lessons.md · Record the tests-only SIGSTOP SQLite writer-gap distinction and separate nonblocking transaction probe. Controlled replay changes from five exact lock failures to five passes. Preserve unknown historical lock ownership and separate SIGKILL cause. Three frozen probes rank first; index reconciliation remains pending. No production contention fix or integrated-gate pass is claimed.
+
