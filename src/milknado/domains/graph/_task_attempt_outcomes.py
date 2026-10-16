@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 
 from milknado.domains.graph._task_attempt_reads import get_attempt
 from milknado.domains.graph._task_attempts import LostAttemptFence
@@ -18,11 +19,18 @@ _REVIEW_ROUND_FENCE = (
 )
 
 
-def swap_owner(
-    conn: sqlite3.Connection, ids: tuple[str, str, str, str], review_round: bool
-) -> bool:
-    """Swap the node fence and rebind the attempt; ids are (attempt, old, new, invocation)."""
-    attempt_id, old_owner, new_owner, invocation_id = ids
+@dataclass(frozen=True, slots=True)
+class OwnerSwap:
+    attempt_id: str
+    old_owner: str
+    new_owner: str
+    invocation_id: str
+
+
+def swap_owner(conn: sqlite3.Connection, swap: OwnerSwap, review_round: bool) -> bool:
+    """Swap the node fence and rebind the attempt to the new owner and invocation."""
+    attempt_id, old_owner = swap.attempt_id, swap.old_owner
+    new_owner, invocation_id = swap.new_owner, swap.invocation_id
     sql = (
         "UPDATE task_attempts SET owner_run_id = ?, active_invocation_id = ?, "
         + "start_state = 'unknown' WHERE attempt_id = ? AND owner_run_id = ? "

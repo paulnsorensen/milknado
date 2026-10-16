@@ -204,6 +204,14 @@ def _finish_startup_failure(
     return FailureDisposition("startup_failed", failed_count(conn, request.node_id), reason)
 
 
+def _prefix_failed_run_error(conn: sqlite3.Connection, req: FinalizeTaskFailure, why: str) -> None:
+    _ = conn.execute(
+        "UPDATE runs SET error = ? WHERE run_id = ? AND attempt_id = ? "
+        + "AND status = 'failed' AND error IS ?",
+        (why, req.run_id, req.attempt_id, req.result.error),
+    )
+
+
 def _finish_counted_failure(
     graph: AttemptGraphPort,
     request: FinalizeTaskFailure,
@@ -234,6 +242,8 @@ def _finish_counted_failure(
     )
     if run_status == "running":
         finish_run(conn, request.run_id, replace(request.result, error=reason))
+    else:
+        _prefix_failed_run_error(conn, request, reason)
     _group_failure(conn, request, status)
     _ = conn.execute(
         "UPDATE task_attempts SET outcome = 'failed', disposition = ?, "
@@ -277,8 +287,13 @@ def finalize_failure(graph: AttemptGraphPort, request: FinalizeTaskFailure) -> F
 
 
 def reset_failed_attempts(conn: sqlite3.Connection, node_id: int) -> None:
-    """Stop counting a node's earlier failed attempts after an operator reopen."""
+    """Stop counting earlier failed attempts and reopen a group member the failure closed."""
     _ = conn.execute(
         "UPDATE task_attempts SET outcome = 'reset' WHERE node_id = ? AND outcome = 'failed'",
+        (node_id,),
+    )
+    _ = conn.execute(
+        "UPDATE execution_group_tasks SET status = NULL, result = NULL "
+        + "WHERE node_id = ? AND status IN ('failed', 'blocked')",
         (node_id,),
     )

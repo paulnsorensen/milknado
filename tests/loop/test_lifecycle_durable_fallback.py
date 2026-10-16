@@ -19,6 +19,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import WorkerProcess
 from milknado.loop._process_lifecycle import ProtectedWorker
 from milknado.loop._process_observation import snapshot
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.fixture
@@ -52,7 +53,7 @@ def durable_worker(
         WorkerProcess(worker, identity, None),
         helper,
         write_fd,
-        ProtectionContext(evidence, owner, graph.db_path),
+        ProtectionContext(evidence, owner, graph.db_path, release=PlainWorkerRelease()),
     )
     child_pid = 0
     try:

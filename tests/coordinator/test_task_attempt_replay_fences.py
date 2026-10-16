@@ -56,7 +56,7 @@ def test_replay_refuses_changed_ledger_owner(tmp_path: Path) -> None:
 def test_failure_refuses_changed_node_owner(tmp_path: Path) -> None:
     graph, workflow, session, attempt = _launched(tmp_path / "graph.db")
     assert graph.replace_run_id(attempt.node_id, attempt.attempt_id, "new-owner")
-    with pytest.raises(ValueError, match="native task attempt fence lost"):
+    with pytest.raises(RuntimeError, match="task attempt fence lost for run"):
         workflow.finish_task(session, attempt, NodeLoopOutcome(attempt.node_id, False, "stale"))
     node = graph.get_node(attempt.node_id)
     assert node is not None and node.run_id == "new-owner"

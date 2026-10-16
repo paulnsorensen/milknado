@@ -43,7 +43,7 @@ def _observe_tmux_receipt(graph: StaleRunPort, state: dict[str, object]) -> None
     nonce = graph.runs.latest_message(run_id, "tmux_exec_nonce")
     if nonce is None:
         return
-    receipt = exec_receipt_path(graph.db_path.parent, run_id, nonce)
+    receipt = exec_receipt_path(graph.db_path, run_id, nonce)
     evidence = read_exec_evidence(receipt, nonce)
     attempt = graph.task_attempts.get(attempt_id)
     if attempt is None:
@@ -185,12 +185,13 @@ def _reconcile_node(
 
 
 def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> list[RunRecord]:
-    """Finalize and release orphaned nodes before a new coordinator dispatches."""
+    """Release orphaned nodes; failed nodes roll back and raise after the rest settle."""
     get_all_nodes = getattr(graph, "get_all_nodes", None)
     if not callable(get_all_nodes):
         return []
     typed_graph = cast("MikadoGraph", graph)
     reconciled: list[RunRecord] = []
+    failures: list[Exception] = []
     nodes = cast(Iterable[object], get_all_nodes())
     for node_value in nodes:
         node = cast(MikadoNode, node_value)
@@ -198,12 +199,17 @@ def reconcile_orphaned_runs(graph: object, process: ProcessTerminationPort) -> l
             continue
         try:
             terminal = _reconcile_node(typed_graph, node, process)
-        except Exception:
-            # Leave the node unreconciled so the next sweep retries it.
+        except Exception as exc:
             _logger.exception("reconcile failed for node %s run %s", node.id, node.run_id)
+            conn = typed_graph.group_connection
+            if conn.in_transaction:
+                conn.rollback()
+            failures.append(exc)
             continue
         if terminal is not None:
             reconciled.append(terminal)
+    if failures:
+        raise ExceptionGroup("orphaned run reconciliation failed", failures)
     return reconciled
 
 
@@ -232,6 +238,8 @@ def _reconcile_failed_attempt(
     attempt = graph.task_attempts.get(attempt_id)
     if attempt is None:
         raise ValueError(f"task attempt {attempt_id} missing during recovery")
+    if node.run_id not in (attempt.owner_run_id, run_id):
+        return  # node was re-claimed; its current owner settles it
     ref = AttemptRef(node.id, attempt_id, node.run_id, run_id)
     if row["error"] == "cancelled":
         settle_cancelled(graph, ref)

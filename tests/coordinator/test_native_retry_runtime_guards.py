@@ -19,7 +19,12 @@ from milknado.domains.common import (
     SessionInput,
 )
 from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
-from milknado.domains.coordinator.control_models import CancelTurn, RuntimeAction, StartTurn
+from milknado.domains.coordinator.control_models import (
+    CancelTurn,
+    FinishTask,
+    RuntimeAction,
+    StartTurn,
+)
 from milknado.domains.coordinator.model import CoordinatorSession
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
@@ -118,6 +123,7 @@ def _native_control(
             turn_owner=adapter.owner,
             turn_cancel=adapter.cancel,
             runtime_session=adapter.runtime_session,
+            max_node_attempts=2,
         ),
     )
     return adapter, control
@@ -134,7 +140,6 @@ def _retry_setup(
     NativeCoordinatorTurns,
     CoordinatorControl,
 ]:
-    _ = (root / "milknado.toml").write_text("[milknado]\nmax_node_attempts = 2\n")
     graph = MikadoGraph(root / "graph.db")
     workflow = CoordinatorWorkflow(graph, graph.group_connection, max_node_attempts=2)
     session = workflow.start_goal("Deliver", "codex")
@@ -230,4 +235,23 @@ def test_native_retry_rejects_old_approval_and_cancels_current_turn(
     assert results == ["unavailable"]
     assert graph.groups.active_attempt(group.id) == second.attempt
     assert graph.task_attempts.failed_count(task.id) == 1
+    graph.close()
+
+
+def test_control_services_budget_requeues_failed_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph, workflow, session, task, group, _adapter, control = _retry_setup(tmp_path, monkeypatch)
+    first = workflow.dispatch_task(session, group.id, task.id, "run-1")
+    _ = workflow.acknowledge_launch(session, first)
+    attempt = first.attempt
+
+    receipt = control.send_coordinator_command(
+        session.id,
+        FinishTask("finish-1", group.id, task.id, "run-1", attempt.attempt_id, False, "failed"),
+    )
+
+    assert receipt.status == "accepted"
+    assert graph.task_attempts.failed_count(task.id) == 1
+    assert graph.groups.task_result(task.id) is None
     graph.close()

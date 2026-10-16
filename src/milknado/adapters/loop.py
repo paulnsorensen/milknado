@@ -23,7 +23,7 @@ from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
     build_verify_prompt as _build_verify_prompt_impl,
 )
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._protection import loop_protection
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
@@ -44,7 +44,6 @@ from milknado.loop import (
     RunManager,
     RunStatus,
 )
-from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 
@@ -83,10 +82,7 @@ class LoopAdapter(LoopSessionMixin):
         owner = WorkerOwner(
             runtime_run_id, supervisor.pid, supervisor.create_time(), graph_run_id, node_id
         )
-        protection = ProtectionContext(
-            LoopWorkerEvidence(db_path), owner, db_path, self._worker_registry
-        )
-        return spawn_protected(options, protection)
+        return spawn_protected(options, loop_protection(db_path, owner, self._worker_registry))
 
     def create_run(
         self,

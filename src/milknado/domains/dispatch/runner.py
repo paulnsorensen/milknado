@@ -103,6 +103,17 @@ _WORKER_ENV_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 
+def _drop_relative_pythonpath(env: dict[str, str]) -> None:
+    """Remove relative PYTHONPATH entries: they would resolve against the worker worktree."""
+    if "PYTHONPATH" not in env:
+        return
+    absolute = [p for p in env["PYTHONPATH"].split(os.pathsep) if Path(p).is_absolute()]
+    if absolute:
+        env["PYTHONPATH"] = os.pathsep.join(absolute)
+    else:
+        del env["PYTHONPATH"]
+
+
 def build_worker_env(
     extra: dict[str, str] | None = None, *, executable: str | None = None
 ) -> dict[str, str]:
@@ -116,6 +127,7 @@ def build_worker_env(
         for k, v in os.environ.items()
         if k in _WORKER_ENV_ALLOWLIST or k.startswith("MILKNADO_")
     }
+    _drop_relative_pythonpath(env)
     if executable == "omp" and "OPENROUTER_API_KEY" in os.environ:
         env["OPENROUTER_API_KEY"] = os.environ["OPENROUTER_API_KEY"]
     if extra:

@@ -57,7 +57,7 @@ def _fail_task(graph: MikadoGraph, attempt: TaskAttempt, outcome: NodeLoopOutcom
             record.owner_run_id,
             record.active_invocation_id,
         )
-    disposition = graph.task_attempts.fail(
+    disposition = graph.task_attempts.fail_or_raise(
         FinalizeTaskFailure(
             attempt.node_id,
             attempt_id,
@@ -68,8 +68,6 @@ def _fail_task(graph: MikadoGraph, attempt: TaskAttempt, outcome: NodeLoopOutcom
             group_result=outcome.detail or "",
         )
     )
-    if disposition.status == "lost_fence":
-        raise ValueError("native task attempt fence lost")
     return disposition.status != "unknown_start"
 
 

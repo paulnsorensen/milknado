@@ -194,11 +194,11 @@ def test_real_tmux_cancel_cleans_covered_descendant(
         _ = subprocess.run(["tmux", "-S", str(socket), "kill-server"], check=False)
 
 
-def _wait_for(condition: Callable[[], bool]) -> None:
+def _wait_for(condition: Callable[[], bool], diagnostics: Callable[[], str] | None = None) -> None:
     deadline = time.monotonic() + 15
     while not condition() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert condition()
+    assert condition(), diagnostics() if diagnostics else "condition not met within 15s"
 
 
 def _record_unresolved_peer(root: Path, run_node: tuple[str, int], peer_pid: int) -> None:
@@ -256,7 +256,10 @@ def test_real_tmux_known_unresolved_worker_blocks_release_and_requeue(
         _record_unresolved_peer(tmp_path, (run_id, node_id), unresolved.pid)
         _ = release.touch()
         log = Path(started["log_path"])
-        _wait_for(lambda: "worker cleanup unresolved" in log.read_text())
+        _wait_for(
+            lambda: "worker cleanup unresolved" in log.read_text(),
+            lambda: f"log tail: {log.read_text()[-2000:]!r}",
+        )
         time.sleep(0.5)
         assert _node_status(str(tmp_path), node_id) is NodeStatus.RUNNING
         _assert_unresolved_worker_kept(tmp_path, run_id, node_id)

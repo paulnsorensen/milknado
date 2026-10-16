@@ -11,11 +11,16 @@ import psutil
 import pytest
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import NodeStatus, RunResult, WorkerOwner
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
-from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
-from milknado.loop._process_startup import _release_worker  # pyright: ignore[reportPrivateUsage]
+from milknado.loop._process_gate import SpawnOptions, StartEvidence, WorkerProcess, spawn_gated
+
+
+def _release_worker(worker: WorkerProcess, context: ProtectionContext) -> None:
+    context.release.release_worker(worker, context.owner)
+
 
 _NOW = "2026-01-01T00:00:00+00:00"
 
@@ -56,7 +61,10 @@ def _attempt_context(path: Path) -> tuple[MikadoGraph, int, ProtectionContext]:
     graph.runs.start("worker", node.id, "worker.log", _NOW, None, attempt_id="attempt")
     supervisor = psutil.Process()
     owner = WorkerOwner("worker", supervisor.pid, supervisor.create_time(), "worker", node.id)
-    return graph, node.id, ProtectionContext(LoopWorkerEvidence(path), owner, path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(path), owner, path, release=LoopWorkerRelease(path)
+    )
+    return graph, node.id, context
 
 
 def _failed_result() -> RunResult:

@@ -17,6 +17,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, spawn_gated
 from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 def _options(tmp_path: Path, command: tuple[str, ...]) -> SpawnOptions:
@@ -105,7 +106,13 @@ def test_registry_ticket_closes_when_spawn_fails(tmp_path: Path) -> None:
     registry = WorkerRegistry()
     current = psutil.Process()
     owner = WorkerOwner("run", current.pid, current.create_time(), "run", node.id)
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        registry,
+        release=PlainWorkerRelease(),
+    )
     try:
         with pytest.raises(ValueError, match="worker command is empty"):
             _ = spawn_protected(_options(tmp_path, ()), context)

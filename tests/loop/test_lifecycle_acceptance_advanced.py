@@ -25,6 +25,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
+from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
@@ -46,7 +47,9 @@ def _context(tmp_path: Path) -> tuple[MikadoGraph, ProtectionContext]:
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
-    return graph, ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    return graph, ProtectionContext(
+        LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+    )
 
 
 def _replacement_ready(graph: MikadoGraph, worker: ProtectedWorker, generation: int) -> bool:

@@ -22,6 +22,7 @@ from milknado.loop._agent import (
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = pytest.mark.skipif(
     os.name == "nt", reason="POSIX helper uses passed file descriptors"
@@ -93,6 +94,7 @@ def test_successful_replacement_does_not_interrupt_concurrent_generic_run(
             LoopWorkerEvidence(graph.db_path),
             WorkerOwner(label, owner_pid, owner_token, label, node.id),
             graph.db_path,
+            release=PlainWorkerRelease(),
         )
 
         def launch(options: SpawnOptions) -> ProtectedWorker:

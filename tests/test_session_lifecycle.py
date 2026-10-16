@@ -22,6 +22,7 @@ from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop.sessions import SessionChannel, run_session
 from milknado.loop.sessions import _runtime as session_runtime
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
+from tests.loop.worker_release import PlainWorkerRelease
 
 _SCRIPT = """\
 #!/usr/bin/env python3
@@ -353,7 +354,9 @@ def test_structured_session_uses_same_protected_worker(
     graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id)
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+    )
     invoked: list[str] = []
 
     def launch(options: SpawnOptions) -> ProtectedWorker:

@@ -27,12 +27,15 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_identity import observe_descendants
 from milknado.loop._process_lifecycle import spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 def _context(graph: MikadoGraph, node_id: int) -> ProtectionContext:
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
-    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    return ProtectionContext(
+        LoopWorkerEvidence(graph.db_path), owner, graph.db_path, release=PlainWorkerRelease()
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX lifeline requires passed file descriptors")

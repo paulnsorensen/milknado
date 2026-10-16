@@ -14,7 +14,7 @@ from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import GitPort
 from milknado.domains.dispatch import _async_execution
 from milknado.domains.dispatch._async_types import AsyncRunRequest, AsyncWorkerContext
-from milknado.domains.dispatch._runstate import runs_dir
+from milknado.domains.dispatch._runstate import exec_receipt_path, runs_dir
 from milknado.domains.dispatch.ports import GraphSessionPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
@@ -65,3 +65,10 @@ def test_recovery_finds_receipt_for_custom_db_path(
     attempt = graph.task_attempts.get("attempt")
     assert attempt is not None and attempt.start_state == "executed"
     graph.close()
+
+
+def test_exec_receipt_path_is_pure(tmp_path: Path) -> None:
+    receipt = exec_receipt_path(tmp_path / "graph.db", "run", "nonce")
+
+    assert receipt == tmp_path / "runs" / "run.nonce.exec.json"
+    assert not (tmp_path / "runs").exists()

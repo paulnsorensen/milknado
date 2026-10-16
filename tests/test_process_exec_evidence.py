@@ -11,11 +11,15 @@ import psutil
 import pytest
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
-from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
-from milknado.loop._process_startup import _release_worker  # pyright: ignore[reportPrivateUsage]
+from milknado.loop._process_gate import SpawnOptions, StartEvidence, WorkerProcess, spawn_gated
+
+
+def _release_worker(worker: WorkerProcess, context: ProtectionContext) -> None:
+    LoopWorkerRelease(context.db_path).release_worker(worker, context.owner)
 
 
 def _options(command: tuple[str, ...]) -> SpawnOptions:
@@ -69,7 +73,7 @@ def test_signal_death_before_release_is_not_exec_proof(
 
     monkeypatch.setattr(os, "write", fail_write)
     worker.release()
-    assert worker.start_evidence in {StartEvidence.UNKNOWN, StartEvidence.STARTUP_FAILED}
+    assert worker.start_evidence is StartEvidence.STARTUP_FAILED
     for descriptor in (gate_fd, status_fd):
         with pytest.raises(OSError):
             _ = os.fstat(descriptor)
@@ -82,7 +86,9 @@ def test_unlinked_release_skips_graph_initialization(
     path = tmp_path / "absent.db"
     supervisor = psutil.Process()
     owner = WorkerOwner("runtime", supervisor.pid, supervisor.create_time())
-    context = ProtectionContext(LoopWorkerEvidence(path), owner, path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(path), owner, path, release=LoopWorkerRelease(path)
+    )
 
     def no_graph(_path: Path) -> MikadoGraph:
         pytest.fail("unlinked graph opened")
@@ -103,7 +109,9 @@ def test_corrupt_graph_prevents_worker_release(tmp_path: Path) -> None:
     _ = path.write_bytes(b"not a SQLite database")
     supervisor = psutil.Process()
     owner = WorkerOwner("runtime", supervisor.pid, supervisor.create_time(), "linked")
-    context = ProtectionContext(LoopWorkerEvidence(path), owner, path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(path), owner, path, release=LoopWorkerRelease(path)
+    )
     marker = tmp_path / "executed"
     command = (sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()")
     worker = spawn_gated(_options(command))
@@ -133,7 +141,12 @@ def test_protected_release_persists_bound_exec_proof(tmp_path: Path) -> None:
     owner = WorkerOwner(
         "worker-run", supervisor.pid, supervisor.create_time(), "worker-run", node_id
     )
-    context = ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
+    context = ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        release=LoopWorkerRelease(graph.db_path),
+    )
     worker = spawn_gated(_options((sys.executable, "-c", "pass")))
     try:
         _release_worker(worker, context)
@@ -238,7 +251,10 @@ def _assert_current_review_process_can_prove_execution(path: Path, node_id: int)
     )
     current = spawn_gated(_options((sys.executable, "-c", "pass")))
     try:
-        _release_worker(current, ProtectionContext(LoopWorkerEvidence(path), new_owner, path))
+        current_context = ProtectionContext(
+            LoopWorkerEvidence(path), new_owner, path, release=LoopWorkerRelease(path)
+        )
+        _release_worker(current, current_context)
         assert current.process.wait(timeout=3) == 0
         confirmed = reopened.task_attempts.get("attempt")
         assert confirmed is not None
@@ -273,7 +289,9 @@ def test_delayed_review_worker_cannot_rebind_reopened_attempt(tmp_path: Path) ->
             "attempt", "old-owner", "new-owner", "new-worker"
         )
         graph.close()
-        context = ProtectionContext(LoopWorkerEvidence(path), owner, path)
+        context = ProtectionContext(
+            LoopWorkerEvidence(path), owner, path, release=LoopWorkerRelease(path)
+        )
         with pytest.raises(RuntimeError, match="invocation fence lost"):
             _release_worker(worker, context)
         _assert_current_review_process_can_prove_execution(path, node_id)

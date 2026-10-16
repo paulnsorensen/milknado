@@ -21,36 +21,43 @@ class LoopStartupFailure:
     cause: Exception
 
 
-def record_start_failure(graph: MikadoGraph, failure: LoopStartupFailure) -> None:
-    node_written = False
-    persistence_error: Exception | None = None
-    if failure.run_started:
-        try:
-            graph.runs.finish(
-                failure.run_id,
-                RunResult(
-                    status="failed",
-                    exit_code=-1,
-                    timed_out=False,
-                    ended_at=now_iso(),
-                    rebased=False,
-                    detail=f"start failed: {type(failure.cause).__name__}: {failure.cause}",
-                ),
-            )
-        except RunFenceLostError:
-            _logger.info("start failure run already finalized: %s", failure.run_id)
-        except Exception as error:
-            persistence_error = error
-            _logger.exception("start failure run terminal write failed: run_id=%s", failure.run_id)
-    outcome_error: Exception | None = None
+def _finish_started_run(graph: MikadoGraph, failure: LoopStartupFailure) -> Exception | None:
+    try:
+        graph.runs.finish(
+            failure.run_id,
+            RunResult(
+                status="failed",
+                exit_code=-1,
+                timed_out=False,
+                ended_at=now_iso(),
+                rebased=False,
+                detail=f"start failed: {type(failure.cause).__name__}: {failure.cause}",
+            ),
+        )
+    except RunFenceLostError:
+        _logger.info("start failure run already finalized: %s", failure.run_id)
+    except Exception as error:
+        _logger.exception("start failure run terminal write failed: run_id=%s", failure.run_id)
+        return error
+    return None
+
+
+def _record_startup_outcome(graph: MikadoGraph, failure: LoopStartupFailure) -> Exception | None:
     try:
         if graph.task_attempts.get(failure.attempt_id) is not None:
             graph.task_attempts.require_nonfailure(
                 failure.attempt_id, failure.run_id, "startup_failed"
             )
     except Exception as error:
-        outcome_error = error
         _logger.exception("start failure task outcome write failed: run_id=%s", failure.run_id)
+        return error
+    return None
+
+
+def record_start_failure(graph: MikadoGraph, failure: LoopStartupFailure) -> None:
+    node_written = False
+    persistence_error = _finish_started_run(graph, failure) if failure.run_started else None
+    outcome_error = _record_startup_outcome(graph, failure)
     try:
         node_written = graph.mark_terminal(failure.node_id, failure.run_id, NodeStatus.FAILED)
     except Exception as error:

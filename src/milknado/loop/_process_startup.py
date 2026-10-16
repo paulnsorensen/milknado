@@ -47,17 +47,16 @@ class _StartupAcquisition:
     monitor_started: bool = False
 
 
-def _release_worker(worker: WorkerProcess, context: ProtectionContext) -> None:
-    context.evidence.release_worker(worker, context.owner)
-
-
 def _activate_worker(
     worker: WorkerProcess, context: ProtectionContext, protected: _ProtectedStart
 ) -> None:
+    def release() -> None:
+        context.release.release_worker(worker, context.owner)
+
     ticket = protected.ticket
     if ticket is None:
-        _release_worker(worker, context)
-    elif not ticket.activate(lambda: _release_worker(worker, context), protected.shutdown):
+        release()
+    elif not ticket.activate(release, protected.shutdown):
         raise RuntimeError("worker admission closed before READY")
 
 

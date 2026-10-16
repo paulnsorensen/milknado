@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -64,6 +64,9 @@ class WorkerEvidence(Protocol):
     def end_worker(
         self, invocation_id: str, snapshot_seq: int, helper_generation: int | None = None
     ) -> None: ...
+
+
+class WorkerRelease(Protocol):
     def release_worker(self, worker: WorkerProcess, owner: WorkerOwner) -> None: ...
 
 
@@ -73,3 +76,4 @@ class ProtectionContext:
     owner: WorkerOwner
     db_path: Path
     registry: WorkerRegistry | None = None
+    release: WorkerRelease = field(kw_only=True)

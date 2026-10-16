@@ -13,6 +13,7 @@ import pytest
 import milknado.adapters._loop_worker_release as release_module
 import milknado.loop._process_startup as startup
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
@@ -24,7 +25,13 @@ from milknado.loop._process_registry import WorkerRegistry
 def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> ProtectionContext:
     supervisor = psutil.Process()
     owner = WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node_id)
-    return ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path, registry)
+    return ProtectionContext(
+        LoopWorkerEvidence(graph.db_path),
+        owner,
+        graph.db_path,
+        registry,
+        release=LoopWorkerRelease(graph.db_path),
+    )
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX protected launch is required")

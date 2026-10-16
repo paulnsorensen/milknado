@@ -37,6 +37,7 @@ from tests.loop.helpers import (
     make_config,
     ok_proc,
 )
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 class _CompletedWorker:
@@ -359,7 +360,9 @@ class TestRunManagerForceStop:
             pass
         supervisor = psutil.Process()
         owner = WorkerOwner(managed.state.run_id, supervisor.pid, supervisor.create_time())
-        context = ProtectionContext(LoopWorkerEvidence(db_path), owner, db_path)
+        context = ProtectionContext(
+            LoopWorkerEvidence(db_path), owner, db_path, release=PlainWorkerRelease()
+        )
         managed.config.spawn_worker = lambda options: spawn_protected(options, context)
         manager.start_run(managed.state.run_id)
 

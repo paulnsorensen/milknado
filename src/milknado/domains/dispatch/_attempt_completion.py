@@ -21,15 +21,7 @@ class AttemptRef:
 
 
 def settle_counted_failure(graph: MikadoGraph, failure: FinalizeTaskFailure) -> str:
-    status = graph.task_attempts.fail(failure).status
-    if status == "lost_fence":
-        raise RuntimeError(f"task attempt fence lost for run {failure.run_id}")
-    return str(status)
-
-
-def settle_nonfailure(graph: MikadoGraph, ref: AttemptRef, outcome: str) -> None:
-    if not graph.task_attempts.record_nonfailure(ref.attempt_id, ref.owner_run_id, outcome):
-        raise RuntimeError(f"task outcome fence lost for run {ref.run_id}")
+    return str(graph.task_attempts.fail_or_raise(failure).status)
 
 
 def settle_node_terminal(
@@ -53,13 +45,13 @@ def settle_node_terminal(
 def settle_preserved(graph: MikadoGraph, ref: AttemptRef, *, record_outcome: bool = True) -> None:
     """Fail the node while keeping the recovery pin of a preserved worktree."""
     if record_outcome:
-        settle_nonfailure(graph, ref, "preserved")
+        graph.task_attempts.require_nonfailure(ref.attempt_id, ref.owner_run_id, "preserved")
     _ = settle_node_terminal(graph, ref, NodeStatus.FAILED, preserve_recovery=True)
 
 
 def settle_cancelled(graph: MikadoGraph, ref: AttemptRef, finish: RunResult | None = None) -> None:
     """Record the cancelled outcome, then (live path) finish the run, then fail the node."""
-    settle_nonfailure(graph, ref, "cancelled")
+    graph.task_attempts.require_nonfailure(ref.attempt_id, ref.owner_run_id, "cancelled")
     if finish is not None:
         graph.runs.finish(ref.run_id, finish)
     _ = settle_node_terminal(graph, ref, NodeStatus.FAILED)

@@ -60,10 +60,11 @@ def test_recovery_does_not_report_unreconciled_run(tmp_path: Path) -> None:
     graph.close()
 
 
-def test_one_failing_node_does_not_abort_the_recovery_sweep(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_one_failing_node_rolls_back_finishes_sweep_and_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    graph = MikadoGraph(tmp_path / "g.db")
+    db_path = tmp_path / "g.db"
+    graph = MikadoGraph(db_path)
     for name, run_id in (("broken", "r1"), ("healthy", "r2")):
         node = graph.add_node(name)
         assert graph.claim_node(node.id, run_id, now=_NOW, pid=_DEAD_PID)
@@ -76,16 +77,40 @@ def test_one_failing_node_does_not_abort_the_recovery_sweep(
         graph: MikadoGraph, node_id: int, status: str, *, run_id: str
     ) -> None:
         if node_id == 1:
+            _ = graph.group_connection.execute(
+                "UPDATE nodes SET description = 'dirty' WHERE id = 1"
+            )
             raise RuntimeError("injected settle failure")
         settle(graph, node_id, status, run_id=run_id)
 
     monkeypatch.setattr(reconcile, "reconcile_node_status", settle_unless_broken)
 
-    reconciled = reconcile_orphaned_runs(graph, ProcessAdapter())
+    with pytest.raises(ExceptionGroup) as raised:
+        _ = reconcile_orphaned_runs(graph, ProcessAdapter())
 
-    assert [run["run_id"] for run in reconciled] == ["r2"]
-    broken = graph.get_node(1)
+    assert [type(exc) for exc in raised.value.exceptions] == [RuntimeError]
+    assert "reconcile failed for node 1" in caplog.text
+    graph.close()
+    reopened = MikadoGraph(db_path)
+    broken = reopened.get_node(1)
     assert broken is not None and broken.status is NodeStatus.RUNNING
-    healthy = graph.get_node(2)
+    assert broken.description != "dirty"
+    healthy = reopened.get_node(2)
     assert healthy is not None and healthy.status is NodeStatus.FAILED
+    reopened.close()
+
+
+def test_recovered_counted_failure_prefixes_error_on_already_failed_run(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "g.db")
+    node = graph.add_node("task")
+    assert graph.claim_node(node.id, "r1", now=_NOW, pid=_DEAD_PID)
+    _ = graph.task_attempts.start(StartTaskAttempt(node.id, "r1", "r1", "r1", 3))
+    graph.runs.start("r1", node.id, "l", _NOW, 60, attempt_id="r1")
+    assert graph.task_attempts.confirm_execution("r1", "r1", "r1")
+    graph.runs.finish("r1", RunResult("failed", 1, False, _NOW, error="boom"))
+
+    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
+
+    run = graph.runs.get("r1")
+    assert run is not None and run["error"] == "attempt 1/3: boom"
     graph.close()

@@ -57,8 +57,6 @@ class ProcessAdapter:
                     argv, cwd, log_path, stdin, env, timeout, run_id, cancel_requested, on_started
                 )
             )
-        timed_out = False
-        cancelled = False
         with log_path.open("wb") as log:
             proc = subprocess.Popen(
                 argv,
@@ -75,22 +73,12 @@ class ProcessAdapter:
                     proc.kill()
                     _ = proc.communicate()
                     raise
-            if cancel_requested is None:
-                try:
-                    _ = proc.communicate(input=stdin, timeout=timeout)
-                except subprocess.TimeoutExpired:
+            timed_out, cancelled = self._wait_for_exit(proc, stdin, timeout, cancel_requested)
+            if timed_out or cancelled:
+                if cancel_requested is None:
                     proc.kill()
                     _ = proc.wait()
-                    timed_out = True
-            else:
-                if proc.stdin is not None:
-                    threading.Thread(
-                        target=self._write_stdin,
-                        args=(proc.stdin, stdin),
-                        daemon=True,
-                    ).start()
-                timed_out, cancelled = self._wait(proc, timeout, cancel_requested)
-                if timed_out or cancelled:
+                else:
                     self._terminate(proc)
         return ProcessOutcome(
             exit_code=proc.returncode if proc.returncode is not None else -1,
@@ -121,7 +109,9 @@ class ProcessAdapter:
                     launch.on_started(worker.process.pid)
                 # SpawnOptions uses text=False, so this subprocess carries bytes.
                 proc = cast(subprocess.Popen[bytes], worker.process)
-                timed_out, cancelled = self._wait_protected(proc, launch)
+                timed_out, cancelled = self._wait_for_exit(
+                    proc, launch.stdin, launch.timeout, launch.cancel_requested
+                )
                 if not worker.complete(graceful=not (timed_out or cancelled)):
                     raise RuntimeError(f"worker cleanup unresolved for run {launch.run_id}")
             except BaseException as exc:
@@ -140,20 +130,25 @@ class ProcessAdapter:
             cancelled,
         )
 
-    def _wait_protected(
-        self, proc: subprocess.Popen[bytes], launch: _InlineLaunch
+    def _wait_for_exit(
+        self,
+        proc: subprocess.Popen[bytes],
+        stdin: bytes,
+        timeout: float,
+        cancel_requested: Callable[[], bool] | None,
     ) -> tuple[bool, bool]:
-        if launch.cancel_requested is None:
+        """Feed stdin and wait for exit; return (timed_out, cancelled). Callers terminate."""
+        if cancel_requested is None:
             try:
-                _ = proc.communicate(input=launch.stdin, timeout=launch.timeout)
+                _ = proc.communicate(input=stdin, timeout=timeout)
             except subprocess.TimeoutExpired:
                 return True, False
             return False, False
         if proc.stdin is not None:
             threading.Thread(
-                target=self._write_stdin, args=(proc.stdin, launch.stdin), daemon=True
+                target=self._write_stdin, args=(proc.stdin, stdin), daemon=True
             ).start()
-        return self._wait(proc, launch.timeout, launch.cancel_requested)
+        return self._wait(proc, timeout, cancel_requested)
 
     def _wait(
         self,

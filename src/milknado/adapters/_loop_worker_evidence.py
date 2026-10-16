@@ -8,10 +8,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from milknado.adapters._loop_worker_release import release_worker
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import WorkerEvidenceStore, WorkerRecord
-from milknado.loop._process_gate import WorkerProcess
 from milknado.loop._process_identity import Descendant
 
 
@@ -58,6 +56,3 @@ class LoopWorkerEvidence:
     ) -> None:
         with self._store() as store:
             store.end(invocation_id, snapshot_seq, helper_generation)
-
-    def release_worker(self, worker: WorkerProcess, owner: WorkerOwner) -> None:
-        release_worker(worker, owner, self.db_path)

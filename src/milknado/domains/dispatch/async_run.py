@@ -19,7 +19,6 @@ from milknado.domains.dispatch._attempt_completion import (
     AttemptRef,
     settle_cancelled,
     settle_counted_failure,
-    settle_nonfailure,
     settle_preserved,
 )
 from milknado.domains.dispatch._runstate import (
@@ -104,7 +103,9 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 if preserved:
                     settle_preserved(graph, ref)
                 else:
-                    settle_nonfailure(graph, ref, "done")
+                    graph.task_attempts.require_nonfailure(
+                        ref.attempt_id, ref.owner_run_id, "done"
+                    )
             _logger.info(
                 (
                     "async dispatch terminal: run_id=%s node_id=%d status=%s "

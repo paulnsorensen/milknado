@@ -10,7 +10,6 @@ from milknado.domains.dispatch._attempt_completion import (
     AttemptRef,
     settle_counted_failure,
     settle_node_terminal,
-    settle_nonfailure,
 )
 from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
@@ -78,7 +77,7 @@ def finish_attempt_exception(
         return
     else:
         outcome = "preserved"
-    settle_nonfailure(graph, ref, outcome)
+    graph.task_attempts.require_nonfailure(ref.attempt_id, ref.owner_run_id, outcome)
     try:
         graph.runs.finish(run_id, result)
     except RunFenceLostError:

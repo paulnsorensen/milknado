@@ -21,10 +21,20 @@ def _decline(*_args: object) -> bool:
     return False
 
 
-@pytest.mark.parametrize("record", [_decline, _refuse])
+@pytest.mark.parametrize(
+    ("record", "expected"),
+    [
+        (_decline, (RuntimeError, "task outcome fence lost")),
+        (_refuse, (OSError, "database unavailable")),
+    ],
+)
 def test_outcome_write_failure_still_releases_node_and_stays_loud(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record: object
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record: object,
+    expected: tuple[type[Exception], str],
 ) -> None:
+    error, message = expected
     graph = MikadoGraph(tmp_path / "graph.db")
     node = graph.add_node("task")
     assert graph.claim_node(node.id, "r1", now=_NOW)
@@ -32,7 +42,7 @@ def test_outcome_write_failure_still_releases_node_and_stays_loud(
     monkeypatch.setattr(graph.task_attempts, "record_nonfailure", record)
     failure = LoopStartupFailure(node.id, "r1", "r1", False, OSError("x"))
 
-    with pytest.raises((ValueError, RuntimeError, OSError)):
+    with pytest.raises(error, match=message):
         record_start_failure(graph, failure)
 
     current = graph.get_node(node.id)

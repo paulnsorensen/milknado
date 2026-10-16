@@ -12,7 +12,6 @@ import pytest
 
 from milknado.domains.common import NodeStatus, WorkerIdentity, WorkerOwner, WorktreeMode
 from milknado.domains.dispatch import lifecycle
-from milknado.domains.dispatch._attempt_completion import AttemptRef, settle_nonfailure
 from milknado.domains.dispatch.lifecycle import SyncDispatchRequest
 from milknado.domains.dispatch.ports import ProcessPort, WorkerOutcomePort
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
@@ -84,8 +83,8 @@ def test_nonfailure_outcome_rejects_a_lost_owner(tmp_path: Path) -> None:
     graph, node_id = _attempt(tmp_path)
     assert graph.replace_run_id(node_id, "owner", "next")
 
-    with pytest.raises(RuntimeError, match="task outcome fence lost for run owner"):
-        settle_nonfailure(graph, AttemptRef(node_id, "owner", "owner", "owner"), "done")
+    with pytest.raises(RuntimeError, match="task outcome fence lost for attempt owner"):
+        graph.task_attempts.require_nonfailure("owner", "owner", "done")
 
     attempt = graph.task_attempts.get("owner")
     assert attempt is not None and attempt.outcome == "active"

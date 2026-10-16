@@ -88,7 +88,7 @@ def test_lost_owner_rejects_startup_evidence(tmp_path: Path, asynchronous: bool)
 def test_lost_owner_rejects_default_nonfailure(tmp_path: Path, asynchronous: bool) -> None:
     graph, node_id = _graph(tmp_path / "graph.db", limit=1)
     assert graph.replace_run_id(node_id, "owner", "next")
-    with pytest.raises(RuntimeError, match="task outcome fence lost"):
+    with pytest.raises(RuntimeError, match="task outcome fence lost for attempt"):
         if asynchronous:
             _finish_async(
                 graph, _async_request(tmp_path, node_id, 1), RuntimeError("wrapper"), True

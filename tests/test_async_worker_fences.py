@@ -104,7 +104,7 @@ def test_cancelled_run_with_a_settled_attempt_reports_the_lost_attempt_fence(
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         _play(monkeypatch, context, (0, False, True), None)
 
-    _assert_worker_raised(caplog, "task outcome fence lost for run owner")
+    _assert_worker_raised(caplog, "task outcome fence lost for attempt owner")
 
 
 def test_cancelled_run_beside_a_sibling_worker_reports_the_lost_node_fence(
@@ -143,7 +143,7 @@ def test_preserved_worktree_after_the_node_fence_moved_reports_the_lost_outcome(
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         _play(monkeypatch, context, (0, False, False), _KEPT)
 
-    _assert_worker_raised(caplog, "task outcome fence lost for run owner")
+    _assert_worker_raised(caplog, "task outcome fence lost for attempt owner")
 
 
 def test_preserved_worktree_beside_a_sibling_worker_reports_the_lost_terminal_write(
@@ -169,4 +169,4 @@ def test_clean_exit_after_the_node_fence_moved_reports_the_lost_done_outcome(
     with caplog.at_level(logging.WARNING, logger=_LOGGER):
         _play(monkeypatch, context, (0, False, False), None)
 
-    _assert_worker_raised(caplog, "task outcome fence lost for run owner")
+    _assert_worker_raised(caplog, "task outcome fence lost for attempt owner")

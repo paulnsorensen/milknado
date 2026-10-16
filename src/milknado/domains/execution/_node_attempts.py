@@ -111,13 +111,11 @@ def fail_bounded_attempt(
         ended_at=datetime.now(UTC).isoformat(),
         detail=preserved or detail or "node failed",
     )
-    disposition = runtime.graph.task_attempts.fail(
+    _ = runtime.graph.task_attempts.fail_or_raise(
         FinalizeTaskFailure(
             node.id, context.attempt_id, node.run_id, context.worker_run_id, result
         )
     )
-    if disposition.status == "lost_fence":
-        raise ValueError(f"task attempt fence lost for node {node.id}")
 
 
 def supersede_review_round(

@@ -29,6 +29,7 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import HelperStart
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX identity cleanup is required")
 
@@ -170,6 +171,7 @@ def test_normal_exit_reaps_retained_child_without_caller_cleanup(
         LoopWorkerEvidence(graph.db_path),
         WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id),
         graph.db_path,
+        release=PlainWorkerRelease(),
     )
     workers: list[ProtectedWorker] = []
     marker, release = tmp_path / "child.pid", tmp_path / "release"
@@ -232,6 +234,7 @@ def test_normal_exit_during_failed_replacement_does_not_retry_or_reset_deadline(
         LoopWorkerEvidence(graph.db_path),
         WorkerOwner("run-1", supervisor.pid, supervisor.create_time(), "run-1", node.id),
         graph.db_path,
+        release=PlainWorkerRelease(),
     )
     marker, release = tmp_path / "child.pid", tmp_path / "release"
     worker = spawn_protected(

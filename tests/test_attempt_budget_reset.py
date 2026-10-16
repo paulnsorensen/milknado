@@ -105,6 +105,18 @@ def test_adopt_owner_miss_leaves_node_fence_unchanged(tmp_path: Path) -> None:
     graph.close()
 
 
+def test_adopt_owner_rolls_back_node_swap_when_attempt_is_settled(tmp_path: Path) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node_id = _running_attempt(graph, "a1")
+    assert graph.task_attempts.record_nonfailure("a1", "provisional", "cancelled")
+
+    assert not graph.task_attempts.adopt_owner("a1", "provisional", "a1")
+
+    node = graph.get_node(node_id)
+    assert node is not None and node.run_id == "provisional"
+    graph.close()
+
+
 def test_unconfirmed_failure_logs_attempt_identity(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

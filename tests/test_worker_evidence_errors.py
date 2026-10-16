@@ -73,6 +73,23 @@ def test_unsafe_parent_refuses_store_creation(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_unsafe_existing_store_is_refused_before_migration(tmp_path: Path) -> None:
+    parent = tmp_path / "private"
+    parent.mkdir(mode=0o700)
+    path = parent / "workers.db"
+    with closing(sqlite3.connect(path)) as conn:
+        _ = conn.execute("CREATE TABLE stale (id INTEGER)")
+    path.chmod(0o644)
+
+    with pytest.raises(RuntimeError, match="not private"):
+        _ = open_standalone_worker_evidence(path)
+
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone() == (0,)
+        tables = conn.execute("SELECT name FROM sqlite_master").fetchall()
+    assert tables == [("stale",)]
+
+
 def test_symlink_parent_refuses_store_creation(tmp_path: Path) -> None:
     private = tmp_path / "private"
     private.mkdir(mode=0o700)

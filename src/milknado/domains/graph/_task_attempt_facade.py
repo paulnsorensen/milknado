@@ -11,8 +11,17 @@ from milknado.domains.graph._task_attempt_models import (
     StartTaskAttempt,
     TaskAttemptRecord,
 )
-from milknado.domains.graph._task_attempt_outcomes import record_nonfailure, swap_owner
+from milknado.domains.graph._task_attempt_outcomes import (
+    OwnerSwap,
+    record_nonfailure,
+    swap_owner,
+)
 from milknado.domains.graph._task_attempt_reads import failed_count, get_attempt
+from milknado.domains.graph._task_attempt_release import (
+    ReleaseFence,
+    begin_release,
+    finish_release,
+)
 from milknado.domains.graph._task_attempts import (
     AttemptGraphPort,
     bind_invocation,
@@ -46,14 +55,14 @@ class TaskAttemptFacade:
         if not new_owner or not invocation_id:
             raise ValueError("review owner and invocation must be nonempty")
         with self._graph.synchronization_lock:
-            ids = (attempt_id, old_owner, new_owner, invocation_id)
-            return swap_owner(self._graph.group_connection, ids, review_round=True)
+            swap = OwnerSwap(attempt_id, old_owner, new_owner, invocation_id)
+            return swap_owner(self._graph.group_connection, swap, review_round=True)
 
     def adopt_owner(self, attempt_id: str, expected_run_id: str, run_id: str) -> bool:
         """Swap the provisional node fence and bind the attempt to the new run atomically."""
         with self._graph.synchronization_lock:
-            ids = (attempt_id, expected_run_id, run_id, run_id)
-            return swap_owner(self._graph.group_connection, ids, review_round=False)
+            swap = OwnerSwap(attempt_id, expected_run_id, run_id, run_id)
+            return swap_owner(self._graph.group_connection, swap, review_round=False)
 
     def bind_invocation(self, attempt_id: str, owner_run_id: str, invocation_id: str) -> bool:
         with self._graph.synchronization_lock:
@@ -64,6 +73,12 @@ class TaskAttemptFacade:
     def bind_worker_invocation(self, identity: tuple[str, str, str, str]) -> bool:
         with self._graph.synchronization_lock:
             return bind_worker_invocation(self._graph.group_connection, identity)
+
+    def begin_release(self, run_id: str, invocation_id: str) -> ReleaseFence | None:
+        return begin_release(self._graph, run_id, invocation_id)
+
+    def finish_release(self, fence: ReleaseFence, start_evidence: str) -> None:
+        finish_release(self, fence, start_evidence)
 
     def confirm_execution(self, attempt_id: str, owner_run_id: str, invocation_id: str) -> bool:
         with self._graph.synchronization_lock:
@@ -99,7 +114,7 @@ class TaskAttemptFacade:
 
     def require_nonfailure(self, attempt_id: str, owner_run_id: str, outcome: str) -> None:
         if not self.record_nonfailure(attempt_id, owner_run_id, outcome):
-            raise ValueError(f"task outcome fence lost for attempt {attempt_id}")
+            raise RuntimeError(f"task outcome fence lost for attempt {attempt_id}")
 
     def fail(self, request: FinalizeTaskFailure) -> FailureDisposition:
         disposition = finalize_failure(self._graph, request)
@@ -113,4 +128,10 @@ class TaskAttemptFacade:
                 disposition.status,
                 disposition.reason,
             )
+        return disposition
+
+    def fail_or_raise(self, request: FinalizeTaskFailure) -> FailureDisposition:
+        disposition = self.fail(request)
+        if disposition.status == "lost_fence":
+            raise RuntimeError(f"task attempt fence lost for run {request.run_id}")
         return disposition

@@ -66,7 +66,7 @@ def test_record_nonfailure_cannot_replace_final_outcome(tmp_path: Path) -> None:
     assert graph.task_attempts.record_nonfailure("owner", "owner", "cancelled")
     node = graph.get_node(node_id)
     assert node is not None
-    with pytest.raises(ValueError, match="outcome fence lost"):
+    with pytest.raises(RuntimeError, match="outcome fence lost"):
         record_nonfailure(graph, node, _context(tmp_path), "done")
     attempt = graph.task_attempts.get("owner")
     assert attempt is not None and attempt.outcome == "cancelled"

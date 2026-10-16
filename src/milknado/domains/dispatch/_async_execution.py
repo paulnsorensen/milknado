@@ -48,6 +48,8 @@ def _run_in_tmux_window(
     context.log_path.touch()
     nonce = secrets.token_hex(16)
     _ = graph.runs.deposit_message(run_id, "tmux_exec_nonce", nonce, _now_iso())
+    receipt = exec_receipt_path(graph.db_path, run_id, nonce)
+    receipt.parent.mkdir(parents=True, exist_ok=True)
     window = RunWindow(
         run_id=run_id,
         argv=context.argv,
@@ -63,7 +65,7 @@ def _run_in_tmux_window(
             executable=context.argv[0],
         ),
         brief_path=staged_brief,
-        exec_receipt_path=exec_receipt_path(graph.db_path.parent, run_id, nonce),
+        exec_receipt_path=receipt,
         exec_nonce=nonce,
     )
     return _execute_in_window(

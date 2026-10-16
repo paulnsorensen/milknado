@@ -63,15 +63,16 @@ def test_node_reconcile_rejects_missing_attempt(tmp_path: Path) -> None:
     graph.close()
 
 
-def test_node_reconcile_rejects_cancellation_it_cannot_record(tmp_path: Path) -> None:
+def test_poll_of_old_cancelled_run_leaves_reclaimed_node_to_its_owner(tmp_path: Path) -> None:
     graph, node_id = _running_node(tmp_path)
     graph.runs.finish("owner", RunResult("failed", -1, False, _NOW, error="cancelled"))
     _settle_and_reclaim(graph, node_id)
 
-    with pytest.raises(RuntimeError, match="task outcome fence lost"):
-        reconcile_node_status(graph, node_id, "failed", run_id="owner")
+    reconcile_node_status(graph, node_id, "failed", run_id="owner")
+
     node = graph.get_node(node_id)
     assert node is not None and node.run_id == "successor"
+    assert node.status is NodeStatus.RUNNING
     graph.close()
 
 

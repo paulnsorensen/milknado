@@ -31,6 +31,7 @@ from pathlib import Path
 import psutil
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
@@ -70,7 +71,9 @@ def crashing(self, attempt_id, owner_run_id, invocation_id):
 
 setattr(facade, method, crashing)
 owner = WorkerOwner("owner", me.pid, me.create_time(), "owner", node.id)
-context = ProtectionContext(LoopWorkerEvidence(Path(db)), owner, Path(db))
+context = ProtectionContext(
+    LoopWorkerEvidence(Path(db)), owner, Path(db), release=LoopWorkerRelease(Path(db))
+)
 spawn_protected(
     SpawnOptions(
         (sys.executable, "-c", "pass"),

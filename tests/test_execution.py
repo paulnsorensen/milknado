@@ -16,7 +16,7 @@ from typing_extensions import override
 
 import milknado.domains.execution._node_attempts as _node_attempts
 import milknado.domains.execution.executor as _executor_module
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import (
     ProgressEvent,
     RunResult,
@@ -49,9 +49,7 @@ from milknado.domains.execution._models import CompletionResult, DispatchResult,
 from milknado.domains.execution.executor import WorktreeManager
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
 from milknado.loop import RunStatus
-from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
-from milknado.loop._process_startup import _release_worker  # pyright: ignore[reportPrivateUsage]
 
 _BUILD_COMMIT_MESSAGE = cast(
     Callable[[int, str], str], attrgetter("_build_commit_message")(_executor_module)
@@ -641,9 +639,7 @@ class TestExecutorDispatch:
         )
         worker = spawn_gated(options)
         try:
-            _release_worker(
-                worker, ProtectionContext(LoopWorkerEvidence(graph.db_path), owner, graph.db_path)
-            )
+            LoopWorkerRelease(graph.db_path).release_worker(worker, owner)
             assert worker.start_evidence is StartEvidence.STARTUP_FAILED
             assert worker.process.wait(timeout=3) != 0
         finally:

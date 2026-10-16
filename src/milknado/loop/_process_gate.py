@@ -6,6 +6,7 @@ import os
 import select
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -58,6 +59,7 @@ class WorkerProcess:
         self.identity = identity
         self._gate_fd = gate_fd
         self._status_fd = status_fd
+        self._fd_lock = threading.Lock()
         self.start_evidence = (
             StartEvidence.EXECUTED if status_fd is None else StartEvidence.UNKNOWN
         )
@@ -126,13 +128,18 @@ class WorkerProcess:
             _ = self.process.wait(timeout=1)
         self.start_evidence = StartEvidence.STARTUP_FAILED
 
+    def _take_fds(self) -> tuple[int | None, int | None]:
+        # close_gate and release run on different threads; each fd leaves exactly once.
+        with self._fd_lock:
+            gate_fd, status_fd = self._gate_fd, self._status_fd
+            self._gate_fd = None
+            self._status_fd = None
+        return gate_fd, status_fd
+
     def release(self) -> None:
-        if self._gate_fd is None:
+        gate_fd, status_fd = self._take_fds()
+        if gate_fd is None:
             return
-        gate_fd = self._gate_fd
-        self._gate_fd = None
-        status_fd = self._status_fd
-        self._status_fd = None
         try:
             ready = status_fd is None or self._await_gate_ready(status_fd)
         except TimeoutError:
@@ -154,12 +161,7 @@ class WorkerProcess:
                 os.close(status_fd)
 
     def close_gate(self) -> None:
-        if self._gate_fd is not None:
-            os.close(self._gate_fd)
-            self._gate_fd = None
-        if self._status_fd is not None:
-            os.close(self._status_fd)
-            self._status_fd = None
+        _close_fds(*self._take_fds())
 
 
 def _close_fds(*descriptors: int | None) -> None:
@@ -185,19 +187,24 @@ def _abort_unidentified_worker(
                 pipe.close()
 
 
-def spawn_gated(options: SpawnOptions) -> WorkerProcess:
-    """Keep the actual command inert until its parent releases the exec gate."""
-    if not options.command:
-        raise ValueError("worker command is empty")
+@dataclass(frozen=True, slots=True)
+class _GateFds:
     gate_read: int | None = None
     gate_write: int | None = None
     status_read: int | None = None
     status_write: int | None = None
+
+
+def _gated_launch(
+    options: SpawnOptions,
+) -> tuple[tuple[str, ...], dict[str, object], _GateFds]:
     command = options.command
     kwargs: dict[str, object] = {"start_new_session": os.name != "nt"}
+    fds = _GateFds()
     if os.name != "nt":
         gate_read, gate_write = os.pipe()
         status_read, status_write = os.pipe()
+        fds = _GateFds(gate_read, gate_write, status_read, status_write)
         command = (
             sys.executable,
             "-P",
@@ -210,6 +217,14 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
         kwargs["pass_fds"] = (gate_read, status_write)
     if options.text:
         kwargs.update(SUBPROCESS_TEXT_KWARGS)
+    return command, kwargs, fds
+
+
+def spawn_gated(options: SpawnOptions) -> WorkerProcess:
+    """Keep the actual command inert until its parent releases the exec gate."""
+    if not options.command:
+        raise ValueError("worker command is empty")
+    command, kwargs, fds = _gated_launch(options)
     try:
         proc = subprocess.Popen(  # pyright: ignore[reportCallIssue]
             command,
@@ -221,17 +236,17 @@ def spawn_gated(options: SpawnOptions) -> WorkerProcess:
             **kwargs,  # pyright: ignore[reportArgumentType]
         )
     except Exception:
-        _close_fds(gate_write, status_read)
+        _close_fds(fds.gate_write, fds.status_read)
         raise
     finally:
-        if gate_read is not None:
-            os.close(gate_read)
-        if status_write is not None:
-            os.close(status_write)
+        if fds.gate_read is not None:
+            os.close(fds.gate_read)
+        if fds.status_write is not None:
+            os.close(fds.status_write)
     try:
         token = psutil.Process(proc.pid).create_time()
     except Exception:
-        _abort_unidentified_worker(proc, gate_write, status_read)
+        _abort_unidentified_worker(proc, fds.gate_write, fds.status_read)
         raise
     identity = WorkerIdentity(options.invocation_id or uuid.uuid4().hex, proc.pid, proc.pid, token)
-    return WorkerProcess(proc, identity, gate_write, status_read)
+    return WorkerProcess(proc, identity, fds.gate_write, fds.status_read)

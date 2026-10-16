@@ -12,11 +12,16 @@ import psutil
 import pytest
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import NodeStatus, RunResult, WorkerOwner
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
-from milknado.loop._process_startup import _release_worker  # pyright: ignore[reportPrivateUsage]
+
+
+def _release_worker(worker: WorkerProcess, context: ProtectionContext) -> None:
+    context.release.release_worker(worker, context.owner)
+
 
 _NOW = "2026-01-01T00:00:00+00:00"
 
@@ -24,7 +29,9 @@ _NOW = "2026-01-01T00:00:00+00:00"
 def _context(path: Path, source: str, node_id: int) -> ProtectionContext:
     supervisor = psutil.Process()
     owner = WorkerOwner(source, supervisor.pid, supervisor.create_time(), source, node_id)
-    return ProtectionContext(LoopWorkerEvidence(path), owner, path)
+    return ProtectionContext(
+        LoopWorkerEvidence(path), owner, path, release=LoopWorkerRelease(path)
+    )
 
 
 def _reap(worker: WorkerProcess) -> None:

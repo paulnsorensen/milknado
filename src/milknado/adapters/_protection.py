@@ -8,18 +8,25 @@ from pathlib import Path
 import psutil
 
 from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.domains.common import MilknadoConfig, WorkerOwner, default_config, load_config
+from milknado.adapters._loop_worker_release import LoopWorkerRelease
+from milknado.domains.common import WorkerOwner
 from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_registry import WorkerRegistry
+from milknado.project import load_project_config
 
 
-def load_config_or_default(root: Path) -> MilknadoConfig:
-    config_path = root / "milknado.toml"
-    return load_config(config_path) if config_path.exists() else default_config(root)
+def loop_protection(
+    db_path: Path, owner: WorkerOwner, registry: WorkerRegistry | None = None
+) -> ProtectionContext:
+    """Protect a worker with DB-backed evidence and attempt-aware gate release."""
+    return ProtectionContext(
+        LoopWorkerEvidence(db_path), owner, db_path, registry, release=LoopWorkerRelease(db_path)
+    )
 
 
 def protection_from_env(env: Mapping[str, str], run_id: str) -> ProtectionContext:
     """Bind the current process as supervisor of the node named by `env`."""
-    config = load_config_or_default(Path(env["MILKNADO_PROJECT_ROOT"]))
+    config = load_project_config(Path(env["MILKNADO_PROJECT_ROOT"]))
     supervisor = psutil.Process()
     owner = WorkerOwner(
         run_id,
@@ -28,4 +35,4 @@ def protection_from_env(env: Mapping[str, str], run_id: str) -> ProtectionContex
         run_id,
         int(env["MILKNADO_NODE_ID"]),
     )
-    return ProtectionContext(LoopWorkerEvidence(config.db_path), owner, config.db_path)
+    return loop_protection(config.db_path, owner)

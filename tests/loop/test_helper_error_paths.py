@@ -29,6 +29,7 @@ from milknado.loop._process_helper import (
     stop_failed_helper,
 )
 from milknado.loop._process_observation import snapshot
+from tests.loop.worker_release import PlainWorkerRelease
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX pipe semantics are required")
@@ -219,7 +220,10 @@ def test_ready_rejects_snapshot_advanced_after_handshake(
         evidence.record_worker(owner, worker.identity)
         sequence = snapshot(worker, evidence)
         context = ProtectionContext(
-            _AdvanceAfterReady(graph.db_path, worker=worker), owner, graph.db_path
+            _AdvanceAfterReady(graph.db_path, worker=worker),
+            owner,
+            graph.db_path,
+            release=PlainWorkerRelease(),
         )
         monkeypatch.setattr(os, "pipe", tracked_pipe)
         with pytest.raises(RuntimeError, match="lifeline READY not durable"):

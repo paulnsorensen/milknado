@@ -21,7 +21,6 @@ from milknado.domains.dispatch._attempt_completion import (
     AttemptRef,
     settle_counted_failure,
     settle_node_terminal,
-    settle_nonfailure,
     settle_preserved,
 )
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
@@ -130,7 +129,7 @@ def _finish_dispatch(
         settle_preserved(graph, ref)
         return
     if settle_node_terminal(graph, ref, NodeStatus.DONE):
-        settle_nonfailure(graph, ref, "done")
+        graph.task_attempts.require_nonfailure(ref.attempt_id, ref.owner_run_id, "done")
 
 
 def dispatch_node_sync(
