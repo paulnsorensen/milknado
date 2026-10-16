@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from milknado.app._shutdown import STOP_TIMEOUT_SECONDS
 from milknado.app.project import open_graph
 from milknado.domains.common import NodeSpec, pid_alive
 from milknado.domains.dispatch import make_run_id, now_iso
@@ -135,7 +136,8 @@ def test_actual_runner_handles_signal_before_exiting(
         worker = _wait_for_worker(graph, node_id, root.parent / "agent.pid")
         assert pid_alive(worker.pid)
         os.kill(proc.pid, signum)
-        returncode = proc.wait(timeout=8)
+        # The runner may spend its whole stop budget; allow interpreter exit after it.
+        returncode = proc.wait(timeout=STOP_TIMEOUT_SECONDS + 10)
         assert returncode == 128 + signum, (returncode, log_path.read_text())
         assert not pid_alive(worker.pid)
         record = graph.runs.get_worker(worker.invocation_id)

@@ -15,6 +15,9 @@ from milknado.loop._process_identity import terminate_verified_result as termina
 
 _log = logging.getLogger(__name__)
 
+# A busy graph must not spend the time reserved to stop an orphaned worker.
+_OBSERVATION_WAIT = 1.0
+
 
 class WorkerEvidence(Protocol):
     @property
@@ -76,7 +79,7 @@ def _await_record(
 
 
 def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> int:
-    store.set_deadline(deadline)
+    store.set_deadline(min(deadline, time.monotonic() + _OBSERVATION_WAIT))
     try:
         record = store.get(helper.invocation_id)
     except (sqlite3.OperationalError, TimeoutError) as exc:
@@ -119,6 +122,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
     result = terminate_verified(worker, current.descendants, deadline)
     if not result.covered_exited or current.observation_owner is not None:
         return 1
+    store.set_deadline(deadline)
     try:
         store.end(helper.invocation_id, current.snapshot_seq, helper.generation)
     except (sqlite3.OperationalError, TimeoutError, RuntimeError) as exc:

@@ -41,7 +41,9 @@ import sys
 import time
 from pathlib import Path
 stage, release = map(Path, sys.argv[1:3])
-stage.write_text(str(os.getpid()))
+partial = stage.with_suffix('.partial')
+partial.write_text(str(os.getpid()))
+partial.replace(stage)
 print('started', flush=True)
 while not release.exists():
     time.sleep(.02)
@@ -59,7 +61,9 @@ stage, release = map(Path, sys.argv[1:3])
 for _ in range(2):
     if not sys.stdin.readline():
         raise SystemExit(2)
-stage.write_text(str(os.getpid()))
+partial = stage.with_suffix('.partial')
+partial.write_text(str(os.getpid()))
+partial.replace(stage)
 print(json.dumps({'type':'assistant','session_id':'sid','message':
     {'role':'assistant','content':[{'type':'text','text':'started'}]}}), flush=True)
 while not release.exists():
