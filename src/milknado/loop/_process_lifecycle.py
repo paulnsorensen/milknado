@@ -210,10 +210,8 @@ class ProtectedWorker:
         return confirmed
 
     def _persistence(self, deadline: float) -> WorkerEvidence:
-        """Give evidence writes their own wait, so a slow disk cannot fail a dead worker."""
-        return self._context.evidence.with_deadline(
-            max(deadline, time.monotonic() + _EVIDENCE_WAIT)
-        )
+        wait = max(deadline, time.monotonic() + _EVIDENCE_WAIT)
+        return self._context.evidence.with_deadline(wait)
 
     def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
         evidence = self._persistence(deadline)

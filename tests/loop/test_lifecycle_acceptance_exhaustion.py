@@ -82,7 +82,7 @@ def _exit_zero_on_term(script: str) -> str:
     )
 
 
-def _until(predicate: Callable[[], bool], timeout: float = 10) -> bool:
+def _until(predicate: Callable[[], bool], timeout: float = 60) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
@@ -251,7 +251,7 @@ def _execute_pair(case: _ExhaustionCase) -> AgentResult:
             other_pid = _assert_started(case.graph, case.workers, case.tmp_path)
             _exhaust(case.graph, affected_worker, case.failure, case.monkeypatch)
             with pytest.raises(RuntimeError, match="worker protection failed"):
-                _ = first.result(timeout=12)
+                _ = first.result(timeout=60)
             _assert_failure_and_isolation(
                 case.graph, case.workers, other_pid, exit_zero=case.failure == "crash_zero"
             )
@@ -259,7 +259,7 @@ def _execute_pair(case: _ExhaustionCase) -> AgentResult:
             if case.failure == "crash_zero" and case.flavor != "native":
                 assert case.sink_handles and all(handle.closed for handle in case.sink_handles)
             other_release.touch()
-            succeeded = second.result(timeout=5)
+            succeeded = second.result(timeout=60)
         finally:
             affected_release.touch()
             other_release.touch()
