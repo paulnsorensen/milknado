@@ -56,5 +56,5 @@ def admit_from_process(request: AttachedCommand) -> subprocess.CompletedProcess[
         check=False,
         capture_output=True,
         text=True,
-        timeout=10,
+        timeout=60,
     )

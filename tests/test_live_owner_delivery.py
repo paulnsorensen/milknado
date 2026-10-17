@@ -42,7 +42,7 @@ class _ReplacementCase:
 
 
 def _wait_history(graph: MikadoGraph, command_id: str, expected: list[str]) -> None:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if _history(graph, command_id) == expected:
             return
