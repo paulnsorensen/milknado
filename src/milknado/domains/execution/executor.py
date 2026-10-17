@@ -48,6 +48,7 @@ from milknado.domains.dispatch import (
     WorkerOrientation,
     is_cancel_requested,
     make_run_id,
+    reclaim_clean_orphan,
     render_brief,
     runs_dir,
     unoccupied_slot,
@@ -297,6 +298,7 @@ class WorktreeManager:
         make `git worktree add -b` fail. The preserved orphan is left for a human
         or an explicit discard; the run loop is never blocked by it.
         """
+        reclaim_clean_orphan(self._git, wt_path, branch)
         candidate, candidate_branch = unoccupied_slot(
             self._git, (wt_path, branch), root, _RELOCATION_SUFFIXES
         )
