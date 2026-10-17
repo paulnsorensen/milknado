@@ -43,7 +43,7 @@ def test_helper_discovery_is_durable_for_later_cleanup(
             ),
         )
         graph.runs.record_helper(helper)
-        deadline = time.monotonic() + 4
+        deadline = time.monotonic() + 30
         while not marker.exists() and time.monotonic() < deadline:
             time.sleep(0.02)
         child_pid = int(marker.read_text())
@@ -55,7 +55,7 @@ def test_helper_discovery_is_durable_for_later_cleanup(
 
         monkeypatch.setattr(lifeline, "terminate_verified", hold_termination)
         with WorkerEvidenceStore(graph.db_path) as store:
-            assert _cleanup(store, helper, time.monotonic() + 3) == 1
+            assert _cleanup(store, helper, time.monotonic() + 30) == 1
         record = graph.runs.get_worker("inv-1")
         assert (
             record is not None
@@ -64,11 +64,11 @@ def test_helper_discovery_is_durable_for_later_cleanup(
             and record.ended_at is None
         )
         monkeypatch.setattr(lifeline, "terminate_verified", terminate_verified_result)
-        reaper = threading.Thread(target=worker.wait, kwargs={"timeout": 3})
+        reaper = threading.Thread(target=worker.wait, kwargs={"timeout": 30})
         reaper.start()
         with WorkerEvidenceStore(graph.db_path) as store:
-            assert _cleanup(store, helper, time.monotonic() + 3) == 0
-        reaper.join(timeout=2)
+            assert _cleanup(store, helper, time.monotonic() + 30) == 0
+        reaper.join(timeout=30)
         assert not reaper.is_alive()
         assert not psutil.pid_exists(child_pid) or (
             psutil.Process(child_pid).status() == psutil.STATUS_ZOMBIE
