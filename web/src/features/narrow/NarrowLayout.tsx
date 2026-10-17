@@ -26,12 +26,12 @@ export function NarrowLayout(): ReactElement {
     setView('detail');
   }
 
-  return (
-    <>
-      <CoordinatorCockpit />
-      {view === 'detail'
-        ? <NarrowDetail onBack={() => setView('list')} />
-        : <NarrowList onOpen={openNode} />}
-    </>
-  );
+  return view === 'detail'
+    ? (
+      <>
+        <NarrowDetail onBack={() => setView('list')} />
+        <div className="mk-narrow-extra"><CoordinatorCockpit /></div>
+      </>
+    )
+    : <NarrowList onOpen={openNode}><CoordinatorCockpit /></NarrowList>;
 }

@@ -63,6 +63,14 @@
   overflow-y: auto;
 }
 
+.mk-narrow-extra {
+  padding: 0 var(--mk-space-4) var(--mk-space-4);
+}
+
+.mk-narrow-extra:empty {
+  display: none;
+}
+
 .mk-narrow-jump {
   display: flex;
   align-items: center;
