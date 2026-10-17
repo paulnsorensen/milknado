@@ -22,6 +22,8 @@ from tests.meta.mcp_contracts import (
     write_custom_flavor,
 )
 
+pytestmark = pytest.mark.real_process
+
 
 def test_worker_identity_is_cleared_before_each_test(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

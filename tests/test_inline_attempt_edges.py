@@ -31,6 +31,8 @@ from tests.test_run_inline_worktree import (
     _wait_for_terminal,  # pyright: ignore[reportPrivateUsage]
 )
 
+pytestmark = pytest.mark.real_process
+
 
 def _bounded_task(root: Path) -> int:
     _init_repo(root)

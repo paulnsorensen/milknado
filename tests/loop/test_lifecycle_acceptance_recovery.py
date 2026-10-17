@@ -19,9 +19,10 @@ from milknado.domains.common import NodeSpec, pid_alive
 from milknado.domains.dispatch import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, WorkerRecord
 
-pytestmark = pytest.mark.skipif(
-    os.name == "nt", reason="POSIX helper uses passed file descriptors"
-)
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX helper uses passed file descriptors"),
+]
 
 
 @pytest.fixture

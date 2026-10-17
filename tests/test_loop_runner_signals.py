@@ -16,6 +16,8 @@ from milknado.domains.common import NodeSpec, pid_alive
 from milknado.domains.dispatch import make_run_id, now_iso
 from milknado.domains.graph import MikadoGraph, WorkerRecord
 
+pytestmark = pytest.mark.real_process
+
 if os.name != "posix":
     pytest.skip("POSIX process signals are required", allow_module_level=True)
 

@@ -42,6 +42,7 @@ testpaths = ["tests"]
 markers = [
     "e2e: live-API end-to-end tests (claude CLI + ANTHROPIC_API_KEY required; slow)",
     "browser: Playwright end-to-end tests over a real committed build; excluded from the xdist coverage run",
+    "real_process: tests that start real process trees; the gate runs them in a low-parallelism lane",
 ]
 
 [tool.coverage.run]

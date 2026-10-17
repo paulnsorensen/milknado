@@ -21,6 +21,8 @@ from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_lifecycle import spawn_protected
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
 def test_unknown_identity_before_observation_does_not_claim_evidence(

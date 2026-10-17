@@ -21,6 +21,8 @@ from tests.meta.mcp_contracts import payload
 from tests.test_mcp_stdio_smoke import TIMEOUT_S, server_command, server_env
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.real_process
+
 _WORKER_SCRIPT = (
     "cat >/dev/null\n"
     "printf 'worker change\\n' > worker-change.txt\n"

@@ -22,6 +22,8 @@ from tests.attached_owner_delivery_fixtures import AttachedCommand, admit_from_p
 from tests.execution_session_fixtures import build_graph, init_repo
 from tests.live_owner_delivery_fixtures import kill_owner, kill_vendor, owner, wait, worker
 
+pytestmark = pytest.mark.real_process
+
 
 def _history(graph: MikadoGraph, command_id: str) -> list[str]:
     return [receipt.status for receipt in graph.commands.history(command_id)]

@@ -20,6 +20,8 @@ from milknado.domains.graph import (
 )
 from milknado.domains.graph._sqlite_rows import fetchall
 
+pytestmark = pytest.mark.real_process
+
 
 def test_worker_record_persists_and_blocks_reclaim(tmp_path: Path) -> None:
     db_path = tmp_path / "graph.db"

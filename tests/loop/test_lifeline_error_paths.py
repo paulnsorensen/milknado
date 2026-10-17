@@ -24,6 +24,8 @@ from milknado.domains.common import (
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 from milknado.loop._lifeline import _cleanup, run_lifeline  # pyright: ignore[reportPrivateUsage]
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
 def test_lifeline_read_failure_retains_live_worker_record(

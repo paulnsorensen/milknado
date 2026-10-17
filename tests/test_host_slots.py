@@ -41,7 +41,10 @@ from milknado.mcp.todo_mutate import milknado_todo_add
 from milknado.project import load_project_config
 from tests.test_execution import FakeCrg, FakeGit, FakeLoop
 
-pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.usefixtures("accept_inline_completion"),
+]
 
 _HOLDER = (
     "import sys, time\n"

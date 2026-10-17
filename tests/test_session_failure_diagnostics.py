@@ -4,8 +4,12 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from milknado.loop._agent import AgentResult, AgentRunSpec
 from milknado.loop.sessions import SessionChannel, run_session
+
+pytestmark = pytest.mark.real_process
 
 
 def _worker(tmp_path: Path, *, failed: bool) -> Path:

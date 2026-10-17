@@ -50,6 +50,8 @@ from milknado.domains.graph import (
 )
 from milknado.loop import RunStatus
 
+pytestmark = pytest.mark.real_process
+
 T = TypeVar("T")
 
 

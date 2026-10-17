@@ -31,6 +31,8 @@ from milknado.loop._process_helper import (
 from milknado.loop._process_observation import snapshot
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX pipe semantics are required")
 @pytest.mark.parametrize(

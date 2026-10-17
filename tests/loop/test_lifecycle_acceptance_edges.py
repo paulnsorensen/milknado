@@ -24,9 +24,10 @@ from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 from tests.loop.worker_release import PlainWorkerRelease
 
-pytestmark = pytest.mark.skipif(
-    os.name == "nt", reason="POSIX helper uses passed file descriptors"
-)
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX helper uses passed file descriptors"),
+]
 
 
 def _until(predicate: Callable[[], bool], timeout: float = 9) -> bool:
