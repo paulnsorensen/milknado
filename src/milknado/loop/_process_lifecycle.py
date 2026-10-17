@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import final
 
 from milknado.domains.common import identity_state
-from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_contract import ProtectionContext, WorkerEvidence
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import (
     HelperStart,
@@ -26,6 +26,7 @@ from milknado.loop._process_startup import spawn_protected as _spawn_protected
 
 _log = logging.getLogger(__name__)
 _REPLACEMENT_WINDOW = 8.0
+_EVIDENCE_WAIT = 5.0
 
 
 @final
@@ -208,8 +209,14 @@ class ProtectedWorker:
         stop_failed_helper(self._helper, deadline)
         return confirmed
 
+    def _persistence(self, deadline: float) -> WorkerEvidence:
+        """Give evidence writes their own wait, so a slow disk cannot fail a dead worker."""
+        return self._context.evidence.with_deadline(
+            max(deadline, time.monotonic() + _EVIDENCE_WAIT)
+        )
+
     def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
-        evidence = self._context.evidence.with_deadline(deadline)
+        evidence = self._persistence(deadline)
         durable_targets: tuple[Descendant, ...] = ()
         try:
             record = evidence.get_worker(self.identity.invocation_id)
@@ -233,7 +240,7 @@ class ProtectedWorker:
                 )
                 if not result.covered_exited or record.observation_owner is not None:
                     return False
-                evidence.end_worker(
+                self._persistence(deadline).end_worker(
                     self.identity.invocation_id, record.snapshot_seq, record.helper_generation
                 )
             elif not release:

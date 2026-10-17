@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -72,3 +74,29 @@ def test_replacement_window_expiring_mid_observation_leaves_no_observation_owner
     record = graph.runs.get_worker("inv-1")
     assert record is not None
     assert record.observation_owner is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
+def test_shutdown_records_the_end_when_the_database_stays_busy_past_the_budget(
+    protected: tuple[MikadoGraph, ProtectedWorker],
+) -> None:
+    graph, worker = protected
+    locked = threading.Event()
+
+    def hold_write_lock() -> None:
+        conn = sqlite3.connect(graph.db_path, isolation_level=None)
+        conn.execute("BEGIN IMMEDIATE")
+        locked.set()
+        time.sleep(1.5)
+        conn.execute("COMMIT")
+        conn.close()
+
+    holder = threading.Thread(target=hold_write_lock)
+    holder.start()
+    assert locked.wait(timeout=30)
+    confirmed = worker._shutdown_owned(time.monotonic() + 0.5)  # pyright: ignore[reportPrivateUsage]
+    holder.join(timeout=30)
+    record = graph.runs.get_worker("inv-1")
+    assert record is not None
+    assert confirmed
+    assert record.ended_at is not None
