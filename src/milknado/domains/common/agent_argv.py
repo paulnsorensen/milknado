@@ -296,8 +296,11 @@ def build_planning_subprocess(
 
 
 def build_minimal_mcp_env(*, executable: str | None = None) -> dict[str, str]:
-    """Return process essentials plus the OMP OpenRouter credential when needed."""
-    allowed = ["HOME", "LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR"]
+    """Return process essentials plus the OMP OpenRouter credential when needed.
+
+    Claude Code on macOS needs USER to read its OAuth login from the keychain.
+    """
+    allowed = ["HOME", "LANG", "LC_ALL", "LOGNAME", "PATH", "SYSTEMROOT", "TERM", "TMPDIR", "USER"]
     if executable == "omp":
         allowed.append("OPENROUTER_API_KEY")
     return {key: os.environ[key] for key in allowed if key in os.environ}
