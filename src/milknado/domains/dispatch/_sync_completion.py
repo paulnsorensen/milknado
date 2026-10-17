@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Protocol
 
 from milknado.domains.common import NodeStatus, RunFenceLostError, RunResult
@@ -12,9 +13,19 @@ from milknado.domains.dispatch._attempt_completion import (
     settle_node_terminal,
 )
 from milknado.domains.dispatch._runstate import now_iso
+from milknado.domains.dispatch.ports import CompletionCheck
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 
 _logger = logging.getLogger(__name__)
+
+
+def completion_rejection(
+    check: CompletionCheck | None, terminal: str, location: tuple[Path, str | None]
+) -> str | None:
+    """Run the completion check for a worker that exited clean; None means accepted."""
+    if check is None or terminal != "done":
+        return None
+    return check(*location)
 
 
 class SyncFailureRequest(Protocol):

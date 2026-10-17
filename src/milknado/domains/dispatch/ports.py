@@ -9,6 +9,12 @@ from milknado.domains.common import RunResult, WorkerIdentity
 from milknado.domains.common.config import MilknadoConfig
 from milknado.domains.graph import MikadoGraph
 
+CompletionCheck = Callable[[Path, str | None], str | None]
+"""Verify a finished worker's work in (worktree, dispatch base oid).
+
+Returns the rejection feedback, or None when the work passes.
+"""
+
 
 @dataclass(frozen=True)
 class RunWindow:

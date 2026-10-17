@@ -22,6 +22,7 @@ from milknado.app._shutdown import (
     bounded_stop,
     supervise,
 )
+from milknado.app.inline_gates import inline_completion_check, require_task_node
 from milknado.app.run_source import (
     ActiveRunSnapshot,
     ExecutionRunStatus,
@@ -35,7 +36,6 @@ from milknado.domains.common import (
     GitPort,
     MikadoNode,
     MilknadoConfig,
-    NodeKind,
     NodeStatus,
     SessionInput,
     WorktreeMode,
@@ -477,17 +477,6 @@ class InlineRunRequest:
     merge_back: bool
 
 
-def _require_task_node(graph: MikadoGraph, node_id: int) -> MikadoNode:
-    node = graph.get_node(node_id)
-    if node is None:
-        raise ValueError(f"node {node_id} not found")
-    if node.kind != NodeKind.TASK:
-        raise ValueError(
-            f"node {node_id} has kind={node.kind.value}; only task nodes can be dispatched"
-        )
-    return node
-
-
 def _git_for_inline_dispatch(
     cfg: MilknadoConfig,
     root: Path,
@@ -527,7 +516,7 @@ def run_inline(
         request.worktree.value,
         request.merge_back,
     )
-    node = _require_task_node(graph, request.node_id)
+    node = require_task_node(graph, request.node_id)
     profile = resolve_flavor_profile(cfg, node.flavor)
     state = dispatch_node_sync(
         graph,
@@ -545,6 +534,7 @@ def run_inline(
             worktree_pattern=cfg.worktree_pattern,
             host_capacity=FlockSlotPool(cfg.host_worker_limit),
             max_node_attempts=cfg.max_node_attempts,
+            completion_check=inline_completion_check(profile, node, git, request.worktree),
         ),
     )
     return state
@@ -587,7 +577,7 @@ def run_inline_start(
         tmux = TmuxAdapter(root)
         ensure_tmux_ready(tmux)
 
-    node = _require_task_node(graph, request.node_id)
+    node = require_task_node(graph, request.node_id)
     run_id = make_run_id(request.node_id)
     if node.status == NodeStatus.RUNNING:
         reclaim_stale_node(
@@ -628,6 +618,8 @@ def run_inline_start(
                 merge_ctx=isolate if request.merge_back else None,
                 lease=lease,
                 max_node_attempts=cfg.max_node_attempts,
+                completion_check=inline_completion_check(profile, node, git, request.worktree),
+                base_oid=isolate.base_oid if isolate is not None else None,
             ),
             _GraphSessions(),
             git,

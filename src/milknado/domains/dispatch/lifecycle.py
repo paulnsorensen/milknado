@@ -26,6 +26,7 @@ from milknado.domains.dispatch._attempt_completion import (
 from milknado.domains.dispatch._host_claim import claim_with_host_slot
 from milknado.domains.dispatch._runstate import make_run_id, now_iso, runs_dir
 from milknado.domains.dispatch._sync_completion import (
+    completion_rejection,
     confirm_execution,
     finish_attempt_exception,
     start_sync_attempt,
@@ -43,6 +44,7 @@ from milknado.domains.dispatch.isolate import (
     setup_isolated_worktree,
 )
 from milknado.domains.dispatch.ports import (
+    CompletionCheck,
     ProcessPort,
     ProcessTerminationPort,
     WorkerOutcomePort,
@@ -71,6 +73,7 @@ class SyncDispatchRequest:
     worktree_pattern: str = ""
     host_capacity: HostCapacityPort | None = None
     max_node_attempts: int = 1
+    completion_check: CompletionCheck | None = None
 
 
 def _setup_sync_worktree(
@@ -100,6 +103,7 @@ def _finish_dispatch(
     result: object,
     terminal: str,
     merge: MergeBackResult | None,
+    error: str | None = None,
 ) -> None:
     worker_result = cast(WorkerOutcomePort, result)
     if graph.runs.live_workers(run_id=run_id):
@@ -110,6 +114,7 @@ def _finish_dispatch(
         exit_code=worker_result.exit_code,
         timed_out=worker_result.timed_out,
         ended_at=now_iso(),
+        error=error,
         rebased=merge.rebased if merge is not None else None,
     )
     if terminal == "failed" and not preserved:
@@ -194,12 +199,16 @@ def _run_claimed_node(
         if graph.runs.live_workers(run_id=run_id):
             raise RuntimeError(f"worker cleanup unresolved for run {run_id}")
         terminal = "done" if result.exit_code == 0 and not result.timed_out else "failed"
+        location = (cwd, isolate.base_oid if isolate is not None else None)
+        rejection = completion_rejection(request.completion_check, terminal, location)
+        if rejection is not None:
+            terminal = "failed"
         merge = merge_back_if_done(
             git, request.project_root, isolate if request.merge_back else None, terminal
         )
         if merge is not None and not merge.rebased:
             terminal = "failed"
-        _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge)
+        _finish_dispatch(graph, request.node_id, run_id, result, terminal, merge, rejection)
     except Exception as exc:
         if started:
             finish_attempt_exception(graph, request, (run_id, True), exc)
@@ -226,6 +235,7 @@ def _run_claimed_node(
         "status": final.status.value,
         "exit_code": result.exit_code,
         "timed_out": result.timed_out,
+        "error": rejection,
         "rebased": merge.rebased if merge is not None else None,
         "log_path": str(result.log_path),
         "summary": result.summary,

@@ -39,6 +39,8 @@ from milknado.mcp.run import (
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo_mutate import milknado_todo_add
 
+pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+
 
 class _RunResult(TypedDict):
     id: int

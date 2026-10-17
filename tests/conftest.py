@@ -59,6 +59,21 @@ def _isolate_worker_identity(
     monkeypatch.setenv("MILKNADO_CONTROLLER_MASTER", "test-controller-master")
 
 
+def _accepting_check(*_args: object) -> Callable[[Path, str | None], str | None]:
+    return lambda _worktree, _base_oid: None
+
+
+@pytest.fixture()
+def accept_inline_completion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let a module ignore the inline quality-gate verdict (opt in via pytestmark).
+
+    Modules that test isolation, merge-back, retry, and run state use workers that
+    exit 0 and produce no gated change. Gate behavior has its own tests
+    (test_mcp_stdio_inline_gates.py, test_inline_completion_gates.py).
+    """
+    monkeypatch.setattr("milknado.app.run.inline_completion_check", _accepting_check)
+
+
 @pytest.fixture()
 def worker_stub(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch

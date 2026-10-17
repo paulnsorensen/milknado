@@ -19,6 +19,8 @@ from tests.test_run_inline_worktree import (
     _wait_for_terminal,  # pyright: ignore[reportPrivateUsage]
 )
 
+pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+
 
 def _fail_once_then_pass(root: Path, worker_stub: Callable[[str], str]) -> str:
     marker = root.parent / "first-attempt-ran"

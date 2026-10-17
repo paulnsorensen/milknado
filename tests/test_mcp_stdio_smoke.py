@@ -28,7 +28,7 @@ from mcp.types import LATEST_PROTOCOL_VERSION, JSONRPCMessage, JSONRPCResponse
 from milknado.mcp._core import mcp as milknado_server
 from tests.meta.mcp_contracts import payload, registered_tools
 
-_TIMEOUT_S = 30.0
+TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -39,14 +39,14 @@ class _Session:
     servers: list[psutil.Process]
 
 
-def _server_command() -> str:
+def server_command() -> str:
     scripts = Path(sys.executable).parent
     command = shutil.which("milknado-mcp", path=str(scripts))
     assert command is not None, f"milknado-mcp console script is missing from {scripts}"
     return command
 
 
-def _server_env(project: Path) -> dict[str, str]:
+def server_env(project: Path) -> dict[str, str]:
     # The SDK forwards only a safe subset of the parent environment by default. Pass
     # the full test environment so XDG isolation and the agent-CLI guard reach the child.
     # FastMCP checks PyPI for updates at startup; turn that off to keep the test offline.
@@ -67,7 +67,7 @@ def _server_processes(command: str) -> list[psutil.Process]:
 
 
 async def _add_and_read_node(transport: StdioTransport, command: str) -> _Session:
-    async with Client(transport, timeout=_TIMEOUT_S, init_timeout=_TIMEOUT_S) as client:
+    async with Client(transport, timeout=TIMEOUT_S, init_timeout=TIMEOUT_S) as client:
         servers = _server_processes(command)
         names = {tool.name for tool in await client.list_tools()}
         added = payload(await client.call_tool("milknado_todo_add", {"description": "smoke"}))
@@ -79,12 +79,12 @@ def test_stdio_server_lists_tools_and_round_trips_a_node(tmp_path: Path) -> None
     project, elsewhere = tmp_path / "project", tmp_path / "elsewhere"
     project.mkdir()
     elsewhere.mkdir()
-    command = _server_command()
+    command = server_command()
     transport = StdioTransport(
-        command, [], env=_server_env(project), cwd=str(elsewhere), keep_alive=False
+        command, [], env=server_env(project), cwd=str(elsewhere), keep_alive=False
     )
 
-    session = asyncio.run(asyncio.wait_for(_add_and_read_node(transport, command), 2 * _TIMEOUT_S))
+    session = asyncio.run(asyncio.wait_for(_add_and_read_node(transport, command), 2 * TIMEOUT_S))
 
     assert session.tool_names == set(registered_tools())
     assert session.added["description"] == "smoke"
@@ -92,7 +92,7 @@ def test_stdio_server_lists_tools_and_round_trips_a_node(tmp_path: Path) -> None
     assert (project / ".milknado" / "milknado.db").is_file()
     assert not (elsewhere / ".milknado").exists()
     assert session.servers, "no milknado-mcp child process ran during the session"
-    _, alive = psutil.wait_procs(session.servers, timeout=_TIMEOUT_S)
+    _, alive = psutil.wait_procs(session.servers, timeout=TIMEOUT_S)
     assert not alive, f"milknado-mcp outlived its client: {alive}"
 
 
@@ -110,13 +110,13 @@ def test_stdio_server_answers_handshake_and_exits_on_stdin_close(tmp_path: Path)
     initialized = {"jsonrpc": "2.0", "method": "notifications/initialized"}
 
     done = subprocess.run(
-        [_server_command()],
+        [server_command()],
         input="".join(f"{json.dumps(message)}\n" for message in (initialize, initialized)),
         capture_output=True,
         text=True,
-        env=_server_env(tmp_path),
+        env=server_env(tmp_path),
         cwd=tmp_path,
-        timeout=_TIMEOUT_S,
+        timeout=TIMEOUT_S,
         check=False,
     )
 
