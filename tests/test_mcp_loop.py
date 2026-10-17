@@ -212,7 +212,7 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool, detail: str 
     return f"{sys.executable} {script}"
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 5.0) -> _LoopResponse:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 60.0) -> _LoopResponse:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:

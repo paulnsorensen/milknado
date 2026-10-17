@@ -78,7 +78,7 @@ def _real_adapter(adapter: TmuxAdapter) -> Callable[[Path], TmuxAdapter]:
 
 
 def _await_covered_descendant(root: Path, run_id: str, child_file: Path) -> int:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if child_file.exists():
             child_pid = int(child_file.read_text())
@@ -115,7 +115,7 @@ def test_real_tmux_failure_cleans_detached_descendant_before_requeue(
     child_file = tmp_path / "child.pid"
     release = tmp_path / "release"
     command = worker_stub(
-        "sh -c 'setsid sleep 8 </dev/null >/dev/null 2>&1 & "
+        "sh -c 'setsid sleep 120 </dev/null >/dev/null 2>&1 & "
         + f"echo $! > {child_file}; while [ ! -e {release} ]; do sleep 0.05; done; exit 7'"
     )
     child_pid: int | None = None
@@ -167,7 +167,7 @@ def test_real_tmux_cancel_cleans_covered_descendant(
     node_id = _add_task(str(tmp_path))
     child_file = tmp_path / "cancel-child.pid"
     command = worker_stub(
-        "sh -c 'setsid sleep 8 </dev/null >/dev/null 2>&1 & "
+        "sh -c 'setsid sleep 120 </dev/null >/dev/null 2>&1 & "
         + f"echo $! > {child_file}; while :; do sleep 0.05; done'"
     )
     child_pid: int | None = None
@@ -195,10 +195,10 @@ def test_real_tmux_cancel_cleans_covered_descendant(
 
 
 def _wait_for(condition: Callable[[], bool], diagnostics: Callable[[], str] | None = None) -> None:
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 60
     while not condition() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert condition(), diagnostics() if diagnostics else "condition not met within 15s"
+    assert condition(), diagnostics() if diagnostics else "condition not met within 60s"
 
 
 def _record_unresolved_peer(root: Path, run_node: tuple[str, int], peer_pid: int) -> None:

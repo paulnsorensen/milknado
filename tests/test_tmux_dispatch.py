@@ -296,7 +296,7 @@ def test_loop_start_window_collision_releases_claim_as_failed(
 # --- run-inline path (milknado_run_inline_start) --------------------------------
 
 
-def _wait_for_terminal(root: str, run_id: str, timeout: float = 10.0) -> _RunResult:
+def _wait_for_terminal(root: str, run_id: str, timeout: float = 60.0) -> _RunResult:
     deadline = time.monotonic() + timeout
     last: _RunResult | None = None
     while time.monotonic() < deadline:

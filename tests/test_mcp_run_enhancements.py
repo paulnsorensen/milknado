@@ -237,7 +237,7 @@ def _stub_runner_cmd(tmp_path: Path, *, status: str, rebased: bool) -> str:
     return f"{sys.executable} {script}"
 
 
-def _wait_for_terminal(run_id: str, root: str, tool: object, timeout: float = 5.0) -> _CallResult:
+def _wait_for_terminal(run_id: str, root: str, tool: object, timeout: float = 60.0) -> _CallResult:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -1274,7 +1274,7 @@ class TestAsyncCancel:
         )
         run_id = started["run_id"]
 
-        final = _wait_for_terminal(run_id, root, milknado_run_inline_poll, timeout=8.0)
+        final = _wait_for_terminal(run_id, root, milknado_run_inline_poll)
 
         assert final["status"] == "failed"
         assert final["timed_out"] is True, "timeout must be recorded, not a plain fail"

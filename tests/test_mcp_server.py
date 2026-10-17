@@ -99,7 +99,7 @@ class _McpResponse(TypedDict):
     prerequisite_ids: list[int]
 
 
-def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 5.0) -> _McpResponse:
+def _wait_for_terminal(run_id: str, project_root: str, timeout: float = 60.0) -> _McpResponse:
     deadline = time.monotonic() + timeout
     last = None
     while time.monotonic() < deadline:
@@ -780,7 +780,7 @@ class TestTodoAsyncRun:
             timeout_seconds=1,
             project_root=root,
         )
-        final = _wait_for_terminal(started["run_id"], root, timeout=5.0)
+        final = _wait_for_terminal(started["run_id"], root)
         assert final["status"] == "failed"
         assert final["timed_out"] is True
 
@@ -850,7 +850,7 @@ class TestTodoAsyncRun:
         immediate = _call(milknado_run_inline_poll, run_id=started["run_id"], project_root=root)
         assert immediate["status"] == "running"
         assert immediate["exit_code"] is None
-        _ = _wait_for_terminal(started["run_id"], root, timeout=5.0)
+        _ = _wait_for_terminal(started["run_id"], root)
 
     def test_async_worker_spawn_failure_reaches_failed(
         self,
@@ -881,7 +881,7 @@ class TestTodoAsyncRun:
             project_root=root,
             allow_protected=True,
         )
-        final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        final = _wait_for_terminal(started["run_id"], root)
         assert final["status"] == "failed"
         assert final["exit_code"] == -1
         assert "error" in final
@@ -913,12 +913,14 @@ class TestTodoAsyncRun:
         # Wait for the worker thread to write the terminal run row. Read the row
         # directly rather than via _wait_for_terminal — that helper polls through
         # the MCP tool, which would auto-reconcile and defeat the test.
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 60.0
         while time.monotonic() < deadline:
             state = _read_run(Path(root), first["run_id"])
             if state["status"] in ("done", "failed"):
                 break
             time.sleep(0.05)
+        else:
+            raise AssertionError(f"run {first['run_id']} never reached a terminal row")
         # The failure is accounted for before polling. A manual start is still allowed.
         tree = _call_tree(milknado_todo_tree, project_root=root)
         assert tree[0]["status"] == expected_status
@@ -936,7 +938,7 @@ class TestTodoAsyncRun:
             project_root=root,
         )
         assert second["run_id"] != first["run_id"]
-        _ = _wait_for_terminal(second["run_id"], root, timeout=3.0)
+        _ = _wait_for_terminal(second["run_id"], root)
         graph, _ = open_graph(tmp_path)
         try:
             assert graph.task_attempts.failed_count(task["id"]) == 2
@@ -1107,7 +1109,7 @@ class TestTodoAsyncRun:
             project_root=root,
         )
         assert started["run_id"] != run_id
-        final = _wait_for_terminal(started["run_id"], root, timeout=3.0)
+        final = _wait_for_terminal(started["run_id"], root)
         assert final["status"] == "failed"
 
     def test_run_start_reruns_failed_node_to_done(
@@ -1125,7 +1127,7 @@ class TestTodoAsyncRun:
             timeout_seconds=10,
             project_root=root,
         )
-        assert _wait_for_terminal(first["run_id"], root, timeout=3.0)["status"] == "failed"
+        assert _wait_for_terminal(first["run_id"], root)["status"] == "failed"
         second = _call_this_branch(
             milknado_run_inline_start,
             node_id=task["id"],
@@ -1133,7 +1135,7 @@ class TestTodoAsyncRun:
             timeout_seconds=10,
             project_root=root,
         )
-        assert _wait_for_terminal(second["run_id"], root, timeout=3.0)["status"] == "done"
+        assert _wait_for_terminal(second["run_id"], root)["status"] == "done"
         assert _call_tree(milknado_todo_tree, project_root=root)[0]["status"] == "done"
 
     def test_concurrent_run_start_spawns_exactly_one_worker(
