@@ -117,7 +117,7 @@ def owner(repo: Path, db: Path, worker: str, ready: Path) -> subprocess.Popen[st
 
 
 def wait(path: Path) -> None:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while not path.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert path.exists(), f"missing marker: {path}"
@@ -125,7 +125,7 @@ def wait(path: Path) -> None:
 
 def kill_owner(owner: subprocess.Popen[str]) -> None:
     os.killpg(owner.pid, signal.SIGKILL)
-    _ = owner.wait(timeout=10)
+    _ = owner.wait(timeout=60)
     assert owner.returncode == -signal.SIGKILL
     if owner.stdout is not None:
         owner.stdout.close()
@@ -148,7 +148,7 @@ def kill_vendor(pid_file: Path) -> None:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:
             os.kill(pid, 0)

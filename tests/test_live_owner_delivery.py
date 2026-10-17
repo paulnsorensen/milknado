@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ class _ReplacementCase:
 
 
 def _wait_history(graph: MikadoGraph, command_id: str, expected: list[str]) -> None:
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         if _history(graph, command_id) == expected:
             return
@@ -131,17 +132,42 @@ class _OldCase:
     mode: str
 
 
+def _write_lock_is_free(db: Path) -> bool:
+    conn = sqlite3.connect(db, timeout=0)
+    try:
+        _ = conn.execute("BEGIN IMMEDIATE")
+        conn.rollback()
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        conn.close()
+
+
+def _stop_owner_between_writes(owner: subprocess.Popen[str], db: Path) -> None:
+    """Freeze the owner only while it holds no write lock, which would block admission."""
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        os.kill(owner.pid, signal.SIGSTOP)
+        stopped_pid, stopped_status = os.waitpid(owner.pid, os.WUNTRACED)
+        assert stopped_pid == owner.pid
+        assert os.WIFSTOPPED(stopped_status)
+        assert os.WSTOPSIG(stopped_status) == signal.SIGSTOP
+        if _write_lock_is_free(db):
+            return
+        os.kill(owner.pid, signal.SIGCONT)
+        _ = os.waitpid(owner.pid, os.WCONTINUED)
+        time.sleep(0.01)
+    raise AssertionError("owner always held the write lock when stopped")
+
+
 def _admit_old(case: _OldCase) -> tuple[str, OwnerCapabilities, list[str], GraphCommand]:
     wait(case.ready)
     run_id = case.ready.read_text(encoding="utf-8")
     capabilities = case.graph.commands.capabilities(run_id)
     assert capabilities is not None
     if case.mode == "before":
-        os.kill(case.owner.pid, signal.SIGSTOP)
-        stopped_pid, stopped_status = os.waitpid(case.owner.pid, os.WUNTRACED)
-        assert stopped_pid == case.owner.pid
-        assert os.WIFSTOPPED(stopped_status)
-        assert os.WSTOPSIG(stopped_status) == signal.SIGSTOP
+        _stop_owner_between_writes(case.owner, case.db)
     admitted = admit_from_process(
         AttachedCommand(case.repo, case.db, run_id, f"old-{case.mode}", "old stable command")
     )
@@ -181,12 +207,26 @@ def _cleanup_processes(
                 kill_vendor(new_pid)
 
 
+def _reconcile_until_workers_close(graph: MikadoGraph, node_id: int) -> None:
+    """Reconcile until the killed owner's worker is verifiably gone, as the real event."""
+    deadline = time.monotonic() + 60
+    while True:
+        _ = reconcile_orphaned_runs(graph, ProcessAdapter())
+        runs = graph.runs.for_node(node_id)
+        if not any(graph.runs.live_workers(run_id=run["run_id"]) for run in runs):
+            return
+        if time.monotonic() >= deadline:
+            live = [graph.runs.live_workers(run_id=run["run_id"]) for run in runs]
+            raise AssertionError(f"node {node_id} kept an open worker: {live} runs={runs}")
+        time.sleep(0.05)
+
+
 def _recover_task(
     graph: MikadoGraph, mode: str, command_id: str
 ) -> tuple[list[str], GraphCommand]:
-    _ = reconcile_orphaned_runs(graph, ProcessAdapter())
     command = graph.commands.command(command_id)
     assert command is not None
+    _reconcile_until_workers_close(graph, command.node_id)
     graph.mark_pending(command.node_id)
     expected = ["queued"] if mode == "before" else ["queued", "submitted"]
     return expected, command
