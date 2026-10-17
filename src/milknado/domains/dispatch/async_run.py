@@ -45,7 +45,10 @@ from milknado.domains.dispatch._runstate import (
 from milknado.domains.dispatch._runstate import (
     tail as _tail,
 )
-from milknado.domains.dispatch._sync_completion import finish_attempt_exception
+from milknado.domains.dispatch._sync_completion import (
+    completion_rejection,
+    finish_attempt_exception,
+)
 from milknado.domains.dispatch.isolate import merge_back_if_done
 from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, TmuxPort
 from milknado.domains.dispatch.runner import AsyncStartRef, resolve_worker_cmd
@@ -77,6 +80,11 @@ def _async_worker(context: AsyncWorkerContext) -> None:
             )
         else:
             terminal = "done" if exit_code == 0 and not timed_out else "failed"
+            rejection = completion_rejection(
+                request.completion_check, terminal, (request.cwd, request.base_oid)
+            )
+            if rejection is not None:
+                terminal = "failed"
             merge = merge_back_if_done(context.git, project_root, request.merge_ctx, terminal)
             if merge is not None and merge.rebased is False:
                 # ISOLATE merge_back requested but the branch did not land: the
@@ -91,6 +99,7 @@ def _async_worker(context: AsyncWorkerContext) -> None:
                 exit_code=exit_code,
                 timed_out=timed_out,
                 ended_at=_now_iso(),
+                error=rejection,
                 rebased=merge.rebased if merge is not None else None,
                 detail=merge.worktree_preserved if merge is not None else None,
             )

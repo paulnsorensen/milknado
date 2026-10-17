@@ -7,7 +7,12 @@ from pathlib import Path
 
 from milknado.domains.common import GitPort, SlotLease
 from milknado.domains.dispatch.isolate import IsolateContext
-from milknado.domains.dispatch.ports import GraphSessionPort, ProcessPort, TmuxPort
+from milknado.domains.dispatch.ports import (
+    CompletionCheck,
+    GraphSessionPort,
+    ProcessPort,
+    TmuxPort,
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,8 @@ class AsyncRunRequest:
     merge_ctx: IsolateContext | None = None
     lease: SlotLease | None = None
     max_node_attempts: int = 1
+    completion_check: CompletionCheck | None = None
+    base_oid: str | None = None
 
 
 @dataclass(frozen=True)

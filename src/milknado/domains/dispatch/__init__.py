@@ -45,6 +45,7 @@ from milknado.domains.dispatch.lifecycle import (
     reclaim_stale_node,
 )
 from milknado.domains.dispatch.ports import (
+    CompletionCheck,
     Descendant,
     GraphSessionPort,
     ProcessOutcome,
@@ -75,6 +76,7 @@ from milknado.domains.dispatch.tmux_run import (
 __all__ = [
     "AsyncRunRequest",
     "AsyncStartRef",
+    "CompletionCheck",
     "RUN_ID_RE",
     "ReapRequest",
     "RunResult",
