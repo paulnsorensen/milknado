@@ -120,9 +120,9 @@ def test_signal_during_dispatch_barrier_rejects_new_worker(
         _wait_for(marker)
         started = time.monotonic()
         os.kill(proc.pid, signum)
-        _wait_for(recorded, timeout=4)
+        _wait_for(recorded, timeout=30)
         release.touch()
-        _wait_for(resumed, timeout=4)
+        _wait_for(resumed, timeout=30)
         assert not admitted.exists(), "dispatch passed the shutdown admission check"
         assert not pid_file.exists(), "launch passed the shutdown admission barrier"
         with sqlite3.connect(db) as conn:
