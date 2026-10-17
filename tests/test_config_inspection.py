@@ -46,8 +46,8 @@ def test_flavor_inherit_false_replaces_global_table(xdg: Path, tmp_path: Path) -
     _ = _write(
         xdg / "milknado" / "milknado.toml",
         (
-            "[milknado]\nmax_turns = 60\n\n"
-            '[milknado.flavor.research]\nquality_gates = ["echo global"]\nmax_turns = 7\n'
+            "[milknado]\nmax_iterations = 60\n\n"
+            '[milknado.flavor.research]\nquality_gates = ["echo global"]\nmax_iterations = 7\n'
         ),
     )
     local = _write(
@@ -61,7 +61,7 @@ def test_flavor_inherit_false_replaces_global_table(xdg: Path, tmp_path: Path) -
     profile = resolve_flavor_profile(load_config(local), "research")
 
     assert profile.quality_gates is None
-    assert profile.max_turns == 60
+    assert profile.max_iterations == 60
     assert "Read" in profile.execution_agent
 
 
@@ -86,10 +86,7 @@ def test_resolved_flavor_output_is_the_runtime_profile(xdg: Path, tmp_path: Path
     _ = xdg
     local = _write(
         tmp_path / "milknado.toml",
-        (
-            '[milknado]\nworker_agent_type = "worker"\n\n'
-            "[milknado.flavor.research]\nmax_turns = 11\n"
-        ),
+        ("[milknado]\nmax_iterations = 4\n\n[milknado.flavor.research]\nmax_iterations = 11\n"),
     )
     details = load_config_details(local)
     expected = cast(
@@ -113,7 +110,7 @@ def test_explain_attributes_overridden_and_inherited_flavor_keys(
         global_path,
         (
             "[milknado]\nconcurrency_limit = 7\n\n"
-            '[milknado.flavor.research]\nmax_turns = 9\nquality_gates = ["echo global"]\n'
+            '[milknado.flavor.research]\nmax_iterations = 9\nquality_gates = ["echo global"]\n'
         ),
     )
     local = _write(
@@ -128,7 +125,7 @@ def test_explain_attributes_overridden_and_inherited_flavor_keys(
         dict[str, dict[str, object]], explain_view(load_config_details(local), "research")
     )
 
-    assert explained["max_turns"]["source"] == f"global:{global_path} (flavor:research)"
+    assert explained["max_iterations"]["source"] == f"global:{global_path} (flavor:research)"
     assert explained["brief_prepend"]["source"] == f"local:{local} (flavor:research)"
 
 

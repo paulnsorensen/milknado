@@ -15,19 +15,15 @@ if TYPE_CHECKING:
 class FlavorProfile(msgspec.Struct, frozen=True, kw_only=True):
     """Resolved, ready-to-use per-flavor configuration. No identity.
 
-    ``worker_agent_type`` / ``loop_mode`` / ``max_turns`` drive the native
-    Workflow backend. ``max_iterations`` also bounds the detached loop worker
-    loop (its in-run retry budget); the plain subprocess dispatcher ignores it.
+    ``max_iterations`` bounds the detached loop worker loop (its in-run retry
+    budget); the plain subprocess dispatcher ignores it.
     ``attempt_timeout_seconds`` caps each detached loop attempt's wall clock.
     """
 
     execution_agent: str
     quality_gates: tuple[Gate, ...] | None
     brief_prepend: str | None
-    worker_agent_type: str
-    loop_mode: str
     max_iterations: int
-    max_turns: int
     worktree: bool = True
     session_mode: str = "fresh"
     review: bool = False
@@ -51,8 +47,7 @@ def resolve_flavor_profile(
       - quality_gates: flavor value if not None, else cfg.quality_gates.
       - brief_prepend: flavor value if not None, else cfg.worker_brief_prepend
         (replace, not concat).
-      - worker_agent_type / loop_mode / max_iterations / max_turns: flavor value
-        if not None, else the cfg global default (native Workflow backend).
+      - max_iterations: flavor value if not None, else the cfg global default.
       - worktree: flavor value if not None, else cfg.worktree.
     """
     from milknado.domains.common.agent_argv import (
@@ -70,10 +65,7 @@ def resolve_flavor_profile(
             execution_agent=cfg.execution_agent,
             quality_gates=cfg.quality_gates,
             brief_prepend=cfg.worker_brief_prepend,
-            worker_agent_type=cfg.worker_agent_type,
-            loop_mode=cfg.loop_mode,
             max_iterations=cfg.max_iterations,
-            max_turns=cfg.max_turns,
             worktree=config_worktree,
             session_mode="fresh",
             review=default_review,
@@ -101,12 +93,9 @@ def resolve_flavor_profile(
     brief_prepend = (
         override.brief_prepend if override.brief_prepend is not None else cfg.worker_brief_prepend
     )
-    agent_type = override.agent_type if override.agent_type is not None else cfg.worker_agent_type
-    loop_mode = override.loop_mode if override.loop_mode is not None else cfg.loop_mode
     max_iterations = (
         override.max_iterations if override.max_iterations is not None else cfg.max_iterations
     )
-    max_turns = override.max_turns if override.max_turns is not None else cfg.max_turns
     worktree = override.worktree if override.worktree is not None else config_worktree
     session_mode = override.session_mode
     review = override.review if override.review is not None else default_review
@@ -121,10 +110,7 @@ def resolve_flavor_profile(
         execution_agent=execution_agent,
         quality_gates=quality_gates,
         brief_prepend=brief_prepend,
-        worker_agent_type=agent_type,
-        loop_mode=loop_mode,
         max_iterations=max_iterations,
-        max_turns=max_turns,
         worktree=worktree,
         session_mode=session_mode,
         review=review,
