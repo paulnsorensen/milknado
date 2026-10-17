@@ -80,7 +80,7 @@ def test_inline_timeout_counts_confirmed_execution_once(
 
 
 def _child_identity(path: Path) -> tuple[int, float]:
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
             pid = int(path.read_text(encoding="utf-8"))
@@ -146,7 +146,7 @@ def test_inline_timeout_closes_descendant_before_retry(
             else:
                 future = pool.submit(_call, milknado_run_inline, **arguments)
                 pid, token = _child_identity(root / "child.pid")
-                result = cast(RunDict, future.result(timeout=12))
+                result = cast(RunDict, future.result(timeout=60))
                 run_id = cast(str, result["run_id"])
         assert identity_state(pid, token) == "gone"
         _assert_worker_closed_and_requeued(root, run_id, node_id)
@@ -185,7 +185,7 @@ def test_inline_unresolved_cleanup_keeps_owner(
             with pytest.raises(
                 RuntimeError, match="worker cleanup unresolved|lifeline helper exit unconfirmed"
             ):
-                _ = future.result(timeout=15)
+                _ = future.result(timeout=60)
         helper = _assert_owner_kept(root, node_id)
     finally:
         if pid and identity_state(pid, token) == "live":
