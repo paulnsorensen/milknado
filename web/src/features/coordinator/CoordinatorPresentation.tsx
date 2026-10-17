@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import { Milknado } from '../../design-system';
 import { setActiveTab } from '../../shared/node-detail';
 import type { PlanProposal, Snapshot } from './types';
 
@@ -9,8 +10,9 @@ export function ProposalPanel({ proposals, busy, send }: {
   busy: boolean;
   send: SendCommand;
 }): ReactElement {
-  return <section aria-label="Plan proposals"><h3>Plan proposals</h3>
-    {proposals?.length ? proposals.map((proposal) => <div key={proposal.id}>
+  const { Button } = Milknado;
+  return <section className="mk-coordinator-section" aria-label="Plan proposals"><h3>Plan proposals</h3>
+    {proposals?.length ? proposals.map((proposal) => <div className="mk-coordinator-proposal" key={proposal.id}>
       <h4>{proposal.id}: {proposal.status}</h4>
       <p>{proposal.manifest.goal_summary}</p>
       <ul>{proposal.manifest.changes.map((change) => <li key={change.id}>
@@ -23,10 +25,10 @@ export function ProposalPanel({ proposals, busy, send }: {
           {relationship.source_change_id} → {relationship.dependant_change_id}: {relationship.reason}
         </li>)
         : <li>none</li>}</ul>
-      {proposal.status === 'pending' && <>
-        <button disabled={busy} onClick={() => void send('decide_plan_proposal', { proposal_id: proposal.id, decision: 'accepted' })}>Approve {proposal.id}</button>
-        <button disabled={busy} onClick={() => void send('decide_plan_proposal', { proposal_id: proposal.id, decision: 'rejected' })}>Reject {proposal.id}</button>
-      </>}
+      {proposal.status === 'pending' && <div className="mk-coordinator-actions">
+        <Button variant="primary" disabled={busy} onClick={() => void send('decide_plan_proposal', { proposal_id: proposal.id, decision: 'accepted' })}>Approve {proposal.id}</Button>
+        <Button disabled={busy} onClick={() => void send('decide_plan_proposal', { proposal_id: proposal.id, decision: 'rejected' })}>Reject {proposal.id}</Button>
+      </div>}
       {proposal.status === 'applying' && <p>Apply incomplete. Manual recovery is required.</p>}
       {proposal.status === 'stale' && <p>Graph changed. Request a new proposal.</p>}
     </div>) : <p>No plan proposal.</p>}
@@ -39,6 +41,7 @@ export function EvidencePanel({ snapshot, nodeId, busy, send }: {
   busy: boolean;
   send: SendCommand;
 }): ReactElement | null {
+  const { Button } = Milknado;
   const node = snapshot.nodes.find((item) => item.id === nodeId);
   if (!node) return null;
   const runs = snapshot.runs.filter((run) => run.node_id === nodeId);
@@ -51,7 +54,7 @@ export function EvidencePanel({ snapshot, nodeId, busy, send }: {
   return <div className="mk-coordinator-evidence">
     <h3>Node {node.id}: {node.status}</h3>
     <section aria-label="Coordinator history"><h4>Coordinator history</h4>
-      <button onClick={() => setActiveTab('session')}>Open transcript</button>
+      <Button variant="ghost" onClick={() => setActiveTab('session')}>Open transcript</Button>
       {evidence.length ? evidence.map((item) => <p key={item.seq}>
         {item.kind} {item.tool_name && `· ${item.tool_name}`} {item.status && `· ${item.status}`} {item.text}
       </p>) : <p>No coordinator output for this node.</p>}
@@ -59,10 +62,10 @@ export function EvidencePanel({ snapshot, nodeId, busy, send }: {
     <section aria-label="Approvals"><h4>Approvals</h4>
       {reviews.length ? reviews.map((review) => <div key={review.review_id}>
         <p>{review.decision}: {review.evidence}</p><p>{review.proposed_change}</p>
-        {review.decision === 'pending' && <>
-          <button disabled={busy} onClick={() => void send('decide_goal_review', { review_id: review.review_id, decision: 'accepted' })}>Approve</button>
-          <button disabled={busy} onClick={() => void send('decide_goal_review', { review_id: review.review_id, decision: 'rejected' })}>Reject</button>
-        </>}
+        {review.decision === 'pending' && <div className="mk-coordinator-actions">
+          <Button variant="primary" disabled={busy} onClick={() => void send('decide_goal_review', { review_id: review.review_id, decision: 'accepted' })}>Approve</Button>
+          <Button disabled={busy} onClick={() => void send('decide_goal_review', { review_id: review.review_id, decision: 'rejected' })}>Reject</Button>
+        </div>}
       </div>) : <p>No goal review.</p>}
     </section>
     <section aria-label="Run result"><h4>Run result</h4>
@@ -86,6 +89,6 @@ export function EvidencePanel({ snapshot, nodeId, busy, send }: {
       <p>Unsupported: {snapshot.unsupported_actions.join(', ') || 'none'}</p>
       {snapshot.provider_turns.map((turn) => <p key={turn.provider_session_id}>{turn.provider_session_id}: {turn.status}</p>)}
     </section>
-    <button onClick={() => setActiveTab('changes')}>Open changes and diff</button>
+    <Button variant="secondary" onClick={() => setActiveTab('changes')}>Open changes and diff</Button>
   </div>;
 }
