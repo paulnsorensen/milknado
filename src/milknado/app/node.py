@@ -1,4 +1,4 @@
-"""Application-layer policy for native (in-session Workflow) node claiming.
+"""Application-layer policy for harness-session node claiming.
 
 The MCP ``milknado_goal_*`` / ``milknado_todo_claim`` / ``milknado_node_verify``
 tools stay thin registration veneers; the model/tool resolution, session-owner
@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
-    FlavorProfile,
     GitOperationError,
     NodeStatus,
     RunFenceLostError,
@@ -57,36 +56,25 @@ _MODEL_FLAG_RE = re.compile(r"--model[= ]+(\S+)")
 # (or re-claim) without the coordinator threading `owner` through every dispatch.
 GOAL_OWNER_ENV_VAR = "MILKNADO_GOAL_OWNER"
 
-# Family-specific tool name the worker uses to self-verify in loop_mode="single".
-# claude allowlists use the mcp__server__ prefix; gemini uses bare MCP tool names.
-_NODE_VERIFY_TOOL_BY_FAMILY: dict[str, str] = {
-    "claude": "mcp__milknado__milknado_node_verify",
-    "gemini": "milknado_node_verify",
-}
-
 
 def _resolve_model(execution_agent: str) -> str:
     """Extract the model from the resolved execution command, defaulting to sonnet.
 
-    The native backend returns `model` as a structured field so the Workflow can
-    route `agent({model: ...})` correctly instead of inferring it — closing the
-    per-flavor model-routing gap.
+    The claim returns `model` as a structured field so the harness need not
+    infer it from the command line.
     """
     match = _MODEL_FLAG_RE.search(execution_agent)
     return match.group(1) if match else "sonnet"
 
 
-def _resolve_node_tools(
-    cfg: MilknadoConfig, profile: FlavorProfile, override: FlavorOverride | None
-) -> tuple[str, ...]:
-    """Resolve the worker tool allowlist for a native-backend node.
+def _resolve_node_tools(cfg: MilknadoConfig, override: FlavorOverride | None) -> tuple[str, ...]:
+    """Resolve the worker tool allowlist for a claimed node.
 
     Mirrors the subprocess execution_agent precedence (resolve_flavor_profile):
     a per-flavor ``override.tools`` (built from the family default) wins, else the
     GLOBAL ``[milknado.worker.tools]`` for the family, else the family default. An
     ``override.tools`` of ``[]`` is intentional (empty allowlist) and is honored —
-    only ``None`` inherits. In loop_mode="single" the worker self-verifies, so
-    ``milknado_node_verify`` is appended when the family exposes it.
+    only ``None`` inherits.
     """
     if override is not None and override.tools is not None:
         tools = resolve_worker_tools(cfg.agent_family, list(override.tools))
@@ -95,10 +83,6 @@ def _resolve_node_tools(
         tools = resolve_worker_tools(
             cfg.agent_family, list(family_tools) if family_tools is not None else None
         )
-    if profile.loop_mode == "single":
-        verify_tool = _NODE_VERIFY_TOOL_BY_FAMILY.get(cfg.agent_family)
-        if verify_tool is not None and verify_tool not in tools:
-            tools = (*tools, verify_tool)
     return tools
 
 
@@ -143,7 +127,7 @@ def _provision_claim_run(
         else:
             branch = current_branch_or_none(GitAdapter(root))
             graph.runs.start(run_id, node.id, str(root), now_iso(), None)
-        # Stamp the native-backend marker so the done-transition gate fires
+        # Stamp the claim marker so the done-transition gate fires
         # for this run even before its first verify (fail-closed), while
         # leaving subprocess runs — which never carry it — exempt.
         _ = graph.runs.deposit_message(run_id, CLAIM_ROLE, "", now_iso())

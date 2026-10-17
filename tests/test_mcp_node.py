@@ -47,10 +47,7 @@ class _NodeResponse(TypedDict):
     model: str
     tools: list[str]
     worktree_path: str | None
-    agent_type: str
-    loop_mode: str
     max_iterations: int
-    max_turns: int
     ok: bool
     feedback: str
     owner: str
@@ -272,16 +269,11 @@ def test_claim_returns_full_structured_payload(repo: Path) -> None:
         "model",
         "tools",
         "worktree_path",
-        "agent_type",
-        "loop_mode",
         "max_iterations",
-        "max_turns",
     ):
         assert key in payload, f"missing payload field {key}"
-    assert payload["agent_type"] == "milknado:milknado-worker"
-    assert payload["loop_mode"] == "redispatch"
     assert payload["max_iterations"] == 8
-    assert payload["max_turns"] == 60
+    assert not {"agent_type", "loop_mode", "max_turns"} & payload.keys()
     assert isinstance(payload["tools"], list) and payload["tools"]
     # coordinator tools must never be handed to a worker.
     assert "mcp__milknado__milknado_todo_claim" not in payload["tools"]
@@ -311,19 +303,6 @@ def test_claim_preserves_empty_flavor_tools_override(repo: Path) -> None:
     node_id = _add_task(repo)  # tasks default to the implement flavor
     payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
     assert payload["tools"] == []
-
-
-def test_claim_single_mode_includes_node_verify(repo: Path) -> None:
-    """In loop_mode="single" the worker self-verifies, so node_verify must be allowlisted."""
-    _ = (repo / "milknado.toml").write_text(
-        '[milknado]\nagent_family = "claude"\nquality_gates = ["true"]\n'
-        + '\n[milknado.flavor.implement]\nloop_mode = "single"\n',
-        encoding="utf-8",
-    )
-    node_id = _add_task(repo)
-    payload = _call(milknado_todo_claim, node_id=node_id, project_root=str(repo))
-    assert payload["loop_mode"] == "single"
-    assert "mcp__milknado__milknado_node_verify" in payload["tools"]
 
 
 def test_claim_honors_custom_worktree_pattern(repo: Path) -> None:

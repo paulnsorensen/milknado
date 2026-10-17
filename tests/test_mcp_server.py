@@ -74,10 +74,7 @@ class _McpResponse(TypedDict):
     model: str
     tools: list[str]
     worktree_path: str | None
-    agent_type: str
-    loop_mode: str
     max_iterations: int
-    max_turns: int
     ok: bool
     feedback: str
     owner: str

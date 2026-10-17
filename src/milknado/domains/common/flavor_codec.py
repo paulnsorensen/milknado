@@ -75,13 +75,6 @@ def coerce_tool_list(value: object, ctx: str) -> tuple[str, ...]:
     return tuple(items)
 
 
-def validate_loop_mode(value: object) -> str:
-    mode = str(value)
-    if mode not in ("redispatch", "single"):
-        raise ValueError("loop_mode must be one of ['redispatch', 'single']")
-    return mode
-
-
 def validate_session_mode(value: object) -> str:
     mode = str(value)
     if mode not in ("fresh", "resume"):
@@ -113,10 +106,7 @@ class _FlavorFields(msgspec.Struct, frozen=True, kw_only=True):
     tools: tuple[str, ...] | None = None
     brief_prepend: str | None = None
     quality_gates: tuple[Gate, ...] | None = None
-    agent_type: str | None = None
-    loop_mode: str | None = None
     max_iterations: int | None = None
-    max_turns: int | None = None
     worktree: bool | None = None
     session_mode: str = "fresh"
     review: bool | None = None
@@ -144,11 +134,9 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
                 raise ValueError(f"execution_agent must start with one of {allowed!r}")
         if self.brief_prepend is not None and self.brief_prepend_path is not None:
             raise ValueError("brief_prepend and brief_prepend_path are mutually exclusive")
-        _ = validate_loop_mode(self.loop_mode) if self.loop_mode is not None else None
         _ = validate_session_mode(self.session_mode)
         _ = validate_on_reject(self.on_reject)
         _ = validate_positive_int(self.max_iterations, "max_iterations")
-        _ = validate_positive_int(self.max_turns, "max_turns")
         _ = validate_positive_int(self.review_max_rounds, "review_max_rounds")
         _ = validate_positive_int(self.review_timeout_seconds, "review_timeout_seconds")
         _ = validate_positive_int(self.attempt_timeout_seconds, "attempt_timeout_seconds")
@@ -174,10 +162,7 @@ class FlavorTable(_FlavorFields, frozen=True, kw_only=True):
             tools=self.tools,
             brief_prepend=self._load_brief(name, project_root),
             quality_gates=self.quality_gates,
-            agent_type=self.agent_type,
-            loop_mode=self.loop_mode,
             max_iterations=self.max_iterations,
-            max_turns=self.max_turns,
             worktree=self.worktree,
             session_mode=self.session_mode,
             review=self.review,
@@ -212,12 +197,11 @@ def normalize_flavor_table(value: object, *, tools_ctx: str = "tools") -> object
     if not isinstance(value, dict):
         return value
     normalized = dict(cast(dict[str, object], value))
-    for key in ("execution_agent", "brief_prepend", "agent_type", "review_agent"):
+    for key in ("execution_agent", "brief_prepend", "review_agent"):
         field = normalized.get(key)
         if field is not None and not isinstance(field, str):
             raise ValueError(f"{key} must be a string")
     for key, validator in (
-        ("loop_mode", validate_loop_mode),
         ("session_mode", validate_session_mode),
         ("on_reject", validate_on_reject),
     ):
@@ -229,7 +213,7 @@ def normalize_flavor_table(value: object, *, tools_ctx: str = "tools") -> object
         field = normalized.get(key)
         if field is not None and not isinstance(field, bool):
             raise ValueError(f"{key} must be a boolean")
-    for key in ("max_iterations", "max_turns", "review_max_rounds", "review_timeout_seconds"):
+    for key in ("max_iterations", "review_max_rounds", "review_timeout_seconds"):
         if key in normalized:
             _ = validate_positive_int(normalized[key], key)
     path = normalized.get("brief_prepend_path")
@@ -263,10 +247,7 @@ def serialize_flavor_tables(
                     if flavor.quality_gates is not None
                     else None,
                 ),
-                ("agent_type", flavor.agent_type),
-                ("loop_mode", flavor.loop_mode),
                 ("max_iterations", flavor.max_iterations),
-                ("max_turns", flavor.max_turns),
                 ("worktree", flavor.worktree),
                 ("session_mode", flavor.session_mode),
                 ("review", flavor.review),

@@ -41,7 +41,6 @@ milknado is wired into the easy-cheese ecosystem only as an optional parallel-ex
 - tmux status panel / needs-input signal (deferred sibling roadmap goal; known interim visibility gap accepted and named).
 - `up:`/`down:`-prose wiki relations as graph edges (deferred to the roadmap-sync follow-up).
 - Mirroring/syncing to the native Tasks list (rejected: lossy, undocumented env var, drift surface).
-- `agent_type` parity for the subprocess dispatcher (native Workflow backend only, as today).
 - `milknado_ground` / MCP proxying (issue #154).
 - Migration code, deprecation shims (pre-release).
 - easy-cheese-side implementation (bound by the contract doc; implemented in that repo later).
@@ -74,7 +73,6 @@ Extend, don't rebuild: every capability lands as a thin widening of machinery th
 - WHEN `quality_gates` is None THE SYSTEM SHALL fail verification closed (unchanged behavior).
 - WHEN `milknado edge add <parent> <child>` runs THE SYSTEM SHALL create the edge with cycle validation.
 - WHEN the adoption contract doc ships THE SYSTEM SHALL contain: the native-Tasks→milknado mapping table, the phase-flavor preset-pack TOML, the ultracook worked example (multi-curd worktrees + in-place wiring node), wheypoint + severity-gated findings ingestion conventions, presence-gated adoption language, and the named interim visibility gap.
-- [prose-fallback] Spike (verification item): a scratch `.claude/agents/<name>.md` agent def dispatches successfully when a claimed node's `agent_type=<name>` reaches Workflow `agent()` — proves bare-name resolution end-to-end before the preset pack relies on it.
 
 ## Interface sketches
 

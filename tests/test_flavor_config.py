@@ -699,7 +699,6 @@ def test_load_config_flavor_execution_agent_not_string_raises() -> None:
     [
         {"execution_agent": "TOPSECRET --api-key hidden"},
         {"tools": [{"api_key": "TOPSECRET"}]},
-        {"loop_mode": "TOPSECRET"},
         {"session_mode": "TOPSECRET"},
         {"on_reject": "TOPSECRET"},
         {
