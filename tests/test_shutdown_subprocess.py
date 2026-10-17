@@ -61,7 +61,7 @@ while True:
 """
 
 
-def _wait_for(path: Path, timeout: float = 12.0) -> None:
+def _wait_for(path: Path, timeout: float = 60.0) -> None:
     deadline = time.monotonic() + timeout
     while not path.exists() and time.monotonic() < deadline:
         time.sleep(0.02)
@@ -150,7 +150,11 @@ def _output(proc: subprocess.Popen[bytes], master: int | None) -> str:
     return bytes(_PTY_OUTPUT[master]).decode(errors="replace")
 
 
-def _wait_exit(proc: subprocess.Popen[bytes], master: int | None, timeout: float = 8.5) -> int:
+def _wait_exit(
+    proc: subprocess.Popen[bytes],
+    master: int | None,
+    timeout: float = STOP_TIMEOUT_SECONDS + 10,
+) -> int:
     try:
         return proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:

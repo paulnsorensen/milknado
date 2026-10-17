@@ -8,9 +8,11 @@ from pathlib import Path
 from threading import Event, Thread
 
 import pytest
+from filelock import FileLock
 
 from milknado.domains.common import ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
+from milknado.domains.graph.worker_evidence import open_standalone_worker_evidence
 
 _COMMIT_STALL_S = 1.5
 
@@ -55,3 +57,26 @@ def test_write_outlasts_a_commit_stall_longer_than_one_second(
         assert time.monotonic() - start >= 1.0
     finally:
         stall.join(10)
+
+
+def _hold_open_lock(lock_path: Path, held: Event) -> None:
+    with FileLock(lock_path, mode=0o600):
+        held.set()
+        time.sleep(_COMMIT_STALL_S)
+
+
+def test_first_open_outlasts_a_creation_lock_held_longer_than_one_second(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "workers.db"
+    held = Event()
+    holder = Thread(target=_hold_open_lock, args=(tmp_path / "workers.db.lock", held))
+    holder.start()
+    try:
+        assert held.wait(5)
+        start = time.monotonic()
+        with open_standalone_worker_evidence(path):
+            pass
+        assert time.monotonic() - start >= 1.0
+    finally:
+        holder.join(10)

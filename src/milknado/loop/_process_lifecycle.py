@@ -9,7 +9,7 @@ from contextlib import suppress
 from typing import final
 
 from milknado.domains.common import identity_state
-from milknado.loop._process_contract import ProtectionContext
+from milknado.loop._process_contract import ProtectionContext, WorkerEvidence
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_helper import (
     HelperStart,
@@ -25,6 +25,8 @@ from milknado.loop._process_registry import LaunchTicket
 from milknado.loop._process_startup import spawn_protected as _spawn_protected
 
 _log = logging.getLogger(__name__)
+_REPLACEMENT_WINDOW = 8.0
+_EVIDENCE_WAIT = 5.0
 
 
 @final
@@ -88,7 +90,7 @@ class ProtectedWorker:
 
     def _replace_helper(self) -> bool:
         self.close_lifeline()
-        deadline = time.monotonic() + 8
+        deadline = time.monotonic() + _REPLACEMENT_WINDOW
         evidence = self._context.evidence.with_deadline(deadline)
         while self._replacements < 3 and time.monotonic() < deadline and not self._stop.is_set():
             if self.process.poll() is not None:
@@ -100,7 +102,9 @@ class ProtectedWorker:
                     return False
                 sequence = record.snapshot_seq
                 if identity_state(self.identity.pid, self.identity.start_token) == "live":
-                    sequence = _snapshot(self.worker, evidence)
+                    # An observation must finish once begun. A deadline that expires between
+                    # begin and commit leaves an owner that blocks ending the worker.
+                    sequence = _snapshot(self.worker, self._context.evidence)
             except (OSError, RuntimeError) as exc:
                 _log.warning(
                     "lifeline evidence unavailable invocation=%s: %s",
@@ -205,6 +209,10 @@ class ProtectedWorker:
         stop_failed_helper(self._helper, deadline)
         return confirmed
 
+    def _persistence(self, deadline: float) -> WorkerEvidence:
+        wait = max(deadline, time.monotonic() + _EVIDENCE_WAIT)
+        return self._context.evidence.with_deadline(wait)
+
     def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
         evidence = self._context.evidence.with_deadline(deadline)
         durable_targets: tuple[Descendant, ...] = ()
@@ -230,7 +238,7 @@ class ProtectedWorker:
                 )
                 if not result.covered_exited or record.observation_owner is not None:
                     return False
-                evidence.end_worker(
+                self._persistence(deadline).end_worker(
                     self.identity.invocation_id, record.snapshot_seq, record.helper_generation
                 )
             elif not release:
