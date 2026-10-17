@@ -6,10 +6,7 @@ gate subprocess, and SQLite are real.
 
 from __future__ import annotations
 
-import os
 import shlex
-import signal
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,11 +16,11 @@ import pytest
 from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig, NodeStatus, save_config
 from milknado.domains.graph import MikadoGraph
 from tests.execution_session_fixtures import init_repo
+from tests.run_cli_fixtures import git, lines, run_cli
 from tests.worker_fixtures import install_worker_command
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required")
 
-_RUN_TIMEOUT_SECONDS = 60.0
 _MAX_ITERATIONS = 2
 _ARTIFACT = "hello.txt"
 _ARTIFACT_TEXT = "hello from the fake worker\n"
@@ -67,12 +64,6 @@ class _Project:
     gate_log: Path
 
 
-def _git(repo: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
-    ).stdout.strip()
-
-
 def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str) -> _Project:
     repo = init_repo(tmp_path)
     db = repo / ".milknado" / "graph.db"
@@ -107,32 +98,8 @@ def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gate: str) -> _Pro
         ),
         repo / "milknado.toml",
     )
-    seed = _git(repo, "rev-parse", "feature")
+    seed = git(repo, "rev-parse", "feature")
     return _Project(repo, goal.id, leaf.id, seed, tmp_path / "worker.log", gate_log)
-
-
-def _run_cli(repo: Path) -> tuple[int, str]:
-    env = dict(os.environ)
-    src = str(Path(__file__).resolve().parents[1] / "src")
-    env["PYTHONPATH"] = src + os.pathsep + env.get("PYTHONPATH", "")
-    argv = [sys.executable, "-c", "from milknado.cli import app; app()"]
-    proc = subprocess.Popen(
-        [*argv, "run", "--project-root", str(repo)],
-        cwd=repo,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-    try:
-        output, _ = proc.communicate(timeout=_RUN_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        output, _ = proc.communicate()
-        pytest.fail(f"milknado run did not exit on its own; output={output[-3000:]!r}")
-    return proc.returncode, output
 
 
 def _statuses(project: _Project) -> tuple[NodeStatus, NodeStatus]:
@@ -145,29 +112,25 @@ def _statuses(project: _Project) -> tuple[NodeStatus, NodeStatus]:
     return goal.status, leaf.status
 
 
-def _lines(path: Path) -> list[str]:
-    return path.read_text(encoding="utf-8").splitlines()
-
-
 def test_run_dispatches_gates_and_merges_worker_change(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project = _project(tmp_path, monkeypatch, f"test -f {_ARTIFACT} && pwd >> {{log}}")
     repo = project.repo
 
-    code, output = _run_cli(repo)
+    code, output = run_cli(repo)
 
     assert code == 0, output
     assert "All nodes complete. Root goal achieved." in output
-    [worker_cwd] = _lines(project.worker_log)
+    [worker_cwd] = lines(project.worker_log)
     worktree = Path(worker_cwd)
     assert worktree != repo
     assert worktree.name.startswith(f"milknado-wt-{project.leaf_id}-")
     assert not worktree.exists()
-    assert _lines(project.gate_log) == [worker_cwd]
-    assert _git(repo, "rev-parse", "feature~1") == project.seed
-    assert f"Milknado-Node: {project.leaf_id}" in _git(repo, "log", "-1", "--format=%B")
-    assert _git(repo, "show", f"feature:{_ARTIFACT}") == _ARTIFACT_TEXT.strip()
+    assert lines(project.gate_log) == [worker_cwd]
+    assert git(repo, "rev-parse", "feature~1") == project.seed
+    assert f"Milknado-Node: {project.leaf_id}" in git(repo, "log", "-1", "--format=%B")
+    assert git(repo, "show", f"feature:{_ARTIFACT}") == _ARTIFACT_TEXT.strip()
     assert (repo / _ARTIFACT).read_text(encoding="utf-8") == _ARTIFACT_TEXT
     assert _statuses(project) == (NodeStatus.DONE, NodeStatus.DONE)
 
@@ -178,14 +141,14 @@ def test_run_rejects_worker_change_when_gate_fails(
     project = _project(tmp_path, monkeypatch, "pwd >> {log}; false")
     repo = project.repo
 
-    code, output = _run_cli(repo)
+    code, output = run_cli(repo)
 
     assert code == 0, output
     assert "Loop ended: 1 dispatched, 0 completed, 1 failed." in output
-    worker_runs = _lines(project.worker_log)
+    worker_runs = lines(project.worker_log)
     assert len(worker_runs) == _MAX_ITERATIONS
-    assert _lines(project.gate_log) == worker_runs
-    assert _git(repo, "rev-parse", "feature") == project.seed
-    assert not _git(repo, "ls-tree", "--name-only", "feature", "--", _ARTIFACT)
+    assert lines(project.gate_log) == worker_runs
+    assert git(repo, "rev-parse", "feature") == project.seed
+    assert not git(repo, "ls-tree", "--name-only", "feature", "--", _ARTIFACT)
     assert not (repo / _ARTIFACT).exists()
     assert _statuses(project) == (NodeStatus.PENDING, NodeStatus.FAILED)
