@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -26,6 +27,9 @@ from tests.test_tmux_dispatch import (
     _node_status,  # pyright: ignore[reportPrivateUsage]
     _wait_for_terminal,  # pyright: ignore[reportPrivateUsage]
 )
+
+# A child in its own session. macOS has no setsid(1), so Python calls setsid(2).
+_DETACHED_SLEEP = f'{sys.executable} -c "import os, time; os.setsid(); time.sleep(120)"'
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
@@ -115,7 +119,7 @@ def test_real_tmux_failure_cleans_detached_descendant_before_requeue(
     child_file = tmp_path / "child.pid"
     release = tmp_path / "release"
     command = worker_stub(
-        "sh -c 'setsid sleep 120 </dev/null >/dev/null 2>&1 & "
+        f"sh -c '{_DETACHED_SLEEP} </dev/null >/dev/null 2>&1 & "
         + f"echo $! > {child_file}; while [ ! -e {release} ]; do sleep 0.05; done; exit 7'"
     )
     child_pid: int | None = None
@@ -167,7 +171,7 @@ def test_real_tmux_cancel_cleans_covered_descendant(
     node_id = _add_task(str(tmp_path))
     child_file = tmp_path / "cancel-child.pid"
     command = worker_stub(
-        "sh -c 'setsid sleep 120 </dev/null >/dev/null 2>&1 & "
+        f"sh -c '{_DETACHED_SLEEP} </dev/null >/dev/null 2>&1 & "
         + f"echo $! > {child_file}; while :; do sleep 0.05; done'"
     )
     child_pid: int | None = None
