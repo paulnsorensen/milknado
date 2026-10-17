@@ -24,6 +24,8 @@ from milknado.loop.sessions import _runtime as session_runtime
 from milknado.loop.sessions._process import CAPTURE_LIMIT, MAX_FRAME_SIZE
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 _SCRIPT = """\
 #!/usr/bin/env python3
 import json

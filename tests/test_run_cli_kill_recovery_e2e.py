@@ -31,7 +31,10 @@ from milknado.domains.graph import MikadoGraph
 from tests.execution_session_fixtures import init_repo
 from tests.worker_fixtures import install_worker_command
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required"),
+]
 
 _WAIT_SECONDS = 30.0
 _RUN_TIMEOUT_SECONDS = 60.0

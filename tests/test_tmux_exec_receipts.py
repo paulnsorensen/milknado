@@ -18,6 +18,8 @@ from milknado.domains.common import default_config
 from milknado.domains.dispatch.tmux_run import read_exec_evidence
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
+pytestmark = pytest.mark.real_process
+
 
 def _wrapper(path: Path, *command: str) -> list[str]:
     root = path.parent

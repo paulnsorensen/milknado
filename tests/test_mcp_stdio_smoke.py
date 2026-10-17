@@ -21,12 +21,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import psutil
+import pytest
 from fastmcp import Client
 from fastmcp.client.transports import StdioTransport
 from mcp.types import LATEST_PROTOCOL_VERSION, JSONRPCMessage, JSONRPCResponse
 
 from milknado.mcp._core import mcp as milknado_server
 from tests.meta.mcp_contracts import payload, registered_tools
+
+pytestmark = pytest.mark.real_process
 
 TIMEOUT_S = 30.0
 

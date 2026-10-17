@@ -20,6 +20,8 @@ from milknado.domains.dispatch import RunWindow
 from milknado.domains.dispatch.tmux_run import read_exec_evidence
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
+pytestmark = pytest.mark.real_process
+
 RUN_ID = "node-1-20260101T000000Z-deadbeef"
 
 

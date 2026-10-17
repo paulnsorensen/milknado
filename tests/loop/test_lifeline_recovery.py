@@ -17,6 +17,8 @@ from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 from milknado.loop._lifeline import _cleanup  # pyright: ignore[reportPrivateUsage]
 from milknado.loop._process_identity import CleanupResult, Descendant, terminate_verified_result
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
 def test_helper_discovery_is_durable_for_later_cleanup(

@@ -31,6 +31,8 @@ from milknado.loop.sessions._process import (
 )
 from milknado.loop.sessions._runtime import _new_execution  # pyright: ignore[reportPrivateUsage]
 
+pytestmark = pytest.mark.real_process
+
 _SCRIPT_HEADER = """#!/usr/bin/env python3
 import json
 import os

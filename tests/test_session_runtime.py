@@ -22,6 +22,8 @@ from milknado.loop.engine import run_loop
 from milknado.loop.sessions import SessionChannel, run_session
 from tests.attached_owner_delivery_fixtures import AttachedCommand, admit_from_process
 
+pytestmark = pytest.mark.real_process
+
 _SCRIPT_HEADER = """#!/usr/bin/env python3
 import json
 import os

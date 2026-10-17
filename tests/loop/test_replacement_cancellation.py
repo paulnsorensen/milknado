@@ -18,6 +18,8 @@ from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import spawn_protected
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX helper uses passed file descriptors")
 def test_shutdown_cancels_held_replacement_ready_without_release(

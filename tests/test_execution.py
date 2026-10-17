@@ -51,6 +51,8 @@ from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
 from milknado.loop import RunStatus
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
 
+pytestmark = pytest.mark.real_process
+
 _BUILD_COMMIT_MESSAGE = cast(
     Callable[[int, str], str], attrgetter("_build_commit_message")(_executor_module)
 )

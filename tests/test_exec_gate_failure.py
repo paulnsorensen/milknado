@@ -6,6 +6,10 @@ import os
 import subprocess
 import sys
 
+import pytest
+
+pytestmark = pytest.mark.real_process
+
 
 def test_missing_worker_command_reports_failure_on_the_status_pipe() -> None:
     gate_read, gate_write = os.pipe()

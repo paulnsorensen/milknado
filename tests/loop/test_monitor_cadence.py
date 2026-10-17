@@ -19,6 +19,8 @@ from milknado.loop._process_gate import WorkerProcess
 from milknado.loop._process_lifecycle import ProtectedWorker
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
 def test_periodic_observation_uses_one_second_clock(

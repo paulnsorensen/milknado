@@ -39,6 +39,8 @@ from tests.loop.helpers import (
 )
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 class _CompletedWorker:
     def __init__(self, process: subprocess.Popen[bytes] | subprocess.Popen[str]) -> None:

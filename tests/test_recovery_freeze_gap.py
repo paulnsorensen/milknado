@@ -18,6 +18,8 @@ from milknado.domains.common import ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from tests.test_loop_recovery_subprocess import freeze_after_snapshot
 
+pytestmark = pytest.mark.real_process
+
 if os.name != "posix":
     pytest.skip("POSIX process signals are required", allow_module_level=True)
 

@@ -41,6 +41,8 @@ from milknado.loop.adapters import select_adapter
 from milknado.loop.adapters.claude import ClaudeAdapter
 from tests.loop.helpers import MOCK_SUBPROCESS, fail_proc, make_mock_popen, ok_proc, timeout_proc
 
+pytestmark = pytest.mark.real_process
+
 
 class TestReadAgentStream:
     def test_collects_all_lines(self):
