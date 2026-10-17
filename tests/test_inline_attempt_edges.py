@@ -244,12 +244,20 @@ def test_async_inline_cancel_and_poll_do_not_requeue(
     )
     run_id = started["run_id"]
     assert run_id is not None
-    deadline = time.monotonic() + 3
+    deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         graph, _ = open_graph(root)
         try:
             attempt = graph.task_attempts.get(run_id)
-            if attempt is not None and attempt.start_state == "executed":
+            record = graph.runs.get(run_id)
+            # Release records "executed" before the run row receives the worker pid.
+            # Cancel needs the pid, so wait for both.
+            if (
+                attempt is not None
+                and attempt.start_state == "executed"
+                and record is not None
+                and record["pid"] is not None
+            ):
                 break
         finally:
             graph.close()
