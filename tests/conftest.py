@@ -5,6 +5,7 @@ from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import psutil
 import pytest
 
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
@@ -12,6 +13,20 @@ from milknado.domains.graph import MikadoGraph
 from tests.worker_fixtures import install_agent_guard, install_worker_stub
 
 pytest_plugins = ("tests.rebalance_helpers",)
+
+
+def pytest_xdist_auto_num_workers() -> int:
+    """Size ``-n auto`` from free cores so concurrent gates share one host.
+
+    An explicit ``PYTEST_XDIST_AUTO_NUM_WORKERS`` pin wins; this hook otherwise
+    replaces xdist's own reading of it. ``TEST_WORKERS_MAX`` caps the pool and
+    defaults to xdist's own physical-core count, so the hook only shrinks it.
+    """
+    if pinned := os.environ.get("PYTEST_XDIST_AUTO_NUM_WORKERS"):
+        return int(pinned)
+    cpus = os.cpu_count() or 1
+    cap = int(os.environ.get("TEST_WORKERS_MAX", psutil.cpu_count(logical=False) or cpus))
+    return min(cap, max(2, int(cpus - os.getloadavg()[0])))
 
 
 @pytest.fixture(autouse=True, scope="session")

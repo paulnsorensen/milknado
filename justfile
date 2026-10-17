@@ -2,7 +2,7 @@ set dotenv-load := true
 
 # Matches codecov.yml project/patch target (95%)
 COVERAGE_THRESHOLD := "95"
-TEST_WORKERS := "auto"
+TEST_WORKERS := env("TEST_WORKERS", "auto")
 BROWSER_WORKERS := "4"
 
 # Show all available recipes
