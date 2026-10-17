@@ -36,6 +36,7 @@ from milknado.domains.dispatch.isolate import (
     MergeBackResult,
     create_isolated_worktree,
     discard_isolated_worktree,
+    reclaim_clean_orphan,
     setup_isolated_worktree,
     unoccupied_slot,
 )
@@ -123,6 +124,7 @@ __all__ = [
     "setup_isolated_worktree",
     "discard_isolated_worktree",
     "unoccupied_slot",
+    "reclaim_clean_orphan",
     "run_headless",
     "runs_dir",
     "tail",

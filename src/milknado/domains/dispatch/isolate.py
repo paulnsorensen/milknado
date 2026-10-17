@@ -92,6 +92,24 @@ def setup_group_worktree(  # noqa
         raise
 
 
+def reclaim_clean_orphan(git: GitPort, wt_path: Path, branch: str) -> None:
+    """Free the canonical slot when a dead run left a clean, landed worktree there.
+
+    A fresh process does not track the worktree of a killed controller, so find it by
+    path. Removal stays fail-closed: dirty or unlanded work keeps worktree and branch.
+    """
+    if not wt_path.exists():
+        return
+    try:
+        git.remove_worktree(wt_path)
+        if git.branch_exists(branch):
+            git.delete_branch(branch)
+    except UnlandedWorkError as exc:
+        _logger.warning("Keeping orphan worktree (dispatch relocates): %s", exc)
+    except (GitOperationError, ValueError, OSError) as exc:
+        _logger.warning("Failed to reclaim orphan worktree %s: %s", wt_path, exc)
+
+
 def unoccupied_slot(
     git: GitPort, base: tuple[Path, str], root: Path, suffixes: Sequence[str]
 ) -> tuple[Path, str]:
