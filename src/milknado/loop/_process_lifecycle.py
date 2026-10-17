@@ -214,7 +214,7 @@ class ProtectedWorker:
         return self._context.evidence.with_deadline(wait)
 
     def _shutdown_owned(self, deadline: float, *, release: bool = True) -> bool:
-        evidence = self._persistence(deadline)
+        evidence = self._context.evidence.with_deadline(deadline)
         durable_targets: tuple[Descendant, ...] = ()
         try:
             record = evidence.get_worker(self.identity.invocation_id)
