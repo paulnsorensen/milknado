@@ -2,8 +2,11 @@ set dotenv-load := true
 
 # Matches codecov.yml project/patch target (95%)
 COVERAGE_THRESHOLD := "95"
-TEST_WORKERS := "auto"
-BROWSER_WORKERS := "4"
+# A number pins a pool. "auto" sizes pytest (tests/worker_pool.py) and vitest
+# (web/vitest.workers.ts) from free cores; TEST_WORKERS_MAX caps that size.
+# Browser auto sizing stops at 4 workers.
+TEST_WORKERS := env("TEST_WORKERS", "auto")
+BROWSER_WORKERS := env("BROWSER_WORKERS", "auto")
 
 # Show all available recipes
 default:

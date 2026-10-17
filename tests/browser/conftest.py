@@ -26,12 +26,20 @@ from milknado.domains.graph import (
     NodeDetailResponse,
 )
 from milknado.web import LaunchToken, WebCommands, create_app
+from tests.worker_pool import free_core_workers
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO_ROOT / "web"
 COMMITTED_STATIC_DIR = REPO_ROOT / "src" / "milknado" / "web" / "static"
 FIXTURE_NODE_DESCRIPTION = "Tracer fixture node"
 BROWSER_TOKEN = "browser-test-token"
+BROWSER_WORKERS_CEILING = 4
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_xdist_auto_num_workers() -> int:
+    """Cap ``-n auto`` for Playwright runs, because each worker drives a Chromium."""
+    return free_core_workers(ceiling=BROWSER_WORKERS_CEILING)
 
 
 def build_fixture_snapshot(goal: str = "Tracer fixture goal") -> ExecutionSnapshot:

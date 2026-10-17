@@ -10,8 +10,14 @@ import pytest
 from milknado.domains.common.protocols import CrgPort, GitPort, LoopPort
 from milknado.domains.graph import MikadoGraph
 from tests.worker_fixtures import install_agent_guard, install_worker_stub
+from tests.worker_pool import free_core_workers
 
 pytest_plugins = ("tests.rebalance_helpers",)
+
+
+def pytest_xdist_auto_num_workers() -> int:
+    """Size ``-n auto`` from free cores; this replaces xdist's own sizing hook."""
+    return free_core_workers()
 
 
 @pytest.fixture(autouse=True, scope="session")
