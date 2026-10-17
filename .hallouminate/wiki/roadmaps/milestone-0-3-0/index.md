@@ -6,7 +6,7 @@ created: 2026-06-30
 # Milestone 0.3.0 — Harden the Native Backend & Lock Distribution
 
 Close the open seams the two most-recent decisions left dangling — the native
-"ultracode" execution backend (PR #145) and the portable plugin / PyPI
+"ultracode" execution backend (PR #145, removed 2026-10-17 with its two goals) and the portable plugin / PyPI
 distribution work — then take the next architectural step (a real
 coordinator-run identity) and pay down two standing debts (worker↔coordinator
 messaging, batching-heuristic calibration). Every goal here is sourced from a
@@ -24,8 +24,7 @@ story firstmate's transcript tells, after install ergonomics land. Each of
 these goals carries its open design questions explicitly in its Intent — to
 be resolved at design time, not silently.
 
-Rough order: lock the distribution layout first (it decides where the ultracode
-workflow ships), make ultracode installable and broadly tested, then replace the
+Rough order: lock the distribution layout first, then replace the
 pid-proxy goal-claim model with a real coordinator-run entity, then build the
 bidirectional messaging that entity enables. Batching calibration runs
 independently against accumulated telemetry. On the adoption track, tmux lands
@@ -33,7 +32,6 @@ first (no prereqs), interactive steering follows it, and zero-token supervision
 follows worker↔coordinator messaging.
 
 <!-- HALLOUMINATE:INDEX-START -->
-- [broaden-ultracode-e2e](./broaden-ultracode-e2e.md) — Broaden ultracode end-to-end coverage
 - [calibrate-batching-heuristics](./calibrate-batching-heuristics.md) — Calibrate the batching heuristics from telemetry
 - [coordinator-run-entity](./coordinator-run-entity.md) — Introduce a real coordinator-run identity
 - [fail-closed-worktree-teardown](./fail-closed-worktree-teardown.md) — Fail-closed worktree teardown
@@ -41,7 +39,6 @@ follows worker↔coordinator messaging.
 - [interactive-run-steering](./interactive-run-steering.md) — Non-headless agents: steer a running run mid-flight
 - [lock-distribution-layout](./lock-distribution-layout.md) — Lock the portable plugin layout
 - [tmux-run-primitive](./tmux-run-primitive.md) — tmux as a first-class run primitive
-- [ultracode-install-ergonomics](./ultracode-install-ergonomics.md) — Make ultracode installable in one step
 - [worker-coordinator-messaging](./worker-coordinator-messaging.md) — Build worker↔coordinator messaging on run_messages
 - [zero-token-run-supervision](./zero-token-run-supervision.md) — Zero-token event-driven supervision of loop runs
 <!-- HALLOUMINATE:INDEX-END -->
