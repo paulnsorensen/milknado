@@ -3,7 +3,7 @@ kind: goal
 slug: coordinator-run-entity
 roadmap: milestone-0-3-0
 created: 2026-06-30
-prereqs: [broaden-ultracode-e2e]
+prereqs: []
 ---
 # Introduce a real coordinator-run identity
 
@@ -29,9 +29,11 @@ and the previously-unwired seams have production callers. Per the wiki's standin
 rule, the design must **name which concrete identity** owns a claim — this goal
 creates the third option (the coordinator-run entity) the rule anticipates.
 
-Depends on [[broaden-ultracode-e2e]]: changing the claim-ownership model touches
-both the subprocess and native dispatch paths, so a validated e2e baseline must
-exist first to catch regressions in fencing and same-coordinator exemption.
+A changed claim-ownership model can break fencing and the same-coordinator
+exemption. The `milknado run` CLI end-to-end tests (`tests/test_run_cli_e2e.py`
+and its multi-node and controller-kill siblings) are the regression baseline.
+The former prerequisite, broaden-ultracode-e2e, was retired with the
+in-session Workflow path (2026-10-17).
 
 ## Acceptance
 
@@ -50,3 +52,7 @@ exist first to catch regressions in fencing and same-coordinator exemption.
   for `codecov/patch`).
 - `architecture/execution.md` is updated: the "intentionally unwired seams" note
   and the run-identity §Rule are revised to describe the now-real entity.
+
+
+_Source: branch refactor/remove-node-runner · Updated: 2026-10-17 · Supersedes: prerequisite broaden-ultracode-e2e_
+

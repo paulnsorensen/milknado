@@ -133,3 +133,6 @@
 
 2026-10-10 · 4cba4cf6250b4b91 · merged · history/review-lessons.md · Record the tests-only SIGSTOP SQLite writer-gap distinction and separate nonblocking transaction probe. Controlled replay changes from five exact lock failures to five passes. Preserve unknown historical lock ownership and separate SIGKILL cause. Three frozen probes rank first; index reconciliation remains pending. No production contention fix or integrated-gate pass is claimed.
 
+
+- 2026-10-17 · node-runner-removal · merged · history/workflow-executor-decision.md, architecture/prompt-threading.md, roadmaps/milestone-0-3-0/coordinator-run-entity.md, roadmaps/milestone-0-3-0/golden-path-walkthrough.md · in-session Workflow path removed; retired roadmaps/milestone-0-3-0/broaden-ultracode-e2e.md and ultracode-install-ergonomics.md
+

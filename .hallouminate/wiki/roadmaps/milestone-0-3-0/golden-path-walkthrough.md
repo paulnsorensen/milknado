@@ -3,7 +3,7 @@ kind: goal
 slug: golden-path-walkthrough
 roadmap: milestone-0-3-0
 created: 2026-07-01
-prereqs: [ultracode-install-ergonomics]
+prereqs: []
 ---
 # Golden-path walkthrough in the README
 
@@ -26,10 +26,10 @@ trees, casual sub-agent supervision, and full higher-level roadmaps — the
 things firstmate cannot offer — presented in firstmate's approachable
 register.
 
-Depends on [[ultracode-install-ergonomics]] because the walkthrough's first
-step is the install, and it must document the ergonomic path, not the
-current one — writing it earlier bakes in steps that goal is about to
-change.
+The walkthrough's first step is the install. It documents the CLI and
+plugin install channels in the README. The former prerequisite,
+ultracode-install-ergonomics, was retired with the in-session Workflow path
+(2026-10-17), so no install change is pending.
 
 Open questions to resolve during design (not silently):
 
@@ -51,3 +51,7 @@ Open questions to resolve during design (not silently):
   batching, and verification gates buy over a flat orchestrator.
 - The walkthrough stays truthful as features land: attach/steering steps are
   included only once their goals ship, with a stated place to slot them in.
+
+
+_Source: branch refactor/remove-node-runner · Updated: 2026-10-17 · Supersedes: prerequisite ultracode-install-ergonomics_
+

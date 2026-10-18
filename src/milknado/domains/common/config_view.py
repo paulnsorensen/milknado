@@ -37,20 +37,14 @@ def _explain_flavor(details: LoadedConfig, flavor: str) -> dict[str, object]:
         "execution_agent": ("execution_agent",),
         "quality_gates": ("quality_gates",),
         "brief_prepend": ("prompts", "worker_brief_prepend"),
-        "worker_agent_type": ("worker_agent_type",),
-        "loop_mode": ("loop_mode",),
         "max_iterations": ("max_iterations",),
-        "max_turns": ("max_turns",),
         "worktree": ("worktree",),
     }
     override_keys = {
         "execution_agent": "execution_agent",
         "quality_gates": "quality_gates",
         "brief_prepend": "brief_prepend",
-        "worker_agent_type": "agent_type",
-        "loop_mode": "loop_mode",
         "max_iterations": "max_iterations",
-        "max_turns": "max_turns",
         "worktree": "worktree",
     }
     return {

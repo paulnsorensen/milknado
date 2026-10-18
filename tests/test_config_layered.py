@@ -176,7 +176,7 @@ def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path
             'quality_gates = ["echo global"]\n'
             'brief_prepend = "global brief"\n'
             "worktree = false\n"
-            "max_turns = 7\n"
+            "max_iterations = 7\n"
         ),
     )
     local = _write(
@@ -195,7 +195,7 @@ def test_global_flavor_fields_survive_local_partial_override(xdg: Path, tmp_path
     assert profile.quality_gates[0].command == "echo global"
     assert profile.brief_prepend == "local brief"
     assert profile.worktree is False
-    assert profile.max_turns == 7
+    assert profile.max_iterations == 7
     assert "Read" in profile.execution_agent
 
 
