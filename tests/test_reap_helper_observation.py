@@ -202,3 +202,29 @@ def test_reap_accepts_helper_closure_between_refresh_and_retried_begin(
         assert recorded.snapshot_seq == 1
     finally:
         graph.close()
+
+
+def test_reap_stops_retrying_begin_at_the_recovery_deadline(
+    tmp_path: Path,
+    worker: psutil.Process,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    helper = HelperIdentity("inv-1", 0, 2**31 - 1, 123.5)
+    graph = _recorded_graph(tmp_path, worker, helper)
+
+    class _AlwaysConflicting(WorkerEvidenceStore):
+        @override
+        def begin(self, key: ObservationKey) -> None:
+            raise RuntimeError("worker observation conflict")
+
+    monkeypatch.setattr(reap, "WorkerEvidenceStore", _AlwaysConflicting)
+    started = time.monotonic()
+    try:
+        request = ReapRequest(NodeWorkers(1), deadline=started + 0.5)
+        assert not reap_orphaned_workers(graph, ProcessAdapter(), request)
+        assert time.monotonic() - started < 3
+        assert "worker recovery observation unresolved" in caplog.text
+        assert worker.status() != psutil.STATUS_ZOMBIE
+    finally:
+        graph.close()
