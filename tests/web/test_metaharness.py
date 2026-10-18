@@ -1,6 +1,8 @@
 # pyright: reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnusedCallResult=false
 import os
+import time
 from pathlib import Path
+from threading import Thread
 
 import pytest
 from starlette.testclient import TestClient
@@ -140,6 +142,41 @@ def test_note_appends_operator_note_to_description(tmp_path: Path) -> None:
         graph.close()
 
 
+def test_concurrent_notes_keep_every_operator_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, graph = _graph_client(tmp_path)
+    try:
+        node_id = graph.add_node("n").id
+        read_node = graph.get_node
+
+        def slow_read(target: int):
+            node = read_node(target)
+            time.sleep(0.05)
+            return node
+
+        monkeypatch.setattr(graph, "get_node", slow_read)
+        codes: list[int] = []
+
+        def post_note(text: str) -> None:
+            url = f"/api/nodes/{node_id}/note"
+            codes.append(client.post(url, json={"text": text}, headers=headers()).status_code)
+
+        writers = [Thread(target=post_note, args=(text,)) for text in ("a", "b")]
+        for writer in writers:
+            writer.start()
+        for writer in writers:
+            writer.join()
+
+        stored = read_node(node_id)
+        assert codes == [200, 200]
+        assert stored is not None
+        assert "Operator note: a" in stored.description
+        assert "Operator note: b" in stored.description
+    finally:
+        graph.close()
+
+
 @pytest.mark.parametrize(
     "payload",
     [{"text": ""}, {"text": "   "}, {"text": "x" * 4001}, {"text": 5}, {}, {"text": "a", "x": 1}],
@@ -152,8 +189,9 @@ def test_note_rejects_invalid_bodies(tmp_path: Path, payload: dict[str, object])
         response = client.post(f"/api/nodes/{node_id}/note", json=payload, headers=headers())
 
         assert response.status_code == 400
-        malformed = client.post(f"/api/nodes/{node_id}/note", content=b"{", headers=headers())
-        assert malformed.status_code == 400
+        for raw in (b"{", b"\xff"):
+            malformed = client.post(f"/api/nodes/{node_id}/note", content=raw, headers=headers())
+            assert malformed.status_code == 400
     finally:
         graph.close()
 

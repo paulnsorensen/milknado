@@ -164,7 +164,8 @@ class RunLoop:
             self._scheduler.close_admission()
 
     def set_scheduling_paused(self, paused: bool) -> None:
-        self._scheduler.set_admission_paused(paused)
+        with self._scheduling_lock:
+            self._scheduler.set_admission_paused(paused)
         self._publish_state()
 
     def scheduling_paused(self) -> bool:

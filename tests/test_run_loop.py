@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from operator import attrgetter
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from time import monotonic
 from typing import Protocol, TypeVar, cast
 from unittest.mock import MagicMock, patch
@@ -2703,6 +2703,20 @@ def test_pause_scheduling_blocks_dispatch_until_resumed(run_loop: RunLoop) -> No
 
     assert not run_loop.scheduling_paused()
     assert _scheduler_of(run_loop).plan_dispatch(4, strict=False).available == 4
+
+
+def test_pause_waits_for_an_in_flight_dispatch_batch(run_loop: RunLoop) -> None:
+    dispatch_lock = cast(Lock, attrgetter("_scheduling_lock")(run_loop))
+    pausing = Thread(target=run_loop.set_scheduling_paused, args=(True,))
+
+    with dispatch_lock:
+        pausing.start()
+        pausing.join(timeout=0.1)
+        assert pausing.is_alive()
+        assert not run_loop.scheduling_paused()
+    pausing.join(timeout=5)
+
+    assert run_loop.scheduling_paused()
 
 
 def test_resume_scheduling_does_not_reopen_a_scheduling_stop(run_loop: RunLoop) -> None:
