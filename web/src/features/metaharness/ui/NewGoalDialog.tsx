@@ -22,8 +22,15 @@ export function NewGoalDialog(): ReactElement | null {
   const submit = (): void => {
     const text = description.trim();
     close();
-    setDescription('');
-    void startGoal(text, provider).then((ok) => ok && flash('Goal started. It appears under Projects.'));
+    void startGoal(text, provider).then((ok) => {
+      if (ok) {
+        setDescription('');
+        flash('Goal started. It appears under Projects.');
+      } else {
+        // Reopen with the typed goal so a rejected start does not lose it.
+        patchMh({ goalForm: true });
+      }
+    });
   };
   return (
     <Dialog title="Start a new goal" label="New goal" onClose={close} actions={

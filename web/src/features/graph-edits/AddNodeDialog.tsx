@@ -38,9 +38,15 @@ export function AddNodeDialog(): ReactElement | null {
 
   // `openDialog('add', parentId)` presets the parent, so a node's "add a
   // prerequisite" control opens the dialog already pointed at that node.
+  // Each open starts a fresh draft, so prerequisites typed for one node never
+  // become edges of another.
   useLayoutEffect(() => {
     if (dialog.kind === 'add') {
+      setDescription('');
       setParentId(dialog.nodeId === null ? '' : String(dialog.nodeId));
+      setFlavor('');
+      setPrereqs('');
+      setFiles('');
     }
   }, [dialog.kind, dialog.nodeId]);
 

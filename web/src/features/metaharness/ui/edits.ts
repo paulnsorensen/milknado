@@ -25,6 +25,17 @@ export function openGoalForm(): void {
   }
 }
 
+/** The `+` intent: New goal on the Projects list, else Add node under the selection or scope. */
+export function openAdd(): void {
+  const { projectId, scopeRoot, sel } = getMh();
+  const root = projectId === null ? null : (scopeRoot ?? projectId);
+  if (root === null) {
+    openGoalForm();
+  } else {
+    openEdit('add', sel ?? root);
+  }
+}
+
 export function confirmCancel(model: MhModel, nodeId: number): void {
   const live = model.liveByNode.get(nodeId);
   const node = model.tree.byId.get(nodeId);

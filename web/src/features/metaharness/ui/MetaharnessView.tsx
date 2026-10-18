@@ -11,7 +11,7 @@ import { getMh, patchMh } from '../viewState';
 import { nextDecision } from './actions';
 import { ChatPane } from './ChatPane';
 import { currentNode, describe } from './current';
-import { openEdit } from './edits';
+import { openAdd } from './edits';
 import { GraphPane } from './GraphPane';
 import { DecisionPopover, ExpandedGraph, Rail } from './Overlays';
 import { SidePanel } from './SidePanel';
@@ -63,7 +63,7 @@ function useShortcuts(model: MhModel): void {
         nextDecision(model);
       } else if (key === 'a' && model.editable) {
         event.preventDefault();
-        openEdit('add', getMh().sel ?? getMh().scopeRoot);
+        openAdd();
       }
     };
     window.addEventListener('keydown', onKey);

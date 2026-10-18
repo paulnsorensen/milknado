@@ -68,6 +68,37 @@ def test_card_plus_and_shortcut_open_add_with_the_parent_preset(
     expect(dialog.get_by_label("Parent")).to_have_value(str(ids.drawer))
 
 
+def test_shortcut_on_the_projects_list_opens_new_goal(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    open_view(page, metaharness_server)
+    compact_node(page, metaharness_server.ids.drawer).click()
+    page.locator(".mh-crumbs").get_by_role("button", name="Projects").click()
+    page.keyboard.press("a")
+
+    expect(page.get_by_role("dialog", name="New goal")).to_be_visible()
+    expect(page.get_by_role("dialog", name="Add node")).to_have_count(0)
+
+
+def test_add_node_starts_a_fresh_draft_for_each_parent(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    ids = metaharness_server.ids
+    open_view(page, metaharness_server)
+    compact_node(page, ids.annotation).hover()
+    page.get_by_role("button", name="Add a prerequisite to Annotation queued prompt").click()
+    dialog = page.get_by_role("dialog", name="Add node")
+    dialog.get_by_label("Description").fill("Draft for the annotation")
+    dialog.get_by_label("Prerequisites").fill(str(ids.stuck))
+    dialog.get_by_role("button", name="Cancel").click()
+
+    compact_node(page, ids.drawer).click()
+    page.keyboard.press("a")
+    expect(dialog.get_by_label("Parent")).to_have_value(str(ids.drawer))
+    expect(dialog.get_by_label("Description")).to_have_value("")
+    expect(dialog.get_by_label("Prerequisites")).to_have_value("")
+
+
 def test_details_actions_edit_then_archive_the_node(
     page: Page, metaharness_server: MetaharnessServer
 ) -> None:
@@ -131,6 +162,24 @@ def test_new_goal_starts_a_coordinator_goal(
         )
     )
     expect(page.locator(".mh-project", has_text="Ship the review inbox")).to_be_visible()
+
+
+def test_rejected_new_goal_keeps_the_typed_goal(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    _ = page.route(
+        "**/api/coordinators/commands",
+        lambda route: route.fulfill(status=409, json={"reason": "A coordinator is busy."}),
+    )
+    open_view(page, metaharness_server)
+    page.locator(".mh-crumbs").get_by_role("button", name="Projects").click()
+    page.get_by_role("button", name="New goal").first.click()
+    dialog = page.get_by_role("dialog", name="New goal")
+    dialog.get_by_label("Goal").fill("Ship the review inbox")
+    dialog.get_by_role("button", name="Start goal").click()
+
+    expect(page.get_by_text("A coordinator is busy.")).to_be_visible()
+    expect(dialog.get_by_label("Goal")).to_have_value("Ship the review inbox")
 
 
 def _description(server: MetaharnessServer, node_id: int) -> str:

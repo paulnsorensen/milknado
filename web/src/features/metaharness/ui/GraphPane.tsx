@@ -8,7 +8,7 @@ import { layoutTree } from '../model/layout';
 import { ancestry, title } from '../model/tree';
 import type { DropTarget } from '../viewState';
 import { flash, patchMh } from '../viewState';
-import { dropProps, openEdit, openGoalForm } from './edits';
+import { dropProps, openAdd, openGoalForm } from './edits';
 import { GraphCanvas } from './GraphCanvas';
 import { Icon } from './Icon';
 import type { MhModel } from './useMhModel';
@@ -97,7 +97,7 @@ export function GraphPane({ model }: { model: MhModel }): ReactElement {
           <span className="mh-brand-actions">
             <button type="button" className="mh-icon-btn" title={root === null ? 'New goal' : 'Add a node (A)'}
               aria-label={root === null ? 'New goal' : 'Add a node'}
-              onClick={() => (root === null ? openGoalForm() : openEdit('add', model.ui.sel ?? root))}>
+              onClick={openAdd}>
               <Icon name="plus" size={14} />
             </button>
             <button type="button" className="mh-icon-btn" title="Expand graph (G)" aria-label="Expand graph"
