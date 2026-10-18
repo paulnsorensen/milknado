@@ -8,6 +8,9 @@ import { layoutTree } from './layout';
 import { deriveNeeds, nextNeed } from './needs';
 import { goalThread, splitBrief, taskThread } from './thread';
 import { ancestry, buildTree, isReady } from './tree';
+import { runPercent } from '../ui/nodeView';
+import { getViewMode, resetViewMode, setViewMode } from '../viewMode';
+import { getMh, patchMh, resetMh } from '../viewState';
 
 function node(id: number, parent: number | null, status: WireNode['status'], kind: WireNode['kind'] = 'task'): WireNode {
   return { id, description: `Node ${id}`, status, parent_id: parent, kind, flavor: kind === 'task' ? 'implement' : null };
@@ -102,6 +105,13 @@ describe('thread', () => {
     expect(taskThread({ node: node(5, 3, 'pending'), detail: null, live: undefined, now: 0 })[0].text).toContain('Not dispatched');
   });
 
+  it('keeps earlier reviews on their run when node detail lags a new live run', () => {
+    const thread = taskThread({ node: node(6, 1, 'running'), detail, live: run(6, { run_id: 'run-b' }), now: Date.parse('2026-01-01T01:00:00Z') });
+    const reviews = thread.filter((m) => m.text.startsWith('Reject'));
+    expect(reviews).toHaveLength(1);
+    expect(thread.findIndex((m) => m.text === 'Run b dispatched')).toBeGreaterThan(thread.indexOf(reviews[0]));
+  });
+
   it('summarises a goal with its pending review and coordinator records', () => {
     const thread = goalThread({ node: GRAPH.nodes[0], tree: buildTree(GRAPH), reviews: [REVIEW],
       records: [{ seq: 1, kind: 'turn', text: 'Dispatched 4.', status: 'ok' }, { seq: 2, kind: 'tool', text: 'x', status: 'ok', tool_name: 'plan' }] });
@@ -139,5 +149,48 @@ describe('parseUnifiedDiff', () => {
     expect(lines).toEqual([
       { mark: '@', text: '@@ -1 +1 @@' }, { mark: '-', text: 'old' }, { mark: '+', text: 'new' }, { mark: ' ', text: 'same' },
     ]);
+  });
+
+  it('keeps hunk lines that look like file headers', () => {
+    const lines = parseUnifiedDiff('--- a/q.sql\n+++ b/q.sql\n@@ -1 +1 @@\n-- old comment\n+++ new counter');
+    expect(lines).toEqual([
+      { mark: '@', text: '@@ -1 +1 @@' }, { mark: '-', text: '- old comment' }, { mark: '+', text: '++ new counter' },
+    ]);
+  });
+});
+
+describe('viewState compose', () => {
+  it('leaves retry mode when the selection changes', () => {
+    resetMh();
+    patchMh({ sel: 1, compose: 'retry' });
+    patchMh({ view: 'thread' });
+    expect(getMh().compose).toBe('retry');
+    patchMh({ sel: 2 });
+    expect(getMh().compose).toBe('message');
+    patchMh({ sel: 3, compose: 'retry' });
+    expect(getMh().compose).toBe('retry');
+    resetMh();
+  });
+});
+
+describe('runPercent', () => {
+  it('reads progress on the backend 0-100 scale', () => {
+    expect(runPercent(run(1, { progress_pct: 1 }))).toBe(1);
+    expect(runPercent(run(1, { progress_pct: 45.4 }))).toBe(45);
+    expect(runPercent(run(1, { progress_pct: 140 }))).toBe(100);
+    expect(runPercent(run(1))).toBeNull();
+  });
+});
+
+describe('viewMode', () => {
+  it('drops the #metaharness hash when the viewer leaves the view', () => {
+    window.history.replaceState(null, '', '/?x=1#metaharness');
+    resetViewMode();
+    expect(getViewMode()).toBe('metaharness');
+    setViewMode('classic');
+    expect(window.location.hash).toBe('');
+    expect(window.location.search).toBe('?x=1');
+    resetViewMode();
+    expect(getViewMode()).toBe('classic');
   });
 });

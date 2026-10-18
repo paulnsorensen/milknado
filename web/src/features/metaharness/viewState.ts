@@ -57,7 +57,12 @@ export function subscribeMh(listener: () => void): () => void {
 
 export function patchMh(patch: Partial<MhState> | ((current: MhState) => Partial<MhState>)): void {
   const delta = typeof patch === 'function' ? patch(state) : patch;
-  state = { ...state, ...delta };
+  const next = { ...state, ...delta };
+  // Retry mode belongs to one failed node; a new selection sends messages again.
+  if (next.sel !== state.sel && delta.compose === undefined) {
+    next.compose = 'message';
+  }
+  state = next;
   for (const listener of listeners) {
     listener();
   }

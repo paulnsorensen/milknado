@@ -6,13 +6,13 @@ import { childrenOf, isGoal, isReady, openPrerequisites } from '../model/tree';
 import type { WireLiveRun } from '../wire';
 import type { MhModel } from './useMhModel';
 
-/** The run's reported progress percent, or null when the worker reports none. */
+/** The run's progress on the backend's 0–100 scale, or null when the worker reports none. */
 export function runPercent(run: WireLiveRun | undefined): number | null {
   const pct = run?.progress_pct;
   if (pct === null || pct === undefined) {
     return null;
   }
-  return Math.round(Math.min(100, Math.max(0, pct <= 1 ? pct * 100 : pct)));
+  return Math.round(Math.min(100, Math.max(0, pct)));
 }
 
 function runProgress(run: WireLiveRun | undefined): string {
