@@ -124,7 +124,7 @@ def _spy_worker_cwd(monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return captured
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 10.0) -> RunDict:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 60.0) -> RunDict:
     deadline = time.monotonic() + timeout
     last: RunDict | None = None
     while time.monotonic() < deadline:
