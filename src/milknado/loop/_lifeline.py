@@ -101,6 +101,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
         )
         try:
             store.begin(key)
+            store.set_deadline(deadline)
             observed = observe_descendants(worker)
             store.commit(key, observed)
             durable_targets += observed

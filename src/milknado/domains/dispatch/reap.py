@@ -26,6 +26,9 @@ from milknado.domains.graph import (
 _logger = logging.getLogger(__name__)
 _RECOVERY_TIMEOUT_SECONDS = 8.0
 _HELPER_POLL_SECONDS = 0.05
+# A begun observation must reach its commit: an expired budget would leave the fence
+# held, and every later recovery pass would refuse the interrupted observation.
+_COMMIT_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +125,7 @@ def _prepare_worker(
         if begun is not None and begun.ended_at is not None:
             return begun
         if begun is not None:
+            evidence.set_deadline(max(deadline, time.monotonic() + _COMMIT_SECONDS))
             evidence.commit(_supervisor_key(begun), process.observe_worker(_identity(begun)))
         refreshed = evidence.get(record.invocation_id)
     except Exception:
