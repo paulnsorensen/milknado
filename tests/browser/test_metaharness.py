@@ -191,6 +191,24 @@ def test_diff_takeover_shows_the_worktree_change(
     page.get_by_role("button", name="Back to chat").click()
     expect(page.get_by_role("log", name="Conversation")).to_be_visible()
 
+    worktree = metaharness_server.graph.db_path.parent / "worktrees" / "milknado-annotation"
+    _ = (worktree / "queue.js").write_text("export const queue = await store.reload();\n")
+    page.locator(".mh-chat-actions").get_by_role("button", name="Diff").click()
+    expect(page.get_by_text("export const queue = await store.reload();")).to_be_visible()
+
+
+def test_unsent_draft_stays_with_its_node(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    ids = metaharness_server.ids
+    _open(page, metaharness_server)
+    _node(page, ids.drawer).click()
+    composer = page.get_by_role("textbox", name="Message")
+    composer.fill("Only for the drawer.")
+    _node(page, ids.fingerprint).click()
+
+    expect(composer).to_have_value("")
+
 
 def test_rail_pauses_loop_and_queues_issue_fix(
     page: Page, metaharness_server: MetaharnessServer

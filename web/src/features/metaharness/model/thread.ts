@@ -133,6 +133,9 @@ function runEvents(run: WireRunRecord, detail: WireMhDetail | null, live: WireLi
   return session?.event_history.items ?? session?.session?.events ?? [];
 }
 
+/** Sorts after every ISO timestamp; `ago` renders it as an empty age. */
+const AFTER_ALL = '￿';
+
 function byTime<T>(items: T[], at: (item: T) => string | null): T[] {
   return [...items].sort((a, b) => (at(a) ?? '').localeCompare(at(b) ?? ''));
 }
@@ -149,7 +152,9 @@ export function taskThread({ node, detail, live, now, gates = [] }: TaskThreadIn
   const who = workerName(node.id);
   const runs = byTime(detail?.runs.items ?? [], (run) => run.started_at);
   if (live && !runs.some((run) => run.run_id === live.run_id)) {
-    runs.push({ run_id: live.run_id, node_id: node.id, status: 'running', started_at: '', ended_at: null, error: null });
+    // Node detail can lag a new dispatch. The live run starts after every
+    // recorded review, so it shows none and earlier runs keep their own.
+    runs.push({ run_id: live.run_id, node_id: node.id, status: 'running', started_at: AFTER_ALL, ended_at: null, error: null });
   }
   const reviews = byTime(detail?.reviews.items ?? [], (review) => review.created_at);
   const thread: Msg[] = [];
@@ -165,7 +170,7 @@ export function taskThread({ node, detail, live, now, gates = [] }: TaskThreadIn
     if (end) {
       thread.push(end);
     }
-    const nextStart = runs[index + 1]?.started_at ?? '￿';
+    const nextStart = runs[index + 1]?.started_at ?? AFTER_ALL;
     reviews.filter((r) => r.created_at >= run.started_at && r.created_at < nextStart)
       .forEach((review) => thread.push(reviewMsg(review, now)));
   });

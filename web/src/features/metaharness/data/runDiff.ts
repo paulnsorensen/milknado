@@ -47,11 +47,13 @@ export function parseUnifiedDiff(text: string): DiffLine[] {
   return lines.slice(0, MAX_LINES);
 }
 
-export async function loadRunDiff(runId: string | null): Promise<void> {
-  if (runId === runDiff.get().runId && (runDiff.get().loading || runDiff.get().files.length > 0)) {
+/** Loads the run's diff once; `force` reloads it and keeps the old files on screen meanwhile. */
+export async function loadRunDiff(runId: string | null, force = false): Promise<void> {
+  const state = runDiff.get();
+  if (runId === state.runId && (state.loading || (!force && state.files.length > 0))) {
     return;
   }
-  runDiff.set({ runId, files: [], loading: runId !== null });
+  runDiff.set({ runId, files: runId === state.runId ? state.files : [], loading: runId !== null });
   if (runId === null) {
     return;
   }
