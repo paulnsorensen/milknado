@@ -82,16 +82,24 @@ def _begin_observation(
     record: WorkerRecord,
     deadline: float,
 ) -> WorkerRecord | None:
-    """Begin once more after a helper observation that started after the record was read."""
-    try:
-        evidence.begin(_supervisor_key(record))
-    except RuntimeError:
-        current = _await_helper(evidence, process, evidence.get(record.invocation_id), deadline)
-        if current is None or current.ended_at is not None:
+    """Begin, yielding to a live helper that observes or closes the record first.
+
+    Each begin conflict means the helper moved the record forward, so re-read it and
+    retry: the helper can commit and then close the record between a read and a begin.
+    The store's deadline bounds the retries.
+    """
+    current: WorkerRecord | None = record
+    while current is not None and current.ended_at is None:
+        if current.observation_owner is not None:
+            raise RuntimeError("worker observation interrupted")
+        try:
+            evidence.begin(_supervisor_key(current))
+        except RuntimeError:
+            latest = evidence.get(record.invocation_id)
+            current = _await_helper(evidence, process, latest, deadline)
+        else:
             return current
-        evidence.begin(_supervisor_key(current))
-        return current
-    return record
+    return current
 
 
 def _prepare_worker(
