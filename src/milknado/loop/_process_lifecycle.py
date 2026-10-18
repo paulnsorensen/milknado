@@ -46,7 +46,7 @@ class ProtectedWorker:
         self._context = context
         self._stop = threading.Event()
         self._watch: threading.Thread | None = None
-        self._monitor_started = threading.Event()
+        self.monitor_started = threading.Event()
         self._replacements = 0
         self._failed = False
         self.ticket: LaunchTicket | None = None
@@ -66,7 +66,7 @@ class ProtectedWorker:
             watch.start()
             self._watch = watch
         finally:
-            self._monitor_started.set()
+            self.monitor_started.set()
 
     def _stop_known_worker(
         self, deadline: float, descendants: tuple[Descendant, ...] = ()
@@ -192,7 +192,7 @@ class ProtectedWorker:
     def shutdown(self, deadline: float) -> bool:
         deadline = self._claim_deadline(deadline)
         self._stop.set()
-        if not self._monitor_started.wait(timeout=max(0, deadline - time.monotonic())):
+        if not self.monitor_started.wait(timeout=max(0, deadline - time.monotonic())):
             self.close_lifeline()
             return False
         if self._watch is not None:

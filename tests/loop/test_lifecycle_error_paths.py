@@ -94,7 +94,7 @@ def test_replacement_read_failure_stops_worker_and_preserves_record(
     assert protected.process.poll() is not None
     record = graph.runs.get_worker("inv-1")
     assert record is not None and record.ended_at is None
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
     with pytest.raises(
         RuntimeError, match="worker protection failed; worker cleanup remains unresolved"
     ):
@@ -125,7 +125,7 @@ def test_helper_reap_error_retains_protection_failure_and_drains(
     monkeypatch.setattr(LoopWorkerEvidence, "get_worker", fail_read)
     failed = protected._replace_helper()  # pyright: ignore[reportPrivateUsage]
     assert not failed
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
     monkeypatch.setattr(lifecycle, "stop_failed_helper", fail_reap)
     stop = threading.Event()
     reader = threading.Thread(target=stop.wait, daemon=True)
@@ -164,7 +164,7 @@ def test_shutdown_read_failure_stops_worker_and_preserves_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     graph, protected = protected_record
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
 
     def fail_read(_evidence: LoopWorkerEvidence, _invocation_id: str) -> None:
         raise RuntimeError("evidence unavailable")
@@ -182,7 +182,7 @@ def test_shutdown_keeps_uncertain_observation_open(
     protected_record: tuple[MikadoGraph, ProtectedWorker],
 ) -> None:
     graph, protected = protected_record
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
     supervisor = psutil.Process()
     LoopWorkerEvidence(graph.db_path).begin_worker_observation(
         ObservationKey("inv-1", "supervisor", 1, 0, supervisor.pid, supervisor.create_time())
@@ -245,7 +245,7 @@ def test_shutdown_missing_evidence_stops_known_worker_without_closing_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     graph, protected = protected_record
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
 
     def missing_read(_evidence: LoopWorkerEvidence, _invocation_id: str) -> None:
         return None
@@ -285,7 +285,7 @@ def test_shutdown_waits_for_monitor_exit_before_claiming_completion(
     watch.start()
     assert started.wait(timeout=1)
     protected._watch = watch  # pyright: ignore[reportPrivateUsage]
-    protected._monitor_started.set()  # pyright: ignore[reportPrivateUsage]
+    protected.monitor_started.set()
     try:
         confirmed = protected.shutdown(time.monotonic() + 0.02)
         assert not confirmed

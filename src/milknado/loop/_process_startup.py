@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -21,6 +22,7 @@ from milknado.loop._process_registry import LaunchTicket
 
 class _ProtectedStart(Protocol):
     ticket: LaunchTicket | None
+    monitor_started: threading.Event
 
     def start_monitor(self) -> None: ...
     def shutdown(self, deadline: float) -> bool: ...
@@ -44,7 +46,6 @@ class _StartupAcquisition:
     helper: subprocess.Popen[str] | None = None
     write_fd: int | None = None
     protected: _ProtectedStart | None = None
-    monitor_started: bool = False
 
 
 def _activate_worker(
@@ -98,7 +99,6 @@ def spawn_protected(
         acquired.protected = protected
         protected.ticket = ticket
         _activate_worker(worker, context, protected)
-        acquired.monitor_started = True
         protected.start_monitor()
         return protected
     except Exception:
@@ -111,7 +111,10 @@ def _abort_start(acquired: _StartupAcquisition) -> None:
     deadline = time.monotonic() + 3
     worker.close_gate()
     try:
-        if acquired.protected is not None and acquired.monitor_started:
+        if acquired.protected is not None:
+            # A stop that lands during activation also shuts this worker down. The monitor
+            # never starts on this path, so neither shutdown may wait for it.
+            acquired.protected.monitor_started.set()
             _ = acquired.protected.cleanup(deadline=deadline)
         elif acquired.recorded:
             _end_unprotected(worker, acquired.context, deadline)

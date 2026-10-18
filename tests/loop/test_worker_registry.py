@@ -181,6 +181,59 @@ def test_registry_remains_available_during_graph_preparation(
         graph.close()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
+def test_stop_during_gate_release_confirms_the_released_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    graph = MikadoGraph(tmp_path / "graph.db")
+    node = graph.add_node("worker")
+    graph.runs.start("run-1", node.id, "worker.log", "2026-01-01T00:00:00+00:00", None)
+    registry = WorkerRegistry()
+    stopped: list[bool] = []
+    stopper = threading.Thread(
+        target=lambda: stopped.append(registry.stop_all(time.monotonic() + 8))
+    )
+    real_release = WorkerProcess.release
+    released: list[WorkerProcess] = []
+
+    def release_then_stop(worker: WorkerProcess) -> None:
+        # A signal that lands after exec but before activation finishes.
+        real_release(worker)
+        released.append(worker)
+        stopper.start()
+        deadline = time.monotonic() + 5
+        while not registry.requested() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    monkeypatch.setattr(WorkerProcess, "release", release_then_stop)
+    try:
+        with pytest.raises(RuntimeError, match="admission closed before READY"):
+            _ = spawn_protected(_sleeper_options(tmp_path), _context(graph, node.id, registry))
+        stopper.join(timeout=10)
+        assert stopped == [True]
+        assert released[0].process.poll() is not None
+        assert graph.runs.live_workers(run_id="run-1") == ()
+    finally:
+        for worker in released:
+            if worker.process.poll() is None:
+                worker.process.kill()
+                _ = worker.process.wait(timeout=1)
+        stopper.join(timeout=10)
+        graph.close()
+
+
+def _sleeper_options(path: Path) -> SpawnOptions:
+    return SpawnOptions(
+        (sys.executable, "-c", "import time; time.sleep(30)"),
+        path,
+        None,
+        False,
+        subprocess.DEVNULL,
+        subprocess.PIPE,
+        subprocess.PIPE,
+    )
+
+
 def test_registry_rejects_admission_on_scalar_intent() -> None:
     registry = WorkerRegistry()
     requested = False
