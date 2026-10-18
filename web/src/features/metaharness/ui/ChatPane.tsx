@@ -15,6 +15,7 @@ import { Composer } from './Composer';
 import type { Current } from './current';
 import { avatarClass, initials, needSummary } from './current';
 import { DiffView } from './DiffView';
+import { confirmCancel } from './edits';
 import { Icon } from './Icon';
 import { Thread } from './Thread';
 import type { MhModel } from './useMhModel';
@@ -68,6 +69,10 @@ function ChatHeader({ model, current }: { model: MhModel; current: Current }): R
         {isGoal(node) && model.tree.kids.has(node.id) && (
           <button type="button" className="mh-round-btn" title="Focus graph on this goal" aria-label="Focus graph on this goal"
             onClick={() => patchMh({ scopeRoot: node.id })}><Icon name="focus" size={15} /></button>
+        )}
+        {current.live && (
+          <button type="button" className="mh-round-btn" title="Cancel this run" aria-label="Cancel run"
+            onClick={() => confirmCancel(model, node.id)}><Icon name="stop" size={15} /></button>
         )}
         <button type="button" className={`mh-round-btn${model.ui.side === 'details' ? ' is-on' : ''}`} title="Details"
           aria-label="Details" onClick={() => patchMh((ui) => ({ side: ui.side === 'details' ? null : 'details' }))}>

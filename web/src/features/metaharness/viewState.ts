@@ -9,6 +9,15 @@ export interface MhPop {
   y: number;
 }
 
+/** A node id, or `root` for the top level of the graph. */
+export type DropTarget = number | 'root';
+
+/** A node being dragged, and the drop target under the pointer. */
+export interface MhDrag {
+  id: number;
+  over: DropTarget | null;
+}
+
 export interface MhState {
   projectId: number | null;
   scopeRoot: number | null;
@@ -22,6 +31,9 @@ export interface MhState {
   toast: string | null;
   /** The composer sends a retry note instead of a message. */
   compose: 'message' | 'retry';
+  drag: MhDrag | null;
+  /** The New goal dialog is open. */
+  goalForm: boolean;
 }
 
 const TOAST_MS = 3200;
@@ -39,6 +51,8 @@ function initial(): MhState {
     unfold: {},
     toast: null,
     compose: 'message',
+    drag: null,
+    goalForm: false,
   };
 }
 

@@ -4,27 +4,18 @@ action reaches the milknado backend."""
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, Route, expect
+from playwright.sync_api import Page, Route, expect
 
 from milknado.domains.common import NodeStatus
 from milknado.domains.graph import GoalReviewDecision
-from tests.browser.conftest import open_app, wait_until
+from tests.browser.conftest import wait_until
 from tests.browser.metaharness_db import MetaharnessServer, metaharness_server
+from tests.browser.metaharness_db import compact_node as _node
+from tests.browser.metaharness_db import open_view as _open
 
 _ = metaharness_server
 
 pytestmark = pytest.mark.browser
-
-
-def _open(page: Page, server: MetaharnessServer) -> None:
-    page.set_viewport_size({"width": 1440, "height": 900})
-    open_app(page, server.url, page.get_by_role("button", name="Metaharness"))
-    page.get_by_role("button", name="Metaharness").click()
-    expect(page.locator('[data-view="metaharness"]')).to_be_visible()
-
-
-def _node(page: Page, node_id: int) -> Locator:
-    return page.locator(f'[data-mh-node="{node_id}"][data-mode="compact"]')
 
 
 def _send(page: Page, text: str) -> None:

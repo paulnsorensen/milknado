@@ -21,6 +21,8 @@ export interface MhModel {
   reviews: WireGoalReview[];
   info: WireMetaharnessInfo | null;
   ui: MhState;
+  /** The server accepts graph edits: add, move, edit, archive. */
+  editable: boolean;
 }
 
 export function useMhModel(): MhModel {
@@ -39,5 +41,6 @@ export function useMhModel(): MhModel {
       needs: deriveNeeds([...tree.byId.values()], runs, reviews),
     };
   }, [snapshot]);
-  return { snapshot, ui, info: metaharness, ...derived };
+  const editable = store.capabilities?.graph_edits.available ?? false;
+  return { snapshot, ui, info: metaharness, editable, ...derived };
 }

@@ -6,24 +6,31 @@ import { setLoopPaused } from '../data/commands';
 import { projectCards } from '../model/insights';
 import { layoutTree } from '../model/layout';
 import { ancestry, title } from '../model/tree';
+import type { DropTarget } from '../viewState';
 import { flash, patchMh } from '../viewState';
+import { dropProps, openAdd, openGoalForm } from './edits';
 import { GraphCanvas } from './GraphCanvas';
 import { Icon } from './Icon';
 import type { MhModel } from './useMhModel';
 
 export const GRAPH_WIDTH = 340;
 
+function crumbClass(model: MhModel, target: DropTarget, current: boolean): string {
+  return [current ? 'is-current' : '', model.ui.drag?.over === target ? 'is-drop-target' : ''].filter(Boolean).join(' ');
+}
+
 function Crumbs({ model }: { model: MhModel }): ReactElement {
   const { projectId, scopeRoot } = model.ui;
   const chain = projectId === null ? [] : ancestry(model.tree, scopeRoot ?? projectId);
   return (
     <nav className="mh-crumbs" aria-label="Graph scope">
-      <button type="button" className={chain.length ? '' : 'is-current'}
+      <button type="button" className={crumbClass(model, 'root', !chain.length)} {...dropProps(model, 'root')}
+        title={model.editable ? 'Drop a node here to make it a top-level goal' : undefined}
         onClick={() => patchMh({ projectId: null, pop: null })}>Projects</button>
       {chain.map((node, i) => (
         <span key={node.id} className="mh-crumb">
           <Icon name="caret" size={10} />
-          <button type="button" className={i === chain.length - 1 ? 'is-current' : ''}
+          <button type="button" className={crumbClass(model, node.id, i === chain.length - 1)} {...dropProps(model, node.id)}
             onClick={() => patchMh({ scopeRoot: node.id, pop: null })}>{title(node)}</button>
         </span>
       ))}
@@ -47,7 +54,10 @@ function Projects({ model }: { model: MhModel }): ReactElement {
           <span className="mh-bar"><span style={{ width: `${card.pct}%` }} /></span>
         </button>
       ))}
-      {model.tree.roots.length === 0 && <p className="mh-faint">No goals yet. Plan one with milknado plan.</p>}
+      <button type="button" className="mh-new-goal" onClick={openGoalForm}>
+        <Icon name="plus" size={14} />New goal
+      </button>
+      {model.tree.roots.length === 0 && <p className="mh-faint">No goals yet. Start one here or with milknado plan.</p>}
     </div>
   );
 }
@@ -84,10 +94,17 @@ export function GraphPane({ model }: { model: MhModel }): ReactElement {
         <div className="mh-brand">
           <span className="mh-logo" />
           <span>{model.info?.project.name ?? 'milknado'}</span>
-          <button type="button" className="mh-icon-btn" title="Expand graph (G)" aria-label="Expand graph"
-            onClick={() => patchMh((ui) => ({ expanded: !ui.expanded, pop: null }))}>
-            <Icon name="expand" size={14} />
-          </button>
+          <span className="mh-brand-actions">
+            <button type="button" className="mh-icon-btn" title={root === null ? 'New goal' : 'Add a node (A)'}
+              aria-label={root === null ? 'New goal' : 'Add a node'}
+              onClick={openAdd}>
+              <Icon name="plus" size={14} />
+            </button>
+            <button type="button" className="mh-icon-btn" title="Expand graph (G)" aria-label="Expand graph"
+              onClick={() => patchMh((ui) => ({ expanded: !ui.expanded, pop: null }))}>
+              <Icon name="expand" size={14} />
+            </button>
+          </span>
         </div>
         <Crumbs model={model} />
       </div>
@@ -96,7 +113,7 @@ export function GraphPane({ model }: { model: MhModel }): ReactElement {
       </div>
       <div className="mh-graph-foot">
         <LoopToggle model={model} />
-        <span className="mh-hint">dbl-click goal to focus</span>
+        <span className="mh-hint">{model.editable ? 'drag a node onto another to move it' : 'dbl-click goal to focus'}</span>
       </div>
     </section>
   );

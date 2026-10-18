@@ -12,10 +12,12 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import Locator, Page, expect
 
 from milknado.adapters import ChangedFile
 from milknado.app.watch import WatchSnapshotSource
 from milknado.domains.common import NodeKind, NodeSpec, RunResult, SessionContext, SessionEvent
+from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 from milknado.domains.graph import (
     GoalReviewDecisionRequest,
     GoalReviewRecord,
@@ -25,7 +27,7 @@ from milknado.domains.graph import (
 from milknado.web import LaunchToken, PolledSnapshotSource, create_app
 from milknado.web.commands import MetaharnessInfo, WebCommands
 from milknado.web.hosts import HostDependencies, observer_commands
-from tests.browser.conftest import BROWSER_TOKEN, BrowserServer
+from tests.browser.conftest import BROWSER_TOKEN, BrowserServer, open_app
 
 POLL_INTERVAL = 0.05
 PERMISSION_ID = "perm-push"
@@ -59,15 +61,36 @@ class SeededIds:
 
 
 @dataclass
+class FakeCancel:
+    run_ids: list[str] = field(default_factory=list)
+
+    def __call__(self, run_id: str) -> dict[str, object]:
+        self.run_ids.append(run_id)
+        return {"run_id": run_id, "status": "cancelled"}
+
+
+@dataclass
 class MetaharnessServer:
     server: BrowserServer
     graph: MikadoGraph
     ids: SeededIds
     scheduling: FakeScheduling
+    cancels: FakeCancel
 
     @property
     def url(self) -> str:
         return self.server.login_url
+
+
+def open_view(page: Page, server: MetaharnessServer) -> None:
+    page.set_viewport_size({"width": 1440, "height": 900})
+    open_app(page, server.url, page.get_by_role("button", name="Metaharness"))
+    page.get_by_role("button", name="Metaharness").click()
+    expect(page.locator('[data-view="metaharness"]')).to_be_visible()
+
+
+def compact_node(page: Page, node_id: int) -> Locator:
+    return page.locator(f'[data-mh-node="{node_id}"][data-mode="compact"]')
 
 
 def _ts(minutes_ago: float) -> str:
@@ -191,7 +214,9 @@ def _decide(
     return graph.decide_goal_review(request, decided_by=decided_by)
 
 
-def _app_commands(graph: MikadoGraph, root: Path, scheduling: FakeScheduling) -> WebCommands:
+def _app_commands(
+    graph: MikadoGraph, root: Path, scheduling: FakeScheduling, cancels: FakeCancel
+) -> WebCommands:
     metaharness = MetaharnessInfo(
         project_root=root, concurrency=4, flavor_gates={"implement": ("just check-llm",)}
     )
@@ -202,8 +227,11 @@ def _app_commands(graph: MikadoGraph, root: Path, scheduling: FakeScheduling) ->
         review_decision=partial(_decide, graph),
         git=_RootGit(root),
         metaharness=metaharness,
+        coordinator=CoordinatorControl(graph, root, CoordinatorServices()),
     )
-    return dataclasses.replace(observer_commands(dependencies=dependencies), scheduling=scheduling)
+    return dataclasses.replace(
+        observer_commands(dependencies=dependencies), scheduling=scheduling, cancel=cancels
+    )
 
 
 class _RootGit:
@@ -227,17 +255,17 @@ def metaharness_server(tmp_path: Path) -> Iterator[MetaharnessServer]:
     try:
         ids = _seed(graph, tmp_path)
         scheduling = FakeScheduling()
+        cancels = FakeCancel()
         source = PolledSnapshotSource(
             WatchSnapshotSource(tmp_path, db_path), interval=POLL_INTERVAL
         )
         source.start()
         login = LaunchToken(BROWSER_TOKEN)
-        server = BrowserServer(
-            app=create_app(source, _app_commands(graph, tmp_path, scheduling), login), login=login
-        )
+        commands = _app_commands(graph, tmp_path, scheduling, cancels)
+        server = BrowserServer(app=create_app(source, commands, login), login=login)
         server.start()
         try:
-            yield MetaharnessServer(server, graph, ids, scheduling)
+            yield MetaharnessServer(server, graph, ids, scheduling, cancels)
         finally:
             server.stop()
             source.close()

@@ -1,0 +1,29 @@
+/* Graph editing in the metaharness view: the add control on each card,
+   drag-to-move feedback, the New goal entry, and the node action chips. */
+.mh-brand-actions { margin-left: auto; display: flex; gap: 6px; }
+.mh-brand-actions .mh-icon-btn { margin-left: 0; }
+
+.mh-node[draggable='true'] { cursor: grab; }
+.mh-node[draggable='true']:active { cursor: grabbing; }
+.mh-node.is-dragging { opacity: 0.4; transform: none; }
+.mh-node.is-drop-target, .mh-crumbs button.is-drop-target {
+  outline: 2px dashed var(--mh-lime); outline-offset: 2px; background: var(--mh-lime-soft);
+}
+.mh-node-add {
+  position: absolute; top: 4px; right: 4px; z-index: 1; display: grid; place-items: center;
+  width: 20px; height: 20px; padding: 0; border-radius: 999px; cursor: pointer;
+  background: var(--mh-raised); border: 1px solid var(--mh-line2); color: var(--mh-muted);
+  opacity: 0; transition: opacity 0.12s;
+}
+.mh-node:hover .mh-node-add, .mh-node:focus-within .mh-node-add, .mh-node.is-selected .mh-node-add { opacity: 1; }
+.mh-node-add:hover { color: #0b0b0f; background: var(--mh-lime); border-color: var(--mh-lime); }
+
+.mh-new-goal {
+  display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 14px; cursor: pointer;
+  border-radius: 14px; border: 1px dashed var(--mh-line2); background: transparent; color: var(--mh-muted);
+  font-weight: 600; font-size: 13px;
+}
+.mh-new-goal:hover { color: var(--mh-text); border-color: var(--mh-lime-line); background: var(--mh-lime-soft); }
+
+.mh-node-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.mh-node-actions .mh-chip-btn { display: inline-flex; align-items: center; gap: 6px; }

@@ -7,7 +7,7 @@ import { deriveIssues, deriveStats, projectCards } from './insights';
 import { layoutTree } from './layout';
 import { deriveNeeds, nextNeed } from './needs';
 import { goalThread, splitBrief, taskThread } from './thread';
-import { ancestry, buildTree, isReady } from './tree';
+import { ancestry, buildTree, canAdopt, isReady } from './tree';
 import { runPercent } from '../ui/nodeView';
 import { getViewMode, resetViewMode, setViewMode } from '../viewMode';
 import { getMh, patchMh, resetMh } from '../viewState';
@@ -156,6 +156,23 @@ describe('parseUnifiedDiff', () => {
     expect(lines).toEqual([
       { mark: '@', text: '@@ -1 +1 @@' }, { mark: '-', text: '- old comment' }, { mark: '+', text: '++ new counter' },
     ]);
+  });
+});
+
+describe('canAdopt', () => {
+  const tree = buildTree(GRAPH);
+
+  it('accepts a sibling or the top level as the new parent', () => {
+    expect(canAdopt(tree, 6, 3)).toBe(true);
+    expect(canAdopt(tree, 3, null)).toBe(true);
+  });
+
+  it('rejects the current parent, the node itself, and its own prerequisites', () => {
+    expect(canAdopt(tree, 4, 3)).toBe(false);
+    expect(canAdopt(tree, 3, 3)).toBe(false);
+    expect(canAdopt(tree, 3, 4)).toBe(false);
+    expect(canAdopt(tree, 1, null)).toBe(false);
+    expect(canAdopt(tree, 99, 1)).toBe(false);
   });
 });
 

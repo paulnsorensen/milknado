@@ -23,6 +23,11 @@ const PATHS = {
   play: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM10 8l6 4-6 4z',
   arrow: 'M5 12h14M13 6l6 6-6 6',
   classic: 'M3 4h18v16H3zM9 4v16M15 4v16',
+  plus: 'M12 5v14M5 12h14',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
+  move: 'M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20',
+  archive: 'M3 4h18v4H3zM5 8v12h14V8M10 12h4',
+  stop: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9 9h6v6H9z',
 } as const;
 
 export type IconName = keyof typeof PATHS;

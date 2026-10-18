@@ -60,6 +60,18 @@ export function rootOf(tree: Tree, id: number): number | null {
   return ancestry(tree, id)[0]?.id ?? null;
 }
 
+/**
+ * A node can move under `parentId` (or to the top level for null) unless that
+ * is its current parent, the node itself, or one of its own prerequisites.
+ */
+export function canAdopt(tree: Tree, nodeId: number, parentId: number | null): boolean {
+  const node = tree.byId.get(nodeId);
+  if (!node || node.parent_id === parentId) {
+    return false;
+  }
+  return parentId === null || !subtreeIds(tree, nodeId).includes(parentId);
+}
+
 export function isGoal(node: WireNode): boolean {
   return node.kind !== 'task';
 }

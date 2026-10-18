@@ -1,7 +1,7 @@
 // The `dialog` slot contribution for adding a node: description, parent,
 // flavor, prerequisites and files, posted to `POST /api/nodes`.
 import type { ReactElement } from 'react';
-import { useState, useSyncExternalStore } from 'react';
+import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { getState, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
 import { Dialog } from '../../shared/dialog/Dialog';
@@ -35,6 +35,20 @@ export function AddNodeDialog(): ReactElement | null {
   const [flavor, setFlavor] = useState('');
   const [prereqs, setPrereqs] = useState('');
   const [files, setFiles] = useState('');
+
+  // `openDialog('add', parentId)` presets the parent, so a node's "add a
+  // prerequisite" control opens the dialog already pointed at that node.
+  // Each open starts a fresh draft, so prerequisites typed for one node never
+  // become edges of another.
+  useLayoutEffect(() => {
+    if (dialog.kind === 'add') {
+      setDescription('');
+      setParentId(dialog.nodeId === null ? '' : String(dialog.nodeId));
+      setFlavor('');
+      setPrereqs('');
+      setFiles('');
+    }
+  }, [dialog.kind, dialog.nodeId]);
 
   if (dialog.kind !== 'add') {
     return null;
