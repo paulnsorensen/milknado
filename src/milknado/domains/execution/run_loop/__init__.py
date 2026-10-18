@@ -163,6 +163,13 @@ class RunLoop:
         with self._scheduling_lock:
             self._scheduler.close_admission()
 
+    def set_scheduling_paused(self, paused: bool) -> None:
+        self._scheduler.set_admission_paused(paused)
+        self._publish_state()
+
+    def scheduling_paused(self) -> bool:
+        return self._scheduler.admission_paused()
+
     def stop_scheduling(self) -> None:
         self.admit_stop_scheduling()
         for run in self._scheduler.view().active:

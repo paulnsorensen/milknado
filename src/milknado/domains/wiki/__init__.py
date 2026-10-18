@@ -15,6 +15,7 @@ from milknado.domains.wiki.exporter import (
     resolve_roadmap_node,
 )
 from milknado.domains.wiki.importer import ImportResult, import_roadmap
+from milknado.domains.wiki.knowledge import KnowledgeEntry, list_knowledge
 from milknado.domains.wiki.model import (
     GoalDocument,
     Lifecycle,
@@ -32,6 +33,7 @@ __all__ = [
     "ExportResult",
     "GoalDocument",
     "ImportResult",
+    "KnowledgeEntry",
     "Lifecycle",
     "RoadmapDocument",
     "RoadmapModel",
@@ -41,6 +43,7 @@ __all__ = [
     "export_roadmap",
     "goal_file_map",
     "import_roadmap",
+    "list_knowledge",
     "load_frontmatter",
     "load_roadmap",
     "locate_roadmap_dir",

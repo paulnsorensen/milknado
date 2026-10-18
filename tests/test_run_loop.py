@@ -2685,3 +2685,29 @@ class TestOwnerIdleWait:
 
         assert (dispatched, completed, failed, conflicts, timed_out) == (0, 0, 0, [], False)
         _mock_attr(executor, "dispatch").assert_not_called()
+
+
+def _scheduler_of(run_loop: RunLoop) -> Scheduler:
+    return cast(Scheduler, attrgetter("_scheduler")(run_loop))
+
+
+def test_pause_scheduling_blocks_dispatch_until_resumed(run_loop: RunLoop) -> None:
+    assert not run_loop.scheduling_paused()
+
+    run_loop.set_scheduling_paused(True)
+
+    assert run_loop.scheduling_paused()
+    assert _scheduler_of(run_loop).plan_dispatch(4, strict=False).available == 0
+
+    run_loop.set_scheduling_paused(False)
+
+    assert not run_loop.scheduling_paused()
+    assert _scheduler_of(run_loop).plan_dispatch(4, strict=False).available == 4
+
+
+def test_resume_scheduling_does_not_reopen_a_scheduling_stop(run_loop: RunLoop) -> None:
+    run_loop.admit_stop_scheduling()
+    run_loop.set_scheduling_paused(True)
+    run_loop.set_scheduling_paused(False)
+
+    assert _scheduler_of(run_loop).plan_dispatch(4, strict=False).available == 0

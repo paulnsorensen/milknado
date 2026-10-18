@@ -2,6 +2,7 @@
 
 from milknado.web.app import create_app
 from milknado.web.commands import WebCommands, build_capabilities
+from milknado.web.git_inspection import ProjectGitInspection
 from milknado.web.hosts import (
     HostDependencies,
     ObserverHandlers,
@@ -10,6 +11,7 @@ from milknado.web.hosts import (
     owner_commands,
 )
 from milknado.web.login import LaunchToken
+from milknado.web.metaharness import build_metaharness_info
 from milknado.web.polling import PolledSnapshotSource
 from milknado.web.server import (
     OwnerLaunch,
@@ -25,8 +27,10 @@ __all__ = [
     "LaunchToken",
     "ObserverHandlers",
     "OwnerHandlers",
+    "ProjectGitInspection",
     "WebCommands",
     "build_capabilities",
+    "build_metaharness_info",
     "create_app",
     "observer_commands",
     "owner_commands",
