@@ -24,7 +24,9 @@ FKs to nodes, **no** `ON DELETE CASCADE`), `file_ownership` (node → owned file
 paths), `plan_state` (single-row spec hash), `batch_plans` (solver history),
 `runs` (run lifecycle rows — replaced the `.milknado/runs/*.state.json`
 sidecars in PR #127, closes #100), and `run_messages` (append-only worker
-deposit channel, UNIQUE `(run_id, seq)` — closes #122).
+deposit channel, UNIQUE `(run_id, seq)` — closes #122). Forward-only
+migrations add later tables, such as `node_reviews`
+([[run-lifecycle-robustness-004]]) and `task_attempts` (see below).
 
 `MikadoGraph.__init__` (`graph.py`) opens the connection in **WAL mode** with
 `foreign_keys=ON` and `busy_timeout=5000` — the detached runner and the MCP
@@ -104,6 +106,11 @@ Steps 57–59 add stream keys, references, and depths; step 60 indexes stream lo
 The ladder retains steps 31–50 and creates current-schema objects before coordinator startup.
 These steps add no old-data backfill, lazy schema creation, or release-compatibility transformation.[^pr521-current-schema]
 
+Step 61 creates the `task_attempts` ledger for bounded node attempts. It has one row for each logical attempt of a node.
+Step 62 adds `runs.attempt_id`, which links each dispatch run to its attempt.
+Steps 63–65 add indexes for node outcome, run-to-attempt lookup, and live workers.[^graph-task-attempts]
+Policy for retries lives in [[execution]] under "Bounded node attempts".
+
 
 
 ### Graph persistence reset
@@ -163,6 +170,7 @@ See [Execution and Dispatch](./execution.md#coordinator-recovery-concurrency) fo
 
 
 [^pr521-current-schema]: src/milknado/domains/graph/_persistence.py (`MIGRATIONS`, `SCHEMA_VERSION`); src/milknado/domains/graph/_coordinator_schema.py (`CREATE_TURN_LAUNCHES`, `CREATE_ACTIVE_TURN_INDEX`, `CREATE_EVENTS_STREAM_INDEX`); AGENTS.md:109-122.
+[^graph-task-attempts]: src/milknado/domains/graph/_task_attempt_schema.py; src/milknado/domains/graph/_persistence.py (`MIGRATIONS` steps 61–65).
 [^pr521-stream-storage]: src/milknado/domains/coordinator/_stream_history.py:12-14,65-73,132-156.
 [^pr521-stream-history]: src/milknado/domains/coordinator/journal.py (`_HistoryRead`, `_record`, `control_history`, `snapshot_control_history`); tests/coordinator/test_turn_stream_storage.py (`test_cumulative_stream_uses_less_storage_without_changing_history`).
 [^pr521-stream-redaction]: src/milknado/domains/coordinator/journal.py (`_prepared_event`, `_write_event`, `append_stream_control_event`); src/milknado/domains/coordinator/turns.py (`record_turn_event`).
