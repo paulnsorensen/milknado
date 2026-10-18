@@ -154,4 +154,4 @@ def main() -> None:
         wiki,
     )
 
-    _ = mcp.run()
+    _ = mcp.run(show_banner=False)
