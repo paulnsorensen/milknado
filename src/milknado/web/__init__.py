@@ -3,6 +3,7 @@
 from milknado.web.app import create_app
 from milknado.web.commands import WebCommands, build_capabilities
 from milknado.web.git_inspection import ProjectGitInspection
+from milknado.web.guards import allowed_host
 from milknado.web.hosts import (
     HostDependencies,
     ObserverHandlers,
@@ -29,6 +30,7 @@ __all__ = [
     "OwnerHandlers",
     "ProjectGitInspection",
     "WebCommands",
+    "allowed_host",
     "build_capabilities",
     "build_metaharness_info",
     "create_app",

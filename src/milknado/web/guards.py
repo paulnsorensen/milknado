@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import cast
 
@@ -10,13 +11,26 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from milknado.web.login import LaunchToken
 
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+_HOSTNAME = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
+)
+
+
+def allowed_host(value: str) -> str:
+    """Normalize an operator-supplied host name; reject ports, schemes, and paths."""
+    host = value.strip().lower().removesuffix(".")
+    if _HOSTNAME.fullmatch(host) is None:
+        raise ValueError(f"{value!r} is not a host name")
+    return host
+
 
 class RequestGuards:
     def __init__(
         self,
         app: ASGIApp,
         login: LaunchToken,
-        allowed_hosts: Iterable[str] = ("127.0.0.1", "localhost"),
+        allowed_hosts: Iterable[str] = LOOPBACK_HOSTS,
     ) -> None:
         self.app: ASGIApp = app
         self.login: LaunchToken = login
@@ -28,7 +42,7 @@ class RequestGuards:
             return
         headers = dict(cast(list[tuple[bytes, bytes]], scope["headers"]))
         authority = headers.get(b"host", b"").decode()
-        host = authority.split(":", 1)[0]
+        host = authority.split(":", 1)[0].lower()
         if host not in self.allowed_hosts:
             await PlainTextResponse("Host is not allowed.", status_code=400)(scope, receive, send)
             return
@@ -41,8 +55,7 @@ class RequestGuards:
             return
         if method not in {"GET", "HEAD", "OPTIONS"}:
             origin = headers.get(b"origin", b"").decode().rstrip("/")
-            expected = f"http://{authority}"
-            if origin != expected:
+            if origin not in {f"http://{authority}", f"https://{authority}"}:
                 await PlainTextResponse("Origin is not allowed.", status_code=403)(
                     scope, receive, send
                 )

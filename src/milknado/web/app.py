@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from starlette.applications import Starlette
 
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.web.commands import WebCommands
-from milknado.web.guards import RequestGuards
+from milknado.web.guards import LOOPBACK_HOSTS, RequestGuards
 from milknado.web.login import LaunchToken
 from milknado.web.routes import discover_routes
 
@@ -21,10 +22,16 @@ class WebContext:
 
 
 def create_app(
-    source: ExecutionSnapshotSource, commands: WebCommands, login: LaunchToken
+    source: ExecutionSnapshotSource,
+    commands: WebCommands,
+    login: LaunchToken,
+    extra_hosts: Iterable[str] = (),
 ) -> Starlette:
-    """Build the guarded local application from injected seams."""
+    """Build the guarded local application from injected seams.
+
+    `extra_hosts` widens the loopback Host allow-list, for example to a tailnet name.
+    """
     app = Starlette(routes=discover_routes())
     app.state.web = WebContext(source, commands, login)
-    app.add_middleware(RequestGuards, login=login)
+    app.add_middleware(RequestGuards, login=login, allowed_hosts=(*LOOPBACK_HOSTS, *extra_hosts))
     return app
