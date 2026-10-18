@@ -45,6 +45,35 @@ def test_web_command_accepts_port_and_no_open(tmp_path: Path) -> None:
     assert options.no_open is True
 
 
+def test_web_allow_host_widens_the_host_guard(tmp_path: Path) -> None:
+    with (
+        patch(
+            "milknado.cli.web.load_or_default",
+            return_value=(MilknadoConfig(db_path=tmp_path / "db"), []),
+        ),
+        patch("milknado.cli.web.ensure_db"),
+        patch("milknado.cli.web.PolledSnapshotSource"),
+        patch("milknado.cli.web.run_server") as server,
+    ):
+        result = runner.invoke(
+            app,
+            ["web", "--project-root", str(tmp_path), "--no-open", "--allow-host", "Box.ts.net."],
+        )
+    assert result.exit_code == 0, result.output
+    guard = server.call_args.args[0].user_middleware[0]
+    assert set(guard.kwargs["allowed_hosts"]) == {"127.0.0.1", "localhost", "box.ts.net"}
+
+
+def test_web_rejects_an_allow_host_that_is_not_a_host_name(tmp_path: Path) -> None:
+    with patch("milknado.cli.web.load_or_default") as load:
+        result = runner.invoke(
+            app, ["web", "--project-root", str(tmp_path), "--allow-host", "box:80"]
+        )
+    assert result.exit_code == 2
+    assert "not a host name" in result.output
+    load.assert_not_called()
+
+
 def test_web_denied_controller_credential_disables_review_port(tmp_path: Path) -> None:
     with (
         patch(

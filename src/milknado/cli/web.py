@@ -8,6 +8,8 @@ from threading import Thread
 from time import sleep
 from typing import TYPE_CHECKING, Annotated, Protocol, cast
 
+import typer
+
 from milknado.app.run_source import ExecutionSnapshot, ExecutionSnapshotSource
 from milknado.cli._helpers import DEFAULT_PROJECT_ROOT, ensure_db, load_or_default, typer_option
 from milknado.web import (
@@ -17,6 +19,7 @@ from milknado.web import (
     PolledSnapshotSource,
     ProjectGitInspection,
     ServerOptions,
+    allowed_host,
     build_metaharness_info,
     create_app,
     finish_shutdown,
@@ -37,6 +40,7 @@ if TYPE_CHECKING:
 
 PortOption = Annotated[int, typer_option("--port", min=1, max=65535, help="HTTP port")]
 NoOpenOption = Annotated[bool, typer_option("--no-open", help="Do not open a browser")]
+AllowHostOption = Annotated[list[str] | None, typer_option("--allow-host", help="Extra Host name")]
 
 
 class _SnapshotReader(Protocol):
@@ -126,14 +130,23 @@ def _owner_capabilities(
     return graph.commands.capabilities(active_runs[0].run_id)
 
 
+def _extra_hosts(values: list[str] | None) -> tuple[str, ...]:
+    try:
+        return tuple(allowed_host(value) for value in values or ())
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--allow-host") from exc
+
+
 def web(
     project_root: Annotated[
         Path, typer_option("--project-root", help="Project root directory")
     ] = DEFAULT_PROJECT_ROOT,
     port: PortOption = 8000,
     no_open: NoOpenOption = False,
+    allow_host: AllowHostOption = None,
 ) -> None:
     """Serve the local web application."""
+    extra_hosts = _extra_hosts(allow_host)
     project_root = project_root.resolve()
     config, plugins = load_or_default(project_root)
     graph = ensure_db(config, plugins)
@@ -153,7 +166,7 @@ def web(
         owner = partial(_owner_capabilities, source, graph)
         dependencies = _host_dependencies(graph, config, project_root, (owner, review_decision))
         commands = observer_commands(dependencies=dependencies)
-        app = create_app(source, commands, login)
+        app = create_app(source, commands, login, extra_hosts)
         run_server(app, login, ServerOptions(port=port, no_open=no_open))
     finally:
         try:
