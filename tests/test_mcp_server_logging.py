@@ -20,7 +20,7 @@ def test_main_calls_configure_stderr_logging_before_mcp_run(
 
         return logging.NullHandler()
 
-    def fake_run() -> None:
+    def fake_run(**_: bool) -> None:
         calls.append("mcp.run")
 
     monkeypatch.setattr(logging_mod, "configure_stderr_logging", fake_configure_stderr_logging)
@@ -31,3 +31,20 @@ def test_main_calls_configure_stderr_logging_before_mcp_run(
     assert calls == ["configure_stderr_logging", "mcp.run"], (
         "configure_stderr_logging must run exactly once, before mcp.run()"
     )
+
+
+def test_main_runs_server_without_banner_to_skip_update_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from milknado.mcp import server as mcp_server
+
+    banner_flags: list[bool] = []
+
+    def fake_run(*, show_banner: bool) -> None:
+        banner_flags.append(show_banner)
+
+    monkeypatch.setattr(mcp_server.mcp, "run", fake_run)
+
+    mcp_server.main()
+
+    assert banner_flags == [False], "the banner path runs a PyPI update check"
