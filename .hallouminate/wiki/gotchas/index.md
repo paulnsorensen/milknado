@@ -2,6 +2,7 @@
 
 <!-- HALLOUMINATE:INDEX-START -->
 - [campaign-dogfood-2026-09](./campaign-dogfood-2026-09.md) — Campaign dogfood gotchas (structural-debt sweep, 2026-09-06)
+- [coordinator-live-smoke-2026-10](./coordinator-live-smoke-2026-10.md) — Coordinator live smoke 2026-10
 - [coordinator-polling-session-ownership](./coordinator-polling-session-ownership.md) — Coordinator polling session ownership
 - [macos-worker-stub-startup](./macos-worker-stub-startup.md) — macOS worker stub startup
 - [omp-worker-verify-timeout](./omp-worker-verify-timeout.md) — OMP workers: MCP request cap versus node_verify
