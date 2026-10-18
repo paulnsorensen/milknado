@@ -14,6 +14,8 @@ from milknado.domains.common import NodeStatus, RunResult, WorkerIdentity
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 from milknado.loop._process_gate import StartEvidence, WorkerProcess
 
+pytestmark = pytest.mark.real_process
+
 _NOW = "2026-01-01T00:00:00+00:00"
 _BUDGET = 3
 

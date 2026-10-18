@@ -1,16 +1,16 @@
-"""Native Workflow ("ultracode") backend MCP tools — coordinator-only.
+"""Claim and verify MCP tools for harness sessions — coordinator-only.
 
-These tools back the in-session Claude Code dynamic-Workflow driver. They run
-ALONGSIDE the subprocess dispatcher in `mcp.run` and never spawn a process:
-the harness-side Workflow is the driver, milknado is the graph/state backend.
+These tools run ALONGSIDE the subprocess dispatcher in `mcp.run` and never
+spawn a process: the harness session is the driver, milknado is the
+graph/state backend.
 
 - `milknado_goal_claim` / `milknado_goal_release`: claim/release a GOAL node's
   subtree as a session's task list (ADR-003), wrapping the existing
   goal_claims persistence with an env-inherited owner token and dead-pid reclaim.
 - `milknado_todo_claim`: atomically claim a node RUNNING, provision its
   worktree per the resolved flavor policy (or an explicit override, ADR-005),
-  write the `runs` row, and return the structured config the Workflow needs to
-  dispatch one `agent()` per ready node. Spawns nothing.
+  write the `runs` row, and return the structured config for the claimed node.
+  Spawns nothing.
 - `milknado_node_verify`: run the node's resolved quality_gates in its
   worktree_path or the project_root (ADR-005/006) and return the existing
   `CompletionVerdict` shape. The verdict is persisted as a `run_messages` row
@@ -114,7 +114,7 @@ def milknado_goal_release(goal_id: int, owner: str = "", project_root: str = "")
 def milknado_todo_claim(
     node_id: int, worktree: bool | None = None, project_root: str = ""
 ) -> Response:
-    """Claim a task node for native (in-session Workflow) execution; spawn nothing.
+    """Claim a task node for harness-session execution; spawn nothing.
 
     Atomically CAS-claims the node PENDING/FAILED/BLOCKED -> RUNNING, writes a
     status='running' runs row, and honors goal_claims subtree fencing. Worktree
@@ -123,11 +123,9 @@ def milknado_todo_claim(
     overrides it for this call. When a worktree is provisioned, its durable
     path + branch are recorded on the node (the carry-forward state); an
     in-place claim (worktree=False) leaves worktree_path unset and runs the
-    node in the current checkout. Returns the full structured config the
-    Workflow node-runner needs to dispatch one agent() per node: brief,
-    flavor, model, tools, worktree_path, agent_type, loop_mode,
-    max_iterations, max_turns. NO process is spawned — the harness-side
-    Workflow is the driver.
+    node in the current checkout. Returns the structured config for the node:
+    brief, flavor, model, tools, worktree_path, max_iterations. NO process is
+    spawned — the harness session is the driver.
     """
     root = resolve_project_root(project_root or None)
     graph, cfg = open_graph(root)
@@ -161,8 +159,8 @@ def milknado_todo_claim(
             raise
 
         override = cfg.flavors.get(node.flavor) if node.flavor is not None else None
-        tools = _resolve_node_tools(cfg, profile, override)
-        _logger.info("milknado_todo_claim: node=%d run_id=%s (native, no spawn)", node_id, run_id)
+        tools = _resolve_node_tools(cfg, override)
+        _logger.info("milknado_todo_claim: node=%d run_id=%s (no spawn)", node_id, run_id)
         return {
             "run_id": run_id,
             "node_id": node_id,
@@ -171,10 +169,7 @@ def milknado_todo_claim(
             "model": _resolve_model(profile.execution_agent),
             "tools": list(tools),
             "worktree_path": str(wt_path) if wt_path is not None else None,
-            "agent_type": profile.worker_agent_type,
-            "loop_mode": profile.loop_mode,
             "max_iterations": profile.max_iterations,
-            "max_turns": profile.max_turns,
         }
     finally:
         graph.close()

@@ -19,6 +19,8 @@ from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_registry import WorkerRegistry
 from milknado.loop.sessions import RuntimeRequest, RuntimeResult
 
+pytestmark = pytest.mark.real_process
+
 
 def _adapter(root: Path, graph: MikadoGraph) -> NativeCoordinatorTurns:
     return NativeCoordinatorTurns(

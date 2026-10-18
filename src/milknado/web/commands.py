@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from milknado.adapters import ChangedFile
 from milknado.domains.common import SessionContext, SessionInput
@@ -30,6 +30,19 @@ class RunHandler(Protocol):
 
 class SchedulingHandler(Protocol):
     def __call__(self) -> None: ...
+
+
+@runtime_checkable
+class SchedulingControl(Protocol):
+    def set_scheduling_paused(self, paused: bool) -> None: ...
+    def scheduling_paused(self) -> bool: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MetaharnessInfo:
+    project_root: Path
+    concurrency: int | None
+    flavor_gates: Mapping[str, tuple[str, ...]]
 
 
 class ReviewHandler(Protocol):
@@ -62,6 +75,8 @@ class WebCommands:
     cancel: RunHandler | None = None
     force_stop: RunHandler | None = None
     stop_scheduling: SchedulingHandler | None = None
+    scheduling: SchedulingControl | None = None
+    metaharness: MetaharnessInfo | None = None
     graph_edits: GraphEditCommands | None = None
     review_decision: ReviewHandler | None = None
     git: GitInspection | None = None
@@ -82,6 +97,9 @@ def build_capabilities(commands: WebCommands) -> dict[str, object]:
         "force_stop": _capability(commands.force_stop, "Force stop is unavailable."),
         "stop_scheduling": _capability(
             commands.stop_scheduling, "Stop scheduling is unavailable."
+        ),
+        "scheduling_pause": _capability(
+            commands.scheduling, "Pausing the run loop is unavailable."
         ),
         "graph_edits": _capability(commands.graph_edits, "Graph edits are unavailable."),
         "review_decision": _capability(

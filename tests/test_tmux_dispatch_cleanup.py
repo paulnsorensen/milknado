@@ -32,6 +32,8 @@ from tests.test_tmux_dispatch import (
 # Double quotes keep an interpreter path with spaces whole inside the single-quoted sh -c.
 _DETACHED_SLEEP = f'"{sys.executable}" -c "import os, time; os.setsid(); time.sleep(120)"'
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
 def test_real_inline_tmux_failure_uses_target_receipt_and_budget(

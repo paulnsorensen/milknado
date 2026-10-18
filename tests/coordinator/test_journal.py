@@ -15,6 +15,8 @@ from milknado.domains.coordinator.journal import append_control_event, control_h
 from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.graph._persistence import create_tables, migrate
 
+pytestmark = pytest.mark.real_process
+
 
 def _session(path: str) -> tuple[sqlite3.Connection, str]:
     conn = sqlite3.connect(path)

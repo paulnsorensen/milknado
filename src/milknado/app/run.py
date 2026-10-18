@@ -339,6 +339,12 @@ class ExecutionController:
         """Stop admitting new work and request terminal completion of active runs."""
         _ = self._control("stop_scheduling")
 
+    def set_scheduling_paused(self, paused: bool) -> None:
+        self._loop.set_scheduling_paused(paused)
+
+    def scheduling_paused(self) -> bool:
+        return self._loop.scheduling_paused()
+
     def _control(self, operation: str, *args: object) -> object:
         request: _ControlRequest | None = None
         with self._state_lock:

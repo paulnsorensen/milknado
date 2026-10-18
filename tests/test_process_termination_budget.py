@@ -18,6 +18,8 @@ from milknado.adapters.process import ProcessAdapter
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.graph import MikadoGraph
 
+pytestmark = pytest.mark.real_process
+
 
 def test_term_resistant_group_has_kill_confirmation_within_cancel_budget(
     monkeypatch: pytest.MonkeyPatch,

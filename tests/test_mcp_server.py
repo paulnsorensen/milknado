@@ -46,7 +46,10 @@ from milknado.mcp.todo_mutate import (
     milknado_todo_set_status,
 )
 
-pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.usefixtures("accept_inline_completion"),
+]
 
 
 class _TreeNode(TypedDict):
@@ -74,10 +77,7 @@ class _McpResponse(TypedDict):
     model: str
     tools: list[str]
     worktree_path: str | None
-    agent_type: str
-    loop_mode: str
     max_iterations: int
-    max_turns: int
     ok: bool
     feedback: str
     owner: str

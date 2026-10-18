@@ -14,9 +14,11 @@ from milknado.web.commands import (
     CoordinatorPort,
     GitInspection,
     GraphEditCommands,
+    MetaharnessInfo,
     OwnerCapabilitiesProvider,
     ReviewHandler,
     RunHandler,
+    SchedulingControl,
     SchedulingHandler,
     SessionInputHandler,
     WebCommands,
@@ -42,6 +44,7 @@ class HostDependencies:
     owner_capabilities: OwnerCapabilities | OwnerCapabilitiesProvider | None = None
     coordinator: CoordinatorPort | None = None
     shutdown: Callable[[], None] | None = None
+    metaharness: MetaharnessInfo | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +53,7 @@ class OwnerHandlers:
     cancel: RunHandler | None = None
     force_stop: RunHandler | None = None
     stop_scheduling: SchedulingHandler | None = None
+    scheduling: SchedulingControl | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,12 +149,15 @@ def owner_commands(
                 "result": controller.force_stop(run_id),
             },
             stop_scheduling=controller.stop_scheduling,
+            scheduling=controller if isinstance(controller, SchedulingControl) else None,
         )
     return WebCommands(
         session_input=handlers.session_input,
         cancel=handlers.cancel,
         force_stop=handlers.force_stop,
         stop_scheduling=handlers.stop_scheduling,
+        scheduling=handlers.scheduling,
+        metaharness=dependencies.metaharness,
         graph_edits=_graph_edits(dependencies),
         review_decision=dependencies.review_decision,
         git=dependencies.git,
@@ -191,6 +198,7 @@ def observer_commands(
     return WebCommands(
         session_input=handlers.session_input,
         cancel=handlers.cancel,
+        metaharness=dependencies.metaharness,
         graph_edits=_graph_edits(dependencies),
         review_decision=dependencies.review_decision,
         git=dependencies.git,

@@ -19,6 +19,8 @@ from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 def _options(tmp_path: Path, command: tuple[str, ...]) -> SpawnOptions:
     return SpawnOptions(

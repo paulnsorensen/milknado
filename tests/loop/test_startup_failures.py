@@ -19,6 +19,8 @@ from milknado.loop._process_gate import SpawnOptions, WorkerProcess
 from milknado.loop._process_lifecycle import spawn_protected
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
 def test_helper_start_failure_closes_gated_worker_and_parent_pipes(

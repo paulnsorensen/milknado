@@ -13,6 +13,8 @@ import pytest
 from milknado.domains.dispatch import tmux_run
 from milknado.domains.dispatch.tmux_run import read_exec_evidence
 
+pytestmark = pytest.mark.real_process
+
 
 def test_group_owned_by_another_user_still_counts_as_alive(
     monkeypatch: pytest.MonkeyPatch,

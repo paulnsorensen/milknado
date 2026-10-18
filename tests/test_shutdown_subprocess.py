@@ -19,7 +19,10 @@ from milknado.domains.common import FlavorOverride, Gate, MilknadoConfig, save_c
 from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required"),
+]
 _SIGHUP = getattr(signal, "SIGHUP", signal.SIGTERM)
 
 _PTY_OUTPUT: dict[int, bytearray] = {}

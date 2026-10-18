@@ -69,6 +69,7 @@ class Scheduler:
         self._capacity_deferred = False
         self._deferred_retry_at = 0.0
         self._scheduling_stopped = False
+        self._admission_paused = False
 
     def view(self) -> SchedulerView:
         with self._lock:
@@ -153,7 +154,11 @@ class Scheduler:
             self._capacity_deferred = False
             available = (
                 0
-                if (self._scheduling_stopped or (strict and self._failure_triggered))
+                if (
+                    self._scheduling_stopped
+                    or self._admission_paused
+                    or (strict and self._failure_triggered)
+                )
                 else max(0, concurrency_limit - len(self._active))
             )
             return DispatchPlan(available, frozenset(self._stopped_nodes))
@@ -178,3 +183,11 @@ class Scheduler:
     def close_admission(self) -> None:
         with self._lock:
             self._scheduling_stopped = True
+
+    def set_admission_paused(self, paused: bool) -> None:
+        with self._lock:
+            self._admission_paused = paused
+
+    def admission_paused(self) -> bool:
+        with self._lock:
+            return self._admission_paused

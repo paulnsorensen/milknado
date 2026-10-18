@@ -7,6 +7,9 @@ COVERAGE_THRESHOLD := "95"
 # Browser auto sizing stops at 4 workers.
 TEST_WORKERS := env("TEST_WORKERS", "auto")
 BROWSER_WORKERS := env("BROWSER_WORKERS", "auto")
+# Tests marked real_process start real process trees. The gate runs them last, alone,
+# with at most this many workers. TEST_WORKERS and free cores can lower the count.
+REAL_PROCESS_WORKERS := env("REAL_PROCESS_WORKERS", "3")
 
 # Show all available recipes
 default:
@@ -129,7 +132,7 @@ check-llm:
 
     # Each lane runs its steps in order; lanes run concurrently. Every step is
     # read-only against the tree, and each writes only its own artifacts
-    # (coverage.xml is produced and consumed inside the coverage lane).
+    # (coverage.xml is produced and consumed by the serial steps below).
     lanes = [
         [("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"])],
         [("import-contracts", ["uv", "run", "lint-imports"])],
@@ -142,27 +145,12 @@ check-llm:
         ],
         [
             (
-                "tests+coverage",
+                "tests",
                 [
                     "uv", "run", "pytest", "tests/", "-q",
                     "-n", "{{TEST_WORKERS}}", "--dist", "worksteal",
-                    "-m", "not browser",
-                    "--cov=src/milknado",
-                    "--cov-report=term-missing",
-                    "--cov-report=xml:coverage.xml",
-                    f"--cov-fail-under={threshold}",
-                ],
-            ),
-            (
-                "dead-code-coverage",
-                ["uv", "run", "python", "scripts/check_dead_code_coverage.py"],
-            ),
-            (
-                "diff-coverage",
-                [
-                    "uv", "run", "diff-cover", "coverage.xml",
-                    f"--compare-branch={base}",
-                    f"--fail-under={threshold}",
+                    "-m", "not browser and not real_process",
+                    "--cov=src/milknado", "--cov-report=",
                 ],
             ),
         ],
@@ -180,6 +168,44 @@ check-llm:
         [("typecheck", ["just", "typecheck"])],
     ]
 
+    # Runs alone after the concurrent lanes pass, so real-process tests do not compete
+    # with the xdist pool or the other lanes. It extends the coverage data from "tests".
+    # REAL_PROCESS_WORKERS is an upper bound: a numeric TEST_WORKERS pin lowers it, and
+    # "auto" sizes from free cores through TEST_WORKERS_CEILING (tests/worker_pool.py).
+    test_workers = "{{TEST_WORKERS}}"
+    real_process_workers = "{{REAL_PROCESS_WORKERS}}"
+    if test_workers.isdecimal():
+        real_process_workers = str(min(int(test_workers), int(real_process_workers)))
+    else:
+        real_process_workers = "auto"
+    serial = [
+        (
+            "tests-real-process",
+            [
+                "env", "TEST_WORKERS_CEILING={{REAL_PROCESS_WORKERS}}",
+                "uv", "run", "pytest", "tests/", "-q",
+                "-n", real_process_workers, "--dist", "worksteal",
+                "-m", "real_process and not browser",
+                "--cov=src/milknado", "--cov-append",
+                "--cov-report=term-missing",
+                "--cov-report=xml:coverage.xml",
+                f"--cov-fail-under={threshold}",
+            ],
+        ),
+        (
+            "dead-code-coverage",
+            ["uv", "run", "python", "scripts/check_dead_code_coverage.py"],
+        ),
+        (
+            "diff-coverage",
+            [
+                "uv", "run", "diff-cover", "coverage.xml",
+                f"--compare-branch={base}",
+                f"--fail-under={threshold}",
+            ],
+        ),
+    ]
+
 
     def run_lane(lane):
         for name, cmd in lane:
@@ -191,6 +217,8 @@ check-llm:
 
     with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
         failures = [failure for failure in pool.map(run_lane, lanes) if failure]
+    if not failures:
+        failures = [failure for failure in [run_lane(serial)] if failure]
 
     # Report every failing lane in declared order so one failure never hides another.
     for name, result in failures:

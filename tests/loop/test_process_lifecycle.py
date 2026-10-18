@@ -15,6 +15,8 @@ from milknado.domains.common import WorkerIdentity
 from milknado.loop._process_gate import SpawnOptions, spawn_gated
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX group identity is required")
 def test_verified_worker_group_stops_real_child(tmp_path: Path) -> None:

@@ -23,6 +23,8 @@ from milknado.domains.graph import (
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker
 
+pytestmark = pytest.mark.real_process
+
 
 def _options(tmp_path: Path) -> SpawnOptions:
     return SpawnOptions(
