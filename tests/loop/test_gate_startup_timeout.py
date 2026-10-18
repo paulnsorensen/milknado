@@ -13,7 +13,10 @@ import pytest
 from milknado.loop import _process_gate
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required"),
+]
 
 _STALL_STARTUP = "import time\ntime.sleep(300)\n"
 

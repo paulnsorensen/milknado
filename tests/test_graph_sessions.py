@@ -19,6 +19,8 @@ from milknado.loop._agent import AgentRunSpec
 from milknado.loop.sessions import SessionChannel, run_session
 from tests.graph_helpers import graph_conn
 
+pytestmark = pytest.mark.real_process
+
 
 def _run(graph: MikadoGraph, run_id: str = "run-1") -> int:
     node = graph.add_node("structured session")

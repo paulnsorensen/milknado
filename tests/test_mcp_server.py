@@ -46,7 +46,10 @@ from milknado.mcp.todo_mutate import (
     milknado_todo_set_status,
 )
 
-pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.usefixtures("accept_inline_completion"),
+]
 
 
 class _TreeNode(TypedDict):

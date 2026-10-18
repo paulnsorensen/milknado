@@ -27,6 +27,8 @@ from tests.test_tmux_dispatch import (
     _wait_for_terminal,  # pyright: ignore[reportPrivateUsage]
 )
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
 def test_real_inline_tmux_failure_uses_target_receipt_and_budget(

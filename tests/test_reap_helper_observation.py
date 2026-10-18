@@ -17,6 +17,8 @@ from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdenti
 from milknado.domains.dispatch import ReapRequest, reap_orphaned_workers
 from milknado.domains.graph import MikadoGraph, NodeWorkers
 
+pytestmark = pytest.mark.real_process
+
 if os.name != "posix":
     pytest.skip("POSIX process identities are required", allow_module_level=True)
 

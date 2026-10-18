@@ -32,7 +32,10 @@ from milknado.domains.graph import HostCapacityFull, MikadoGraph
 from milknado.loop import EventType, QueueEmitter, RunConfig
 from milknado.loop._events import Event, NoData
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX process groups required"),
+]
 
 
 @pytest.fixture

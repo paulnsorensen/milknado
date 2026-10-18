@@ -19,6 +19,8 @@ from milknado.domains.dispatch.ports import GraphSessionPort, RunWindow, TmuxPor
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 
+pytestmark = pytest.mark.real_process
+
 _NOW = "2026-01-01T00:00:00+00:00"
 
 

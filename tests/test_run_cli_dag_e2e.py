@@ -20,7 +20,10 @@ from tests.execution_session_fixtures import init_repo
 from tests.run_cli_fixtures import git, lines, run_cli
 from tests.worker_fixtures import install_worker_command
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required"),
+]
 
 # The worker reads its node id from its worktree name and its behavior from spec.json.
 # Every start and end lands in events.log, outside the repo, in real order.

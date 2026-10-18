@@ -22,6 +22,8 @@ from milknado.loop._process_gate import WorkerProcess
 from milknado.loop._process_lifecycle import ProtectedWorker
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.fixture
 def protected(tmp_path: Path) -> Iterator[tuple[MikadoGraph, ProtectedWorker]]:

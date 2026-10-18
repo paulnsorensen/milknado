@@ -19,6 +19,8 @@ from tests.execution_session_fixtures import build_graph as _build_graph
 from tests.execution_session_fixtures import init_repo as _init_repo
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.real_process
+
 _WORKERS = {
     "claude": r"""
 import json, os, sys

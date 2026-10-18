@@ -20,6 +20,8 @@ from milknado.mcp.server import open_graph
 from milknado.mcp.todo import milknado_todo_tree
 from milknado.mcp.todo_mutate import milknado_todo_add
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.fixture(autouse=True)
 def _initialize_git_repository(tmp_path: Path) -> None:
