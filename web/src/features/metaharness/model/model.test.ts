@@ -10,6 +10,7 @@ import { goalThread, splitBrief, taskThread } from './thread';
 import { ancestry, buildTree, isReady } from './tree';
 import { runPercent } from '../ui/nodeView';
 import { getViewMode, resetViewMode, setViewMode } from '../viewMode';
+import { getMh, patchMh, resetMh } from '../viewState';
 
 function node(id: number, parent: number | null, status: WireNode['status'], kind: WireNode['kind'] = 'task'): WireNode {
   return { id, description: `Node ${id}`, status, parent_id: parent, kind, flavor: kind === 'task' ? 'implement' : null };
@@ -148,6 +149,27 @@ describe('parseUnifiedDiff', () => {
     expect(lines).toEqual([
       { mark: '@', text: '@@ -1 +1 @@' }, { mark: '-', text: 'old' }, { mark: '+', text: 'new' }, { mark: ' ', text: 'same' },
     ]);
+  });
+
+  it('keeps hunk lines that look like file headers', () => {
+    const lines = parseUnifiedDiff('--- a/q.sql\n+++ b/q.sql\n@@ -1 +1 @@\n-- old comment\n+++ new counter');
+    expect(lines).toEqual([
+      { mark: '@', text: '@@ -1 +1 @@' }, { mark: '-', text: '- old comment' }, { mark: '+', text: '++ new counter' },
+    ]);
+  });
+});
+
+describe('viewState compose', () => {
+  it('leaves retry mode when the selection changes', () => {
+    resetMh();
+    patchMh({ sel: 1, compose: 'retry' });
+    patchMh({ view: 'thread' });
+    expect(getMh().compose).toBe('retry');
+    patchMh({ sel: 2 });
+    expect(getMh().compose).toBe('message');
+    patchMh({ sel: 3, compose: 'retry' });
+    expect(getMh().compose).toBe('retry');
+    resetMh();
   });
 });
 

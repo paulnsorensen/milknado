@@ -32,11 +32,19 @@ export const runDiff = cell<RunDiff>({ runId: null, files: [], loading: false })
 
 export function parseUnifiedDiff(text: string): DiffLine[] {
   const lines: DiffLine[] = [];
+  // File headers come only before a file's first hunk. Inside a hunk, a
+  // removed `-- comment` line reads as `--- comment` and must stay.
+  let inHunk = false;
   for (const raw of text.split('\n')) {
-    if (/^(diff --git|index |--- |\+\+\+ |new file mode|deleted file mode)/.test(raw)) {
+    if (raw.startsWith('diff --git')) {
+      inHunk = false;
+      continue;
+    }
+    if (!inHunk && /^(index |--- |\+\+\+ |new file mode|deleted file mode)/.test(raw)) {
       continue;
     }
     if (raw.startsWith('@@')) {
+      inHunk = true;
       lines.push({ mark: '@', text: raw });
     } else if (raw.startsWith('+') || raw.startsWith('-')) {
       lines.push({ mark: raw[0] as DiffMark, text: raw.slice(1) });

@@ -4,7 +4,7 @@ action reaches the milknado backend."""
 from __future__ import annotations
 
 import pytest
-from playwright.sync_api import Locator, Page, expect
+from playwright.sync_api import Locator, Page, Route, expect
 
 from milknado.domains.common import NodeStatus
 from milknado.domains.graph import GoalReviewDecision
@@ -208,6 +208,29 @@ def test_unsent_draft_stays_with_its_node(
     _node(page, ids.fingerprint).click()
 
     expect(composer).to_have_value("")
+
+
+def test_late_send_leaves_the_new_selection_alone(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    ids = metaharness_server.ids
+    held: list[Route] = []
+    _ = page.route(f"**/api/nodes/{ids.drawer}/note", lambda route: held.append(route))
+    _open(page, metaharness_server)
+    _node(page, ids.drawer).click()
+    with page.expect_request(f"**/api/nodes/{ids.drawer}/note"):
+        _send(page, "Sent before the switch.")
+
+    _node(page, ids.annotation).click()
+    page.keyboard.press("Escape")
+    page.locator(".mh-chat-actions").get_by_role("button", name="Diff").click()
+    expect(page.get_by_role("button", name="Back to chat")).to_be_visible()
+    assert len(held) == 1
+    held[0].continue_()
+
+    expect(page.get_by_text(f"Saved to the brief for node {ids.drawer}")).to_be_visible()
+    expect(page.get_by_role("button", name="Back to chat")).to_be_visible()
+    expect(page.get_by_text("queue.js")).to_be_visible()
 
 
 def test_rail_pauses_loop_and_queues_issue_fix(
