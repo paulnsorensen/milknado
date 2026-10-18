@@ -11,9 +11,10 @@ import pytest
 from typer.testing import CliRunner
 
 from milknado.cli import app
-from milknado.cli.web import _Controller, _owner_capabilities, _ProjectGitInspection
+from milknado.cli.web import _Controller, _owner_capabilities
 from milknado.domains.common import MilknadoConfig, SessionContext
 from milknado.domains.graph import ControllerAuthorizationError, MikadoGraph
+from milknado.web import ProjectGitInspection
 from milknado.web.login import LaunchToken
 
 runner = CliRunner()
@@ -102,7 +103,7 @@ def test_project_git_inspection_delegates_session_context(tmp_path: Path) -> Non
         adapter = adapter_type.return_value
         adapter.session_changes.return_value = ("changed",)
         adapter.session_diff.return_value = "diff"
-        inspection = _ProjectGitInspection(tmp_path)
+        inspection = ProjectGitInspection(tmp_path)
         assert inspection.changes(context) == ("changed",)
         assert inspection.diff(context, "file") == "diff"
         adapter.session_changes.assert_called_once_with(context)

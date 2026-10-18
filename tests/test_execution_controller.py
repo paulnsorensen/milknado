@@ -77,12 +77,19 @@ class FakeLoop:
     force_stops: list[tuple[str, float]] = field(default_factory=list)
     stop_scheduling_calls: int = 0
     force_stop_deadlines: list[float] = field(default_factory=list)
+    paused: bool = False
 
     def state(self) -> RunLoopState:
         return self.current_state
 
     def stop_scheduling(self) -> None:
         self.stop_scheduling_calls += 1
+
+    def set_scheduling_paused(self, paused: bool) -> None:
+        self.paused = paused
+
+    def scheduling_paused(self) -> bool:
+        return self.paused
 
     def admit_stop_scheduling(self) -> None:
         pass
@@ -220,6 +227,19 @@ def test_controller_delegates_run_and_control_ports() -> None:
     assert loop.cancelled == ["run-1"]
     assert loop.force_stops == [("run-1", 2.5)]
     assert loop.stop_scheduling_calls == 1
+
+
+def test_controller_pauses_and_resumes_loop_admission() -> None:
+    loop = FakeLoop(loop_state())
+    controller = ExecutionController(
+        _as_run_loop(loop), _none_config(), _none_limit(), _policy_config()
+    )
+
+    controller.set_scheduling_paused(True)
+    assert controller.scheduling_paused() is True
+    controller.set_scheduling_paused(False)
+    assert controller.scheduling_paused() is False
+    assert loop.stop_scheduling_calls == 0
 
 
 def test_force_stop_all_calls_loop_without_control_queue() -> None:

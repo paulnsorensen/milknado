@@ -62,3 +62,24 @@ def test_owner_cancel_returns_updated_run_record() -> None:
     assert commands.cancel is not None
     assert commands.cancel("run-1") == record
     assert controller.cancelled == ["run-1"]
+    assert commands.scheduling is None
+
+
+class _PausableController(_Controller):
+    def __init__(self) -> None:
+        super().__init__()
+        self.paused: bool = False
+
+    def set_scheduling_paused(self, paused: bool) -> None:
+        self.paused = paused
+
+    def scheduling_paused(self) -> bool:
+        return self.paused
+
+
+def test_owner_exposes_scheduling_pause_when_the_controller_supports_it() -> None:
+    controller = _PausableController()
+
+    commands = owner_commands(controller)
+
+    assert commands.scheduling is controller

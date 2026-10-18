@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Annotated
 
 import msgspec
 
@@ -36,6 +37,17 @@ class EditNodeBody(msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fie
 
 class MoveNodeBody(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     new_parent_id: int | None = None
+
+
+NoteText = Annotated[str, msgspec.Meta(min_length=1, max_length=4000, pattern=r"\S")]
+
+
+class NoteBody(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    text: NoteText
+
+
+class RetryBody(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    note: NoteText | None = None
 
 
 @dataclass(frozen=True, slots=True)

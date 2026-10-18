@@ -15,7 +15,9 @@ from milknado.web import (
     LaunchToken,
     OwnerLaunch,
     PolledSnapshotSource,
+    ProjectGitInspection,
     ServerOptions,
+    build_metaharness_info,
     create_app,
     finish_shutdown,
     observer_commands,
@@ -26,10 +28,9 @@ from milknado.web import (
 )
 
 if TYPE_CHECKING:
-    from milknado.adapters import ChangedFile, GitAdapter
     from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
     from milknado.app.run import ExecutionController
-    from milknado.domains.common import GitPort, MilknadoConfig, PluginHook, SessionContext
+    from milknado.domains.common import MilknadoConfig, PluginHook
     from milknado.domains.coordinator import CoordinatorControl, ReviewDecisionPort
     from milknado.domains.execution import RunLoopResult
     from milknado.domains.graph import MikadoGraph, OwnerCapabilities
@@ -48,23 +49,6 @@ class _Controller(_SnapshotReader, Protocol):
     def stop_scheduling(self) -> None: ...
 
 
-class _ProjectGitInspection:
-    def __init__(self, project_root: Path) -> None:
-        from milknado.adapters import GitAdapter
-
-        self._git: GitAdapter = GitAdapter(project_root)
-
-    @property
-    def port(self) -> GitPort:
-        return self._git
-
-    def changes(self, context: SessionContext) -> tuple[ChangedFile, ...]:
-        return self._git.session_changes(context)
-
-    def diff(self, context: SessionContext, path: str) -> str:
-        return self._git.session_diff(context, path)
-
-
 def _host_dependencies(
     graph: MikadoGraph,
     config: MilknadoConfig,
@@ -76,7 +60,7 @@ def _host_dependencies(
 ) -> HostDependencies:
     from milknado.adapters import ProcessAdapter
 
-    git = _ProjectGitInspection(project_root)
+    git = ProjectGitInspection(project_root)
     owner, review_decision = ports
     coordinator, turn_runtime = _coordinator_host(graph, config, project_root, review_decision)
 
@@ -91,6 +75,7 @@ def _host_dependencies(
         owner_capabilities=owner,
         coordinator=coordinator,
         shutdown=partial(coordinator.shutdown, turn_runtime.shutdown),
+        metaharness=build_metaharness_info(config, project_root),
     )
 
 
