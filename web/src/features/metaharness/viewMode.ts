@@ -30,6 +30,10 @@ export function subscribeViewMode(listener: () => void): () => void {
 
 export function setViewMode(next: ViewMode): void {
   mode = next;
+  // `#metaharness` wins over storage on load, so leaving the view drops it.
+  if (next !== 'metaharness' && window.location.hash === '#metaharness') {
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
   try {
     window.localStorage.setItem(VIEW_MODE_KEY, next);
   } catch {

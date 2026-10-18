@@ -82,11 +82,28 @@ function ChatHeader({ model, current }: { model: MhModel; current: Current }): R
   );
 }
 
+/** A live worker keeps editing its worktree, so its diff reloads on open and on this interval. */
+const LIVE_DIFF_REFRESH_MS = 15000;
+
+function useRunDiff(runId: string | null, live: boolean, view: string): void {
+  useEffect(() => { void loadRunDiff(runId); }, [runId]);
+  useEffect(() => {
+    if (!live || runId === null) {
+      return undefined;
+    }
+    if (view === 'diff') {
+      void loadRunDiff(runId, true);
+    }
+    const timer = setInterval(() => void loadRunDiff(runId, true), LIVE_DIFF_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [runId, live, view]);
+}
+
 export function ChatPane({ model, current }: { model: MhModel; current: Current | null }): ReactElement {
   const data = useCell(nodeData);
   const diff = useCell(runDiff);
   const runId = current?.runId ?? null;
-  useEffect(() => { void loadRunDiff(runId); }, [runId]);
+  useRunDiff(runId, current?.live !== undefined, model.ui.view);
   if (!current) {
     return (
       <section className="mh-chat"><div className="mh-empty">Waiting for the graph snapshot…</div></section>
@@ -100,7 +117,7 @@ export function ChatPane({ model, current }: { model: MhModel; current: Current 
       {showDiff
         ? <DiffView diff={diff} current={current} summary={summary} model={model} />
         : <Thread messages={threadFor(model, current, data)} typingWho={typingWho(current)} />}
-      <Composer current={current} />
+      <Composer key={current.node.id} current={current} />
       {model.ui.toast && (
         <div className="mh-toast" role="status"><Icon name="check" size={15} />{model.ui.toast}</div>
       )}

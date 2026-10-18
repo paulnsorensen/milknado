@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { addNote, retryNode, steer } from '../data/commands';
 import { loadNode } from '../data/nodeData';
 import { isGoal } from '../model/tree';
-import { flash, patchMh } from '../viewState';
+import { flash, getMh, patchMh } from '../viewState';
 import type { Current } from './current';
 import { avatarClass, DELIVERY_TEXT, placeholder } from './current';
 import { Icon } from './Icon';
@@ -42,8 +42,13 @@ export function Composer({ current }: { current: Current }): ReactElement {
     }
     setSending(true);
     void deliver(current, text).then((sent) => {
-      if (sent) {
-        setDraft('');
+      if (!sent) {
+        return;
+      }
+      setDraft('');
+      // The operator may have moved on while the send was in flight. Leave
+      // the new selection's view and data alone.
+      if (getMh().sel === current.node.id) {
         patchMh({ view: 'thread' });
         void loadNode(current.node.id, isGoal(current.node));
       }

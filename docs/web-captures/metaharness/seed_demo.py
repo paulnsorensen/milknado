@@ -166,7 +166,7 @@ def seed(root: Path) -> None:
     )
     inbox = node(graph, "Layout issues inbox", review, flavor="implement")
     fingerprint = node(graph, "Issue fingerprinting", inbox, flavor="implement")
-    _drawer = node(graph, "Inbox drawer UI", inbox, flavor="prototype")
+    _ = node(graph, "Inbox drawer UI", inbox, flavor="prototype")
     strip = node(graph, "Session stats strip", stats, flavor="implement")
     core = node(graph, "Milknado core", None, goal)
     pool = node(graph, "Worktree pool", core, flavor="implement")
@@ -175,7 +175,7 @@ def seed(root: Path) -> None:
     claude = node(graph, "Claude Code adapter", adapters, flavor="implement")
     lavish = node(graph, "Lavish AXI", None, goal)
     renderer = node(graph, "Sandboxed renderer", lavish, flavor="implement")
-    _protocol = node(graph, "Artifact protocol v2", lavish, flavor="spec")
+    _ = node(graph, "Artifact protocol v2", lavish, flavor="spec")
 
     for node_id, run_id, started in (
         (detail, "run-5a1c", 300),
