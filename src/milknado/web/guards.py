@@ -42,7 +42,7 @@ class RequestGuards:
             return
         headers = dict(cast(list[tuple[bytes, bytes]], scope["headers"]))
         authority = headers.get(b"host", b"").decode()
-        host = authority.split(":", 1)[0].lower()
+        host = _authority_key(authority).partition(":")[0]
         if host not in self.allowed_hosts:
             await PlainTextResponse("Host is not allowed.", status_code=400)(scope, receive, send)
             return
@@ -54,13 +54,28 @@ class RequestGuards:
             )
             return
         if method not in {"GET", "HEAD", "OPTIONS"}:
-            origin = headers.get(b"origin", b"").decode().rstrip("/")
-            if origin not in {f"http://{authority}", f"https://{authority}"}:
+            origin = headers.get(b"origin", b"").decode()
+            if not _origin_matches(origin, authority):
                 await PlainTextResponse("Origin is not allowed.", status_code=403)(
                     scope, receive, send
                 )
                 return
         await self.app(scope, receive, send)
+
+
+def _authority_key(authority: str) -> str:
+    """Compare host names without case or one trailing dot; keep the port as sent."""
+    host, separator, port = authority.partition(":")
+    return f"{host.lower().removesuffix('.')}{separator}{port}"
+
+
+def _origin_matches(origin: str, authority: str) -> bool:
+    scheme, separator, origin_authority = origin.rstrip("/").partition("://")
+    return (
+        separator == "://"
+        and scheme in {"http", "https"}
+        and _authority_key(origin_authority) == _authority_key(authority)
+    )
 
 
 def _cookie_valid(headers: dict[bytes, bytes], login: LaunchToken) -> bool:
