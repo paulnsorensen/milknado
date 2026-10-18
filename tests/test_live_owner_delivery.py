@@ -15,7 +15,7 @@ import pytest
 
 from milknado.adapters import ProcessAdapter
 from milknado.app.watch import graph_command_admitter
-from milknado.domains.common import SessionInput
+from milknado.domains.common import NodeStatus, SessionInput
 from milknado.domains.dispatch import reconcile_orphaned_runs
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph.commands import GraphCommand, OwnerCapabilities
@@ -229,7 +229,11 @@ def _recover_task(
     command = graph.commands.command(command_id)
     assert command is not None
     _reconcile_until_workers_close(graph, command.node_id)
-    graph.mark_pending(command.node_id)
+    node = graph.get_node(command.node_id)
+    assert node is not None
+    # Reconcile can already requeue the node, and PENDING has no edge to PENDING.
+    if node.status is not NodeStatus.PENDING:
+        graph.mark_pending(command.node_id)
     expected = ["queued"] if mode == "before" else ["queued", "submitted"]
     return expected, command
 
