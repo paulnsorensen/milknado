@@ -9,7 +9,7 @@ from starlette.applications import Starlette
 
 from milknado.app.run_source import ExecutionSnapshotSource
 from milknado.web.commands import WebCommands
-from milknado.web.guards import LOOPBACK_HOSTS, RequestGuards
+from milknado.web.guards import LOOPBACK_HOSTS, RequestGuards, allowed_host
 from milknado.web.login import LaunchToken
 from milknado.web.routes import discover_routes
 
@@ -33,5 +33,6 @@ def create_app(
     """
     app = Starlette(routes=discover_routes())
     app.state.web = WebContext(source, commands, login)
-    app.add_middleware(RequestGuards, login=login, allowed_hosts=(*LOOPBACK_HOSTS, *extra_hosts))
+    hosts = (*LOOPBACK_HOSTS, *(allowed_host(host) for host in extra_hosts))
+    app.add_middleware(RequestGuards, login=login, allowed_hosts=hosts)
     return app
