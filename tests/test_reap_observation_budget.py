@@ -3,9 +3,14 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+import pytest
+
+import milknado.domains.dispatch.reap as reap
 from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch import ReapRequest, WorkerCleanupResult, reap_orphaned_workers
 from milknado.domains.graph import MikadoGraph, NodeWorkers
+
+_OBSERVE_SECONDS = 0.6
 
 
 class _SlowObserver:
@@ -18,7 +23,7 @@ class _SlowObserver:
 
     def observe_worker(self, worker: WorkerIdentity) -> tuple[tuple[int, float, int], ...]:
         assert worker.invocation_id == "inv-1"
-        time.sleep(0.6)
+        time.sleep(_OBSERVE_SECONDS)
         return ()
 
     def terminate_worker(
@@ -29,9 +34,7 @@ class _SlowObserver:
         return WorkerCleanupResult(True, ())
 
 
-def test_observation_outlasting_the_deadline_does_not_wedge_later_recovery(
-    tmp_path: Path,
-) -> None:
+def _assert_slow_observation_releases_the_fence(tmp_path: Path) -> None:
     graph = MikadoGraph(tmp_path / "graph.db")
     try:
         node = graph.add_node("recover")
@@ -55,3 +58,16 @@ def test_observation_outlasting_the_deadline_does_not_wedge_later_recovery(
         assert graph.runs.live_workers(node_id=node.id) == ()
     finally:
         graph.close()
+
+
+def test_observation_outlasting_the_deadline_does_not_wedge_later_recovery(
+    tmp_path: Path,
+) -> None:
+    _assert_slow_observation_releases_the_fence(tmp_path)
+
+
+def test_commit_window_starts_after_a_slow_observation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(reap, "_COMMIT_SECONDS", _OBSERVE_SECONDS / 3)
+    _assert_slow_observation_releases_the_fence(tmp_path)

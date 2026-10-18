@@ -125,8 +125,9 @@ def _prepare_worker(
         if begun is not None and begun.ended_at is not None:
             return begun
         if begun is not None:
+            observed = process.observe_worker(_identity(begun))
             evidence.set_deadline(max(deadline, time.monotonic() + _COMMIT_SECONDS))
-            evidence.commit(_supervisor_key(begun), process.observe_worker(_identity(begun)))
+            evidence.commit(_supervisor_key(begun), observed)
         refreshed = evidence.get(record.invocation_id)
     except Exception:
         _logger.exception(
