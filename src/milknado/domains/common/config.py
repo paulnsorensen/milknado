@@ -34,7 +34,6 @@ from milknado.domains.common.flavor_codec import (
     normalize_gates,
     serialize_flavor_tables,
     serialize_gates,
-    validate_loop_mode,
     validate_positive_int,
 )
 from milknado.domains.common.flavor_codec import (
@@ -54,12 +53,7 @@ _LOCAL_ONLY_KEYS = ("project_root", "db_path", "plugins")
 _GLOBAL_ONLY_KEYS = ("host_worker_limit",)
 DEFAULT_HOST_WORKER_LIMIT = 6
 
-# Native Workflow ("ultracode") backend defaults. Coordinator-side knobs that the
-# subprocess dispatcher never reads; resolved per-flavor by resolve_flavor_profile.
-DEFAULT_WORKER_AGENT_TYPE = "milknado:milknado-worker"
-DEFAULT_LOOP_MODE = "redispatch"
 DEFAULT_MAX_ITERATIONS = 8
-DEFAULT_MAX_TURNS = 60
 
 
 class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
@@ -92,10 +86,7 @@ class MilknadoConfig(msgspec.Struct, frozen=True, kw_only=True):
     planning_prompt_prepend: str | None = None
     worker_brief_prepend: str | None = None
     commit_footer: str | None = None
-    worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
-    loop_mode: str = DEFAULT_LOOP_MODE
     max_iterations: int = DEFAULT_MAX_ITERATIONS
-    max_turns: int = DEFAULT_MAX_TURNS
 
 
 _PROMPT_PREPEND_SLOTS: tuple[str, ...] = ("planning_prepend", "worker_brief_prepend")
@@ -178,10 +169,7 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
     completion_timeout_seconds: float | None = None
     eta_sample_size: int = 10
     commit_footer: str | None = None
-    worker_agent_type: str = DEFAULT_WORKER_AGENT_TYPE
-    loop_mode: str = DEFAULT_LOOP_MODE
     max_iterations: int = DEFAULT_MAX_ITERATIONS
-    max_turns: int = DEFAULT_MAX_TURNS
     prompts: PromptsTable = msgspec.field(default_factory=PromptsTable)
     worker: WorkerTable = msgspec.field(default_factory=WorkerTable)
     flavor: dict[str, FlavorTable] = msgspec.field(default_factory=dict)
@@ -191,8 +179,6 @@ class MilknadoSection(msgspec.Struct, frozen=True, kw_only=True):
         _ = validate_positive_int(self.max_node_attempts, "[milknado] max_node_attempts")
         _ = validate_positive_int(self.host_worker_limit, "[milknado] host_worker_limit")
         _ = validate_positive_int(self.max_iterations, "[milknado] max_iterations")
-        _ = validate_positive_int(self.max_turns, "[milknado] max_turns")
-        _ = validate_loop_mode(self.loop_mode)
 
 
 T = TypeVar("T")
@@ -241,12 +227,7 @@ def _validate_section_scalars(section: dict[str, object]) -> None:
         value = section.get(key)
         if value is not None and not isinstance(value, str):
             raise msgspec.ValidationError(f"[milknado] {key} must be a string")
-    for key in ("worker_agent_type", "loop_mode"):
-        if key in section and not isinstance(section[key], str):
-            raise msgspec.ValidationError(f"[milknado] {key} must be a string")
-    if "loop_mode" in section:
-        _ = validate_loop_mode(section["loop_mode"])
-    for key in ("plan_review_max_rounds", "max_node_attempts", "max_iterations", "max_turns"):
+    for key in ("plan_review_max_rounds", "max_node_attempts", "max_iterations"):
         if key in section:
             _ = validate_positive_int(section[key], f"[milknado] {key}")
 
@@ -485,10 +466,7 @@ def _serialize_milknado_core(config: MilknadoConfig) -> dict[str, object]:
             "dispatch_backoff_seconds": config.dispatch_backoff_seconds,
             "protected_branches": list(config.protected_branches),
             "eta_sample_size": config.eta_sample_size,
-            "worker_agent_type": config.worker_agent_type,
-            "loop_mode": config.loop_mode,
             "max_iterations": config.max_iterations,
-            "max_turns": config.max_turns,
             "plan_review_max_rounds": config.plan_review_max_rounds,
         }
     )
@@ -678,8 +656,5 @@ def _build_config(raw: dict[str, object], *, project_root: Path) -> MilknadoConf
         planning_prompt_prepend=section.prompts.prepend("planning_prepend", project_root),
         worker_brief_prepend=section.prompts.prepend("worker_brief_prepend", project_root),
         commit_footer=section.commit_footer,
-        worker_agent_type=section.worker_agent_type,
-        loop_mode=section.loop_mode,
         max_iterations=section.max_iterations,
-        max_turns=section.max_turns,
     )

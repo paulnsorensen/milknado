@@ -22,7 +22,10 @@ from milknado.domains.graph import (
 )
 from milknado.domains.graph._persistence import SCHEMA_VERSION
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX private worker store")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX private worker store"),
+]
 
 
 def test_concurrent_first_open_creates_missing_private_parent(

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from _pytest.logging import LogCaptureFixture
 
 import milknado.loop._agent as agent_mod
@@ -61,6 +62,8 @@ from tests.loop.helpers import (
     make_config,
     make_state,
 )
+
+pytestmark = pytest.mark.real_process
 
 # ── opencode: counts_what == "tool_use" feeds the cap ──────────────────
 

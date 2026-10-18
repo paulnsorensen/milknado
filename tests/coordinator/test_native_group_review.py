@@ -28,6 +28,8 @@ from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop.sessions import RuntimeRequest, RuntimeResult
 
+pytestmark = pytest.mark.real_process
+
 
 def _launched_group(
     graph: MikadoGraph, control: CoordinatorControl, root: Path

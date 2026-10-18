@@ -14,6 +14,8 @@ from milknado.domains.common import ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore
 from milknado.domains.graph.worker_evidence import open_standalone_worker_evidence
 
+pytestmark = pytest.mark.real_process
+
 _COMMIT_STALL_S = 1.5
 
 

@@ -1,4 +1,4 @@
-// The `dock` slot contribution: the coordinator bar with the newest event
+// The `dock` slot contribution: the activity bar with the newest event
 // line and an Events toggle, plus the events console while it is open. The
 // store's `activeSidecar === 'events'` is the open flag, so the `events.open`
 // action (the `e` key) opens the same console.
@@ -36,7 +36,7 @@ export function ConsoleDockSection(): ReactElement {
       )}
       <div className="mk-coordinator-bar">
         <span className={live ? 'mk-live-dot is-live' : 'mk-live-dot'} aria-hidden="true" />
-        <span className={live ? 'mk-kicker is-live' : 'mk-kicker'}>Coordinator</span>
+        <span className={live ? 'mk-kicker is-live' : 'mk-kicker'}>Activity</span>
         <span className="mk-last-event">{last}</span>
         <Button
           variant="ghost"

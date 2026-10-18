@@ -18,6 +18,8 @@ from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAt
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 
+pytestmark = pytest.mark.real_process
+
 
 def _release_worker(worker: WorkerProcess, context: ProtectionContext) -> None:
     context.release.release_worker(worker, context.owner)

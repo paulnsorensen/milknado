@@ -20,6 +20,8 @@ from milknado.mcp.server import open_graph
 from milknado.mcp.todo import milknado_todo_tree
 from milknado.mcp.todo_mutate import milknado_todo_add
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.fixture(autouse=True)
 def _initialize_git_repository(tmp_path: Path) -> None:
@@ -710,12 +712,9 @@ def test_runner_writes_done_on_successful_outcome(
         flavors: dict[str, object] = {}
         worker_brief_prepend: str | None = None
         agent_family: str = "claude"
-        worker_agent_type: str = "milknado:milknado-worker"
-        loop_mode: str = "redispatch"
         host_worker_limit: int = 6
         max_node_attempts: int = 1
         max_iterations: int = 8
-        max_turns: int = 60
         commit_footer: str | None = None
 
     class _Graph:
@@ -835,12 +834,9 @@ def test_runner_calls_force_stop_on_timeout(
         flavors: dict[str, object] = {}
         worker_brief_prepend: str | None = None
         agent_family: str = "claude"
-        worker_agent_type: str = "milknado:milknado-worker"
-        loop_mode: str = "redispatch"
         host_worker_limit: int = 6
         max_node_attempts: int = 1
         max_iterations: int = 8
-        max_turns: int = 60
         commit_footer: str | None = None
         eta_sample_size: int = 10
 

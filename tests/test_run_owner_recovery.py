@@ -26,6 +26,8 @@ from milknado.domains.graph import (
     open_standalone_worker_evidence,
 )
 
+pytestmark = pytest.mark.real_process
+
 
 @dataclass
 class _RecoveryNode:

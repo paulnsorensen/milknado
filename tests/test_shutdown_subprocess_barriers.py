@@ -18,7 +18,10 @@ from tests.test_shutdown_subprocess import (
     _wait_for,  # pyright: ignore[reportPrivateUsage]
 )
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals and PTY required"),
+]
 _SIGHUP = getattr(signal, "SIGHUP", signal.SIGTERM)
 
 _DISPATCH_BARRIER = """

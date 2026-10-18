@@ -27,6 +27,15 @@ code reachable solely from tests counts as dead, so deleting a symbol means dele
 tests too. Suppress a genuine false positive with a line-level `# noqa: V1xx`, or add a
 framework-owned name to `ignore_names` — never by widening `paths` to include `tests/`.
 
+Tests that start real process trees carry `pytest.mark.real_process` in `pytestmark`. The
+gate runs `not browser and not real_process` with the normal pool. After the concurrent
+lanes pass, it runs `real_process and not browser` alone, with `--cov-append`. Project and
+diff coverage cover both runs, and no test is skipped. `REAL_PROCESS_WORKERS` (default 3)
+is an upper bound: a numeric `TEST_WORKERS` lowers it, and on a busy host the free-core
+sizing (`TEST_WORKERS_MAX`, `tests/worker_pool.py`) lowers it more. Mark a new test module
+`real_process` when it spawns subprocesses, tmux, PTYs, lifeline helpers, or fake workers,
+or when it holds real cross-process locks.
+
 - **Green** (PASS line printed) → open the PR.
 - **Red** → do not open a PR. Fix the reported failure, then re-run `just check-llm`.
 

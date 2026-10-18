@@ -19,7 +19,10 @@ from tests.execution_session_fixtures import init_repo
 from tests.run_cli_fixtures import git, lines, run_cli
 from tests.worker_fixtures import install_worker_command
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX worker shell required"),
+]
 
 _MAX_ITERATIONS = 2
 _ARTIFACT = "hello.txt"

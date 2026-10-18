@@ -23,6 +23,8 @@ from milknado.domains.execution import get_execution_overview
 from milknado.domains.graph import MikadoGraph
 from tests.graph_helpers import graph_conn, graph_lock
 
+pytestmark = pytest.mark.real_process
+
 
 def _raise_probe_failure(_pid: int) -> NoReturn:
     raise RuntimeError("probe failed")

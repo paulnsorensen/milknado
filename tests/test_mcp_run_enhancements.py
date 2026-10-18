@@ -44,7 +44,10 @@ from milknado.mcp.run import (
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo_mutate import milknado_todo_add
 
-pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.usefixtures("accept_inline_completion"),
+]
 
 _SUPERSET_KEYS = frozenset(RunDict.__annotations__)
 

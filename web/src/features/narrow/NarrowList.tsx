@@ -1,7 +1,7 @@
 // The narrow list view: a header bar, the mode kicker and goal title, the
 // status strip and totals, a jump-to-node input, the outline tree, and an
 // explicit "Open node" bar for the selected node.
-import type { FormEvent, ReactElement } from 'react';
+import type { FormEvent, ReactElement, ReactNode } from 'react';
 import { useState, useSyncExternalStore } from 'react';
 import { effectiveGraph, getState, pushNotice, setSelection, subscribe } from '../../app/store';
 import { Milknado } from '../../design-system';
@@ -13,6 +13,7 @@ import { renderSlot } from '../../app/hosts/renderSlot';
 
 export interface NarrowListProps {
   onOpen: (id: string | number) => void;
+  children?: ReactNode;
 }
 
 function toggle(collapsed: Array<string | number>, id: string | number): Array<string | number> {
@@ -21,7 +22,7 @@ function toggle(collapsed: Array<string | number>, id: string | number): Array<s
 
 
 /** The `layout` slot's list view, shown at or below the 400px breakpoint. */
-export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
+export function NarrowList({ onOpen, children }: NarrowListProps): ReactElement {
   const state = useSyncExternalStore(subscribe, getState);
   const [collapsed, setCollapsed] = useState<Array<string | number>>([]);
   const [jumpValue, setJumpValue] = useState('');
@@ -80,6 +81,7 @@ export function NarrowList({ onOpen }: NarrowListProps): ReactElement {
           <Button type="submit">Jump</Button>
         </form>
       </div>
+      {children && <div className="mk-narrow-extra">{children}</div>}
       <div className="mk-narrow-tree">
         <OutlineTree
           nodes={nodes}

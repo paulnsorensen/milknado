@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from milknado.adapters import ChangedFile, GitAdapter
+    from milknado.adapters import ChangedFile
     from milknado.domains.common import GitPort, SessionContext
 
 

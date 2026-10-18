@@ -18,7 +18,10 @@ from typing_extensions import override
 from milknado.domains.common import WorkerIdentity
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX exec gate is required"),
+]
 
 
 @dataclass(frozen=True)

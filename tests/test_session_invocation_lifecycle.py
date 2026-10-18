@@ -3,9 +3,13 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from milknado.domains.common import SessionContext, SessionEvent, SessionInput
 from milknado.loop._agent import AgentRunSpec
 from milknado.loop.sessions import SessionChannel, run_session
+
+pytestmark = pytest.mark.real_process
 
 _CONTEXT = SessionContext(family="claude", cwd="/repo")
 

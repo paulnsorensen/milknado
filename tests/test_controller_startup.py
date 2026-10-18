@@ -22,6 +22,8 @@ from milknado.domains.graph import (
 )
 from milknado.domains.graph import controller_capability as capability
 
+pytestmark = pytest.mark.real_process
+
 
 def _review(graph: MikadoGraph, goal_id: int, revision: str) -> int:
     """Request a goal review and return its identifier."""
