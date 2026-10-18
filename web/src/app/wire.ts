@@ -62,6 +62,7 @@ export interface WireCapabilities {
   review_decision: WireCapability;
   git: WireCapability;
   host_owner: WireCapability;
+  coordinator?: WireCapability;
   owner: WireOwnerCapabilities;
 }
 

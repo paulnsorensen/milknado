@@ -11,6 +11,7 @@ import { getMh, patchMh } from '../viewState';
 import { nextDecision } from './actions';
 import { ChatPane } from './ChatPane';
 import { currentNode, describe } from './current';
+import { openEdit } from './edits';
 import { GraphPane } from './GraphPane';
 import { DecisionPopover, ExpandedGraph, Rail } from './Overlays';
 import { SidePanel } from './SidePanel';
@@ -19,6 +20,7 @@ import { useMhModel } from './useMhModel';
 import '../fonts.css';
 import '../metaharness.css';
 import '../metaharness-chat.css';
+import '../metaharness-edit.css';
 
 const INFO_REFRESH_MS = 30000;
 const NODE_REFRESH_MS = 400;
@@ -36,21 +38,32 @@ function closeTopmost(): void {
   }
 }
 
+/** A shell dialog is open, or the key belongs to a text field or a chord. */
+function ignored(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  if (document.querySelector('[data-region="dialog-host"] [role="dialog"], [data-region="dialog-host"] [role="alertdialog"]')) {
+    return true;
+  }
+  return event.key !== 'Escape' && (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA'
+    || target?.tagName === 'SELECT' || event.metaKey || event.ctrlKey || event.altKey);
+}
+
 function useShortcuts(model: MhModel): void {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
-      if (event.key === 'Escape') {
+      if (ignored(event)) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === 'escape') {
         closeTopmost();
-        return;
-      }
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-      if (event.key.toLowerCase() === 'g') {
+      } else if (key === 'g') {
         patchMh((ui) => ({ expanded: !ui.expanded, pop: null }));
-      } else if (event.key.toLowerCase() === 'n') {
+      } else if (key === 'n') {
         nextDecision(model);
+      } else if (key === 'a' && model.editable) {
+        event.preventDefault();
+        openEdit('add', getMh().sel ?? getMh().scopeRoot);
       }
     };
     window.addEventListener('keydown', onKey);

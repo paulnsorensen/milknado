@@ -6,6 +6,8 @@ import type { GraphLayout, PlacedNode } from '../model/layout';
 import { childrenOf, isGoal, title } from '../model/tree';
 import { patchMh } from '../viewState';
 import { selectNode } from './actions';
+import { dropProps, endDrag, openEdit, startDrag } from './edits';
+import { Icon } from './Icon';
 import { nodeMeta, runPercent, stateClass } from './nodeView';
 import type { MhModel } from './useMhModel';
 
@@ -41,8 +43,32 @@ function FoldToggle({ placed }: { placed: PlacedNode }): ReactElement {
   );
 }
 
+function cardClass(node: WireNode, model: MhModel): string {
+  const { sel, drag } = model.ui;
+  return [
+    'mh-node', stateClass(node, model),
+    sel === node.id ? 'is-selected' : '',
+    drag?.id === node.id ? 'is-dragging' : '',
+    drag?.over === node.id ? 'is-drop-target' : '',
+  ].filter(Boolean).join(' ');
+}
+
+function AddButton({ node }: { node: WireNode }): ReactElement {
+  return (
+    <button type="button" className="mh-node-add" title="Add a prerequisite" draggable={false}
+      aria-label={`Add a prerequisite to ${title(node)}`}
+      onClick={(event) => { event.stopPropagation(); openEdit('add', node.id); }}>
+      <Icon name="plus" size={12} />
+    </button>
+  );
+}
+
+function cardTitle(node: WireNode, model: MhModel): string {
+  const focus = isGoal(node) && childrenOf(model.tree, node.id).length > 0 ? ' · double-click to focus' : '';
+  return `${title(node)}${focus}${model.editable ? ' · drag onto another node to move it' : ''}`;
+}
+
 function Card({ placed, node, model, mode, fold }: CardProps): ReactElement {
-  const selected = model.ui.sel === node.id;
   const running = node.status === 'running' && !model.needs.has(node.id);
   const onClick = (event: MouseEvent<HTMLDivElement>): void => {
     event.stopPropagation();
@@ -60,12 +86,13 @@ function Card({ placed, node, model, mode, fold }: CardProps): ReactElement {
     }
   };
   return (
-    <div data-mh-node={node.id} data-mode={mode} role="button" tabIndex={0}
-      className={`mh-node ${stateClass(node, model)}${selected ? ' is-selected' : ''}`}
-      title={isGoal(node) ? `${title(node)} · double-click to focus` : title(node)}
+    <div data-mh-node={node.id} data-mode={mode} role="button" tabIndex={0} className={cardClass(node, model)}
+      title={cardTitle(node, model)} aria-label={`${title(node)} · ${nodeMeta(node, model)}`}
       style={{ left: placed.left, top: placed.top, width: placed.w, height: placed.h }}
-      onClick={onClick} onDoubleClick={onDoubleClick}
+      onClick={onClick} onDoubleClick={onDoubleClick} draggable={model.editable}
+      onDragStart={(event) => startDrag(event, node.id)} onDragEnd={endDrag} {...dropProps(model, node.id)}
       onKeyDown={(event) => { if (event.key === 'Enter') { selectNode(model, node.id, event.currentTarget); } }}>
+      {model.editable && <AddButton node={node} />}
       {mode === 'expanded' && (
         <div className="mh-node-kind"><span className="mh-dot" /><span className="mh-node-kind-text">{kindLabel(node, model)}</span></div>
       )}

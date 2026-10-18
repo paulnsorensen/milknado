@@ -10,7 +10,9 @@ import { ago, splitBrief } from '../model/thread';
 import { childrenOf, isGoal, rootOf, title } from '../model/tree';
 import { flash, patchMh } from '../viewState';
 import type { Current } from './current';
+import { confirmCancel, openEdit } from './edits';
 import { stateClass } from './nodeView';
+import type { IconName } from './Icon';
 import { Icon } from './Icon';
 import type { MhModel } from './useMhModel';
 
@@ -84,7 +86,28 @@ function Details({ model, current }: { model: MhModel; current: Current }): Reac
           {[parent, ...dependents].filter((dep): dep is WireNode => !!dep).map((dep) => (
             <NodeLink key={dep.id} node={dep} model={model} icon />))}</section>
       )}
+      <NodeActions model={model} current={current} />
     </div>
+  );
+}
+
+function NodeActions({ model, current }: { model: MhModel; current: Current }): ReactElement | null {
+  const { node, live } = current;
+  const actions: Array<[IconName, string, () => void]> = [
+    ['plus', 'Add prerequisite', () => openEdit('add', node.id)],
+    ['edit', 'Edit', () => openEdit('edit', node.id)],
+    ['move', 'Move', () => openEdit('move', node.id)],
+    ['archive', 'Archive', () => openEdit('archive', node.id)],
+  ];
+  if (live) {
+    actions.push(['stop', 'Cancel run', () => confirmCancel(model, node.id)]);
+  }
+  return (
+    <section className="mh-side-sec"><span className="mh-label">Actions</span>
+      <div className="mh-node-actions">{actions.map(([icon, label, go]) => (
+        <button key={label} type="button" className="mh-chip-btn" onClick={go}><Icon name={icon} size={13} />{label}</button>
+      ))}</div>
+    </section>
   );
 }
 

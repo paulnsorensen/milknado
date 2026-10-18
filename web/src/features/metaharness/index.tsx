@@ -1,6 +1,8 @@
-// Registers the classic-layout header switch into the metaharness view.
-// The view itself renders through the narrow feature's wide layout.
+// Registers the classic-layout header switch into the metaharness view and
+// its New goal dialog. The view itself renders through the narrow feature's
+// wide layout.
 import { registerSlot } from '../../app/slots';
+import { NewGoalDialog } from './ui/NewGoalDialog';
 import { setViewMode } from './viewMode';
 
 export function register(): void {
@@ -9,4 +11,5 @@ export function register(): void {
       Metaharness
     </button>
   ));
+  registerSlot('dialog', () => <NewGoalDialog />);
 }

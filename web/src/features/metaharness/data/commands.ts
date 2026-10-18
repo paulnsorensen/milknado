@@ -1,10 +1,24 @@
 // Every write the metaharness view makes. Each call goes through
 // `app/api`, so a 409 surfaces the server's reason as a notice.
 import { post } from '../../../app/api';
-import { getState } from '../../../app/store';
-import type { WireNode } from '../../../app/wire';
+import { getState, pushNotice } from '../../../app/store';
+import type { WireCapability, WireNode } from '../../../app/wire';
+import { moveNode } from '../../graph-edits/commands';
+import { cancelRun } from '../../run-controls/commands';
 import type { WireLiveRun } from '../wire';
 import { loadInfo, setPaused } from './info';
+
+type Gated = 'graph_edits' | 'cancel' | 'coordinator';
+
+/** True when the server offers `name`; otherwise shows the server's reason. */
+export function allowed(name: Gated): boolean {
+  const capability: WireCapability | undefined = getState().capabilities?.[name];
+  if (capability?.available) {
+    return true;
+  }
+  pushNotice(capability?.reason ?? 'This action is unavailable.');
+  return false;
+}
 
 type SessionAction = 'steer' | 'approve' | 'deny';
 
@@ -63,4 +77,28 @@ export async function setLoopPaused(paused: boolean): Promise<boolean> {
   setPaused(result.paused);
   void loadInfo();
   return true;
+}
+
+export async function moveUnder(nodeId: number, parentId: number | null): Promise<boolean> {
+  return (await moveNode(nodeId, parentId)) !== null;
+}
+
+export async function cancelNodeRun(runId: string): Promise<boolean> {
+  return (await cancelRun(encodeURIComponent(runId))) !== null;
+}
+
+interface Receipt {
+  status: string;
+  result: unknown;
+}
+
+/** Creates a goal and its coordinator session through `start_goal`. */
+export async function startGoal(description: string, provider: 'claude' | 'codex'): Promise<boolean> {
+  const receipt = await post<Receipt>('/api/coordinators/commands', {
+    kind: 'start_goal', command_id: crypto.randomUUID(), description, provider,
+  });
+  if (receipt && receipt.status !== 'accepted') {
+    pushNotice(String(receipt.result ?? receipt.status));
+  }
+  return receipt?.status === 'accepted';
 }
