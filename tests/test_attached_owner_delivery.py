@@ -21,6 +21,8 @@ from tests.test_execution_sessions import (
 )
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.real_process
+
 
 def _delivery_diagnostic(
     controller: ExecutionController, graph: MikadoGraph, request_id: str, path: Path

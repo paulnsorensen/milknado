@@ -31,7 +31,10 @@ from milknado.loop._process_helper import HelperStart
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
 from tests.loop.worker_release import PlainWorkerRelease
 
-pytestmark = pytest.mark.skipif(os.name == "nt", reason="POSIX identity cleanup is required")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.skipif(os.name == "nt", reason="POSIX identity cleanup is required"),
+]
 
 _PROGRAM = """
 # BEGIN WORKER

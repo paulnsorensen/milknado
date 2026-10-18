@@ -23,6 +23,8 @@ from milknado.domains.common import (
 from milknado.domains.graph import MikadoGraph, WorkerEvidenceStore, WorkerRecord
 from milknado.loop._lifeline import _cleanup  # pyright: ignore[reportPrivateUsage]
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.fixture
 def durable_worker(

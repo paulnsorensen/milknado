@@ -16,6 +16,8 @@ import pytest
 from milknado.domains.common import HelperIdentity, WorkerIdentity, WorkerOwner
 from milknado.domains.graph import MikadoGraph
 
+pytestmark = pytest.mark.real_process
+
 
 def _owner(node_id: int) -> WorkerOwner:
     supervisor = psutil.Process()

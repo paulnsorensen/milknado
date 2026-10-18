@@ -45,7 +45,10 @@ from milknado.mcp.run import (
 from milknado.mcp.server import open_graph
 from milknado.mcp.todo_mutate import milknado_todo_add
 
-pytestmark = pytest.mark.usefixtures("accept_inline_completion")
+pytestmark = [
+    pytest.mark.real_process,
+    pytest.mark.usefixtures("accept_inline_completion"),
+]
 
 
 def _call(tool: object, **kwargs: object) -> object:
@@ -121,7 +124,7 @@ def _spy_worker_cwd(monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return captured
 
 
-def _wait_for_terminal(run_id: str, root: str, timeout: float = 10.0) -> RunDict:
+def _wait_for_terminal(run_id: str, root: str, timeout: float = 60.0) -> RunDict:
     deadline = time.monotonic() + timeout
     last: RunDict | None = None
     while time.monotonic() < deadline:

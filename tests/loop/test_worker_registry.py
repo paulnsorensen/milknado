@@ -20,6 +20,8 @@ from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
 
+pytestmark = pytest.mark.real_process
+
 
 def _context(graph: MikadoGraph, node_id: int, registry: WorkerRegistry) -> ProtectionContext:
     supervisor = psutil.Process()

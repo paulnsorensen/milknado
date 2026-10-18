@@ -25,6 +25,8 @@ from milknado.domains.dispatch._runstate import now_iso
 from milknado.domains.graph import MikadoGraph
 from milknado.mcp._core import resolve_project_root
 
+pytestmark = pytest.mark.real_process
+
 _DEAD_PID = 2**31 - 1  # no process can hold this; os.kill(_, 0) -> ProcessLookupError
 
 

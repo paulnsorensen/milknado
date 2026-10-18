@@ -15,6 +15,8 @@ from milknado.domains.execution import RunLoopResult
 from tests.execution_session_fixtures import build_graph, init_repo
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.real_process
+
 _WORKER_SECONDS = 1.0
 
 _WORKER_SOURCE = """\

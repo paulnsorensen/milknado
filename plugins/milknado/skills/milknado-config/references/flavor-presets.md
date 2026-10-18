@@ -119,7 +119,6 @@ result.
 
 ```toml
 [milknado.flavor.review]
-agent_type = "reviewer"
 session_mode = "fresh"
 review = true
 review_max_rounds = 2
@@ -137,7 +136,6 @@ Deposit the complete findings report.
 
 ```toml
 [milknado.flavor.plate]
-agent_type = "plate"
 session_mode = "fresh"
 review = false
 on_reject = "block"

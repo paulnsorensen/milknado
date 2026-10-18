@@ -13,6 +13,8 @@ from milknado.adapters import GitAdapter
 from milknado.domains.common import GitOperationError, SessionContext
 from tests._session_git_helpers import install_git_producer
 
+pytestmark = pytest.mark.real_process
+
 
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(

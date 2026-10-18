@@ -43,6 +43,8 @@ from milknado.loop.sessions import (
     submit_runtime_action,
 )
 
+pytestmark = pytest.mark.real_process
+
 
 def _execute_native_turn(
     request: RuntimeRequest, adapter: NativeCoordinatorTurns, root: Path

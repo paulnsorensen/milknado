@@ -39,7 +39,7 @@ throwaway visualizer to paper over it.
 | `TaskUpdate(status=...)` | `milknado_todo_set_status(node_id, status)` / `milknado_set_subtree_status(root_id, status)` | `done` is server-gated: a natively-claimed node must have a passing `milknado_node_verify` on record first (fail-closed). |
 | `TaskUpdate(content=...)` | `milknado_edit_node(node_id, description=...)` | Coordinator-only. |
 | *(no equivalent)* | `artifact` param / `milknado_edit_node(..., artifact=...)` | Opaque repo-relative markdown reference to the node's narrative (spec, report, brief) — native Tasks has no deliverable field (ADR-002). |
-| *(no equivalent)* | `flavor` param, validated against the flavor registry | Native Tasks is type-less; milknado's flavor drives model/tools/loop_mode/worktree policy per node. |
+| *(no equivalent)* | `flavor` param, validated against the flavor registry | Native Tasks is type-less; milknado's flavor drives model/tools/worktree policy per node. |
 | `TaskList` scoped to a session | `milknado_goal_claim(goal_id, owner)` / `milknado_goal_release` | A session claims a GOAL node's subtree as its task list (ADR-003); dead-pid claims are reclaimable. |
 | *(no equivalent — flat list)* | `milknado_todo_tree` / `milknado_graph_summary` | Graph-shaped view instead of a flat list; use at session boundaries per the visibility-gap mitigation above. |
 | *(no equivalent)* | `milknado_todo_claim(node_id, worktree=None)` | Claims a task RUNNING and provisions (or skips) a worktree per flavor policy (ADR-005) — native Tasks has no execution-isolation concept. |
@@ -56,58 +56,41 @@ knobs per the existing defaults → global → local precedence.
 `brainstorm`/`explore`/`agent-review`/`harden`/`fix` map to `/mold`,
 `/culture`+explorer-shaped work, `/age`, `/press`, and `/cure` respectively.
 `spec`/`implement`/`research` are milknado's built-in flavor names,
-re-profiled here to bind them to easy-cheese's phase agents via
-`agent_type` instead of the milknado default worker.
+re-profiled here with phase-appropriate worktree and gate policy.
 
 ```toml
 # ~/.config/milknado/milknado.toml
 
 [milknado.flavor.brainstorm]      # /mold — fuzzy idea -> spec, no code changes
-agent_type = "generalist"
 worktree = false
-loop_mode = "single"
 quality_gates = []
 
 [milknado.flavor.explore]         # /culture, or any read-only investigation
-agent_type = "explorer"
 worktree = false
-loop_mode = "single"
 quality_gates = []
 
 [milknado.flavor.spec]            # built-in flavor, re-profiled: written narrative, no code
-agent_type = "Plan"
 worktree = false
-loop_mode = "single"
 quality_gates = []
 
 [milknado.flavor.implement]       # built-in flavor, re-profiled: TDD code change in isolation
-agent_type = "coder"
 worktree = true
-loop_mode = "redispatch"
 quality_gates = ["just check-llm"]
 
 [milknado.flavor.research]        # built-in flavor, re-profiled: external-fact lookups
-agent_type = "researcher"
 worktree = false
-loop_mode = "single"
 quality_gates = []
 
 [milknado.flavor.agent-review]    # /age — read-only, severity-tagged findings
-agent_type = "reviewer"
 worktree = false
-loop_mode = "single"
 quality_gates = []
 
 [milknado.flavor.harden]          # /press — add hardening tests on top of a cook
-agent_type = "roquefort-wrecker"
 worktree = true
-loop_mode = "redispatch"
 quality_gates = ["just check-llm"]
 
 [milknado.flavor.fix]             # /cure — apply findings, then gate
-agent_type = "coder"
 worktree = true
-loop_mode = "redispatch"
 quality_gates = ["just check-llm"]
 ```
 

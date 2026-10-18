@@ -29,6 +29,8 @@ from milknado.loop._process_identity import observe_descendants
 from milknado.loop._process_lifecycle import spawn_protected
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 def _context(graph: MikadoGraph, node_id: int) -> ProtectionContext:
     supervisor = psutil.Process()

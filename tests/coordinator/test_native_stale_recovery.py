@@ -7,12 +7,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.coordinator.model import CoordinatorSession
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import GroupWorkspace, MikadoGraph, TaskAttempt
+
+pytestmark = pytest.mark.real_process
 
 _Vanished = tuple[MikadoGraph, CoordinatorWorkflow, CoordinatorSession, str, int, TaskAttempt]
 

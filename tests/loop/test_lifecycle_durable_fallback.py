@@ -21,6 +21,8 @@ from milknado.loop._process_lifecycle import ProtectedWorker
 from milknado.loop._process_observation import snapshot
 from tests.loop.worker_release import PlainWorkerRelease
 
+pytestmark = pytest.mark.real_process
+
 
 @pytest.fixture
 def durable_worker(

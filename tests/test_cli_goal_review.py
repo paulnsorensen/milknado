@@ -32,6 +32,8 @@ from milknado.loop._agent import _build_spawn_env  # pyright: ignore[reportPriva
 from milknado.loop.sessions._process import start_process
 from milknado.loop.sessions._protocol import SessionProtocol
 
+pytestmark = pytest.mark.real_process
+
 cli_runner = CliRunner()
 
 

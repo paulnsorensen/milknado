@@ -15,6 +15,8 @@ from milknado.domains.dispatch.runner import (
 )
 from tests.worker_fixtures import install_worker_command
 
+pytestmark = pytest.mark.real_process
+
 
 def test_allowlisted_system_vars_pass_through(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "/usr/bin:/bin")

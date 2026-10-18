@@ -8,7 +8,6 @@ worktree_pattern = "milknado-{node_id}-{slug}"
 concurrency_limit = 4
 plugins = []
 db_path = ".milknado/milknado.db"
-worker_agent_type = "milknado:milknado-worker"
 
 
 [milknado.flavor.implement]

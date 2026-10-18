@@ -45,10 +45,7 @@ def _profile(
             None if quality_gates is None else tuple(Gate(command=gate) for gate in quality_gates)
         ),
         "brief_prepend": brief_prepend,
-        "worker_agent_type": "milknado:milknado-worker",
-        "loop_mode": "redispatch",
         "max_iterations": 8,
-        "max_turns": 60,
         "worktree": True,
         "session_mode": "fresh",
         "review": False,
@@ -187,10 +184,7 @@ def _write_override_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         + "execution_agent = 'claude --model haiku -p'\n"
         + "quality_gates = ['echo global']\n"
         + "worktree = false\n"
-        + "worker_agent_type = 'global-agent'\n"
-        + "loop_mode = 'single'\n"
         + "max_iterations = 2\n"
-        + "max_turns = 3\n"
         + "\n[milknado.prompts]\nworker_brief_prepend = 'global brief'\n",
         encoding="utf-8",
     )
@@ -200,8 +194,7 @@ def _write_override_configs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         "[milknado]\nagent_family = 'claude'\n\n"
         + "[milknado.flavor.derived]\n"
         + "tools = ['Read']\nquality_gates = []\n"
-        + "brief_prepend = 'derived brief'\nagent_type = 'derived-agent'\n"
-        + "loop_mode = 'redispatch'\nmax_iterations = 7\nmax_turns = 11\n"
+        + "brief_prepend = 'derived brief'\nmax_iterations = 7\n"
         + "worktree = true\nsession_mode = 'fresh'\nreview = true\n"
         + "review_agent = 'claude --model opus -p'\nreview_max_rounds = 4\non_reject = 'warn'\n\n"
         + "[milknado.flavor.explicit]\n"
@@ -222,9 +215,7 @@ def test_flavor_overrides_beat_global_defaults_and_tools_derive_execution(
         "claude --model sonnet -p --allowedTools 'Read'",
         (),
         "derived brief",
-        worker_agent_type="derived-agent",
         max_iterations=7,
-        max_turns=11,
         worktree=True,
         review=True,
         review_agent="claude --model opus -p",
@@ -237,10 +228,7 @@ def test_flavor_overrides_beat_global_defaults_and_tools_derive_execution(
     assert "allowedTools" not in explicit.execution_agent
     assert explicit.quality_gates == (Gate(command="echo global"),)
     assert explicit.brief_prepend == "global brief"
-    assert explicit.worker_agent_type == "global-agent"
-    assert explicit.loop_mode == "single"
     assert explicit.max_iterations == 2
-    assert explicit.max_turns == 3
     assert explicit.worktree is False
 
 
@@ -253,7 +241,7 @@ def test_flavor_inherit_false_replaces_global_table(
         "[milknado]\nagent_family = 'claude'\n"
         + "execution_agent = 'claude --model haiku -p'\nquality_gates = ['echo root']\n\n"
         + "[milknado.flavor.shared]\nexecution_agent = 'claude --model opus -p'\n"
-        + "quality_gates = ['echo flavor']\nmax_turns = 7\n",
+        + "quality_gates = ['echo flavor']\nmax_iterations = 7\n",
         encoding="utf-8",
     )
     local = tmp_path / "project" / "milknado.toml"
@@ -268,13 +256,12 @@ def test_flavor_inherit_false_replaces_global_table(
     override = details.config.flavors["shared"]
     assert override.execution_agent is None
     assert override.quality_gates is None
-    assert override.max_turns is None
+    assert override.max_iterations is None
     assert override.tools == ("Read",)
     assert resolve_flavor_profile(details.config, "shared") == _profile(
         "claude --model sonnet -p --allowedTools 'Read'",
         ("echo root",),
         None,
-        max_turns=60,
     )
 
 

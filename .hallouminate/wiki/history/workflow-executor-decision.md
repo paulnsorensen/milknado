@@ -1,6 +1,6 @@
 # Decision — Native Dynamic-Workflow ("ultracode") Execution Backend
 
-Date: 2026-06-15 · Status: shipped in PR #145 (branch `feat/workflow-executor`); the executor **concept is verified end-to-end live** (2026-06-15), and the shipped **`node-runner.js` is the corrected fan-out-only script** — the orchestrator owns every MCP call inline; the Workflow script does only `agent()` fan-out (see Gotchas + Verification).
+Date: 2026-06-15 · Status: **removed 2026-10-17** (see §Removal below); originally shipped in PR #145 (branch `feat/workflow-executor`); the executor **concept is verified end-to-end live** (2026-06-15), and the shipped **`node-runner.js` is the corrected fan-out-only script** — the orchestrator owns every MCP call inline; the Workflow script does only `agent()` fan-out (see Gotchas + Verification).
 
 **Canonical reference — read this first:** [Dynamic workflows](https://code.claude.com/docs/en/workflows) is the authoritative doc for Claude Code's Workflow tool and its script model (`agent()` / `parallel()` / `pipeline()` / `phase()`). The entire native backend is built on it. Subscription/auth context: [Authentication](https://code.claude.com/docs/en/authentication) (effective 2026-06-15).
 
@@ -25,4 +25,17 @@ The subprocess CLI dispatcher ([[execution]], [[adapters]]) is left **byte-ident
 - **Python logic-level test (2026-06-15): PASS** — claim → (simulate agent) → verify → deposit → gated mark-done, both happy and fail-closed paths, zero bugs; `worktree_pattern` honored, `_resolve_model` and the gate discriminator correct. (Called the functions directly, so it could NOT catch the script-scope defect below.)
 - **Live end-to-end test (2026-06-15): PASS, with the fan-out-only model.** After a `/mcp` reconnect made the tools live, a real `Workflow → agent() → MCP` run drove scratch node 3: `claim` (inline) → Workflow `milknado:milknado-worker` agent created the gate file + called `milknado_deposit_result` → `milknado_node_verify` (inline) `ok=true` → `milknado_todo_set_status(done)` (inline, gated) → node `done`. The concept is proven. That run is what surfaced the script-scope MCP constraint; the shipped `node-runner.js` is written to exactly the orchestrator/script/agent split that ran (the script does `agent()` fan-out only).
 
+## Removal (2026-10-17)
+
+The in-session Workflow ("ultracode") execution path is removed in branch `refactor/remove-node-runner`. It had no test that executed `node-runner.js`, needed a manual install into `.claude/workflows/`, worked only in Claude Code, and had no feature work in the 60 days before removal.
+
+- **Removed:** `plugins/milknado/workflows/node-runner.js`, the `milknado:milknado-worker` plugin agent, and the config keys `worker_agent_type`, `loop_mode`, `max_turns` (`[milknado]`) and `agent_type`, `loop_mode`, `max_turns` (`[milknado.flavor.*]`). `milknado_todo_claim` no longer returns `agent_type`, `loop_mode`, or `max_turns`. The `loop_mode = "single"` self-verify tool allowlist in `app/node.py` is gone.
+- **Kept:** `milknado_todo_claim`, `milknado_node_verify`, `milknado_goal_claim`/`milknado_goal_release`, the `goal_claims` table, and the server-side done gate (`domains/graph/_verification.py`). Any harness session can still claim a node, verify it, and complete it through these tools.
+- **Stale config:** the loader ignores unknown keys, so a `milknado.toml` that still sets a removed key loads and the key has no effect; `test_retired_workflow_keys_are_ignored` pins this.
+- **Lost capability:** workers that run as subagents inside the user's own Claude session. Subprocess workers (`milknado run`, inline dispatch) remain.
+
 Related: [[execution]] (the subprocess model this extends), [[distribution]] (why `workflows/` is off-model), [[adapters]] (LoopPort), [[loop-vendor-in-decision]] (the prior execution-engine decision).
+
+
+_Source: branch refactor/remove-node-runner (edd6280) · Updated: 2026-10-17 · Supersedes: shipped status of the in-session Workflow backend_
+

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from json import JSONDecodeError
+from threading import Lock
 from typing import TypeVar, cast
 
 import msgspec
@@ -20,6 +21,8 @@ from milknado.web.node_requests import NoteBody, RetryBody, decode_body
 
 _RETRYABLE = frozenset({NodeStatus.FAILED, NodeStatus.BLOCKED})
 _Body = TypeVar("_Body", NoteBody, RetryBody)
+# Each action reads a node and then writes it, so concurrent edits must not interleave.
+_NODE_EDITS = Lock()
 
 
 def _commands(request: Request) -> GraphEditCommands | None:
@@ -72,6 +75,16 @@ def _note(commands: GraphEditCommands, node_id: int, body: NoteBody) -> MikadoNo
     return _existing(commands, node_id)
 
 
+def _serialized(
+    action: Callable[[GraphEditCommands, int, _Body], MikadoNode],
+    commands: GraphEditCommands,
+    node_id: int,
+    body: _Body,
+) -> MikadoNode:
+    with _NODE_EDITS:
+        return action(commands, node_id, body)
+
+
 async def _respond(
     request: Request,
     body_type: type[_Body],
@@ -83,10 +96,10 @@ async def _respond(
     node_id = cast(int, request.path_params["node_id"])
     try:
         body = cast(_Body, decode_body(cast(object, await request.json()), body_type))
-    except (JSONDecodeError, msgspec.DecodeError) as error:
+    except (JSONDecodeError, UnicodeDecodeError, msgspec.DecodeError) as error:
         return json_response({"error": str(error)}, status_code=400)
     try:
-        node = await run_in_threadpool(action, commands, node_id, body)
+        node = await run_in_threadpool(_serialized, action, commands, node_id, body)
     except ValueError as error:
         return json_response({"error": str(error)}, status_code=409)
     return json_response(node)

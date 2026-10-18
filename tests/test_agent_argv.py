@@ -370,21 +370,23 @@ def test_build_planning_subprocess_does_not_forward_repo_mcp_by_default(
     assert extra["env"] == build_minimal_mcp_env()
 
 
-def test_build_minimal_mcp_env_forwards_only_omp_openrouter_credential() -> None:
+def test_build_minimal_mcp_env_keeps_login_identity_and_only_omp_credential() -> None:
     mocked_env = {
         "ANTHROPIC_API_KEY": "secret",
         "CRG_EMBEDDING_MODEL": "all-MiniLM-L6-v2",
         "HOME": "/home/test",
+        "LOGNAME": "tester",
         "MILKNADO_PROJECT_ROOT": "/secret/root",
         "OPENROUTER_API_KEY": "openrouter-secret",
         "PATH": "/bin",
+        "USER": "tester",
     }
+    essentials = {"HOME": "/home/test", "LOGNAME": "tester", "PATH": "/bin", "USER": "tester"}
     with patch("milknado.domains.common.agent_argv.os.environ", mocked_env):
-        assert build_minimal_mcp_env() == {"HOME": "/home/test", "PATH": "/bin"}
+        assert build_minimal_mcp_env() == essentials
         assert build_minimal_mcp_env(executable="omp") == {
-            "HOME": "/home/test",
+            **essentials,
             "OPENROUTER_API_KEY": "openrouter-secret",
-            "PATH": "/bin",
         }
 
 
