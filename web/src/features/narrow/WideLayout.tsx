@@ -1,9 +1,13 @@
-// The default Main artboard region tree, rendered above the 400px
-// breakpoint. Reuses `app/DefaultLayout` so the `layout` slot
-// contribution falls back to the same region tree at wide viewports.
+// The wide Main artboard, rendered above the 400px breakpoint: the classic
+// region tree from `app/DefaultLayout`, or the metaharness view when the
+// viewer picked it.
 import type { ReactElement } from 'react';
+import { useSyncExternalStore } from 'react';
 import { DefaultLayout } from '../../app/DefaultLayout';
+import { getViewMode, subscribeViewMode } from '../metaharness/viewMode';
+import { MetaharnessView } from '../metaharness/ui/MetaharnessView';
 
 export function WideLayout(): ReactElement {
-  return <DefaultLayout />;
+  const mode = useSyncExternalStore(subscribeViewMode, getViewMode);
+  return mode === 'metaharness' ? <MetaharnessView /> : <DefaultLayout />;
 }
