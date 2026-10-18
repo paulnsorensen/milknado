@@ -29,7 +29,8 @@ from tests.test_tmux_dispatch import (
 )
 
 # A child in its own session. macOS has no setsid(1), so Python calls setsid(2).
-_DETACHED_SLEEP = f'{sys.executable} -c "import os, time; os.setsid(); time.sleep(120)"'
+# Double quotes keep an interpreter path with spaces whole inside the single-quoted sh -c.
+_DETACHED_SLEEP = f'"{sys.executable}" -c "import os, time; os.setsid(); time.sleep(120)"'
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux binary not available")
