@@ -102,6 +102,7 @@ def _cleanup(store: EvidenceStore, helper: HelperIdentity, deadline: float) -> i
         try:
             store.begin(key)
             observed = observe_descendants(worker)
+            store.set_deadline(max(deadline, time.monotonic() + _OBSERVATION_WAIT))
             store.commit(key, observed)
             durable_targets += observed
         except (OSError, RuntimeError, sqlite3.OperationalError, TimeoutError) as exc:
