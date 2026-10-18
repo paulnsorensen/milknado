@@ -11,6 +11,8 @@ export interface WireNode {
   parent_id: number | null;
   kind: WireNodeKind;
   flavor: string | null;
+  branch_name?: string | null;
+  worktree_path?: string | null;
 }
 
 export interface WireEdge {
