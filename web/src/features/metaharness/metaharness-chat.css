@@ -1,6 +1,7 @@
 /* The metaharness chat pane, details panel, and floating overlays. */
 .mh-chat {
-  min-width: 0; min-height: 0; position: relative; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0; min-height: 0; position: relative; display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: radial-gradient(900px 420px at 50% -12%, rgba(124, 156, 255, 0.09), transparent 65%),
     radial-gradient(600px 300px at 90% 110%, rgba(198, 244, 50, 0.05), transparent 70%), var(--mh-bg);
 }
@@ -125,7 +126,7 @@
 .mh-toast .mh-icon { color: var(--mh-lime); }
 
 /* ---- diff takeover ---- */
-.mh-diff { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; animation: mh-fade 0.16s ease-out; }
+.mh-diff { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; animation: mh-fade 0.16s ease-out; }
 .mh-diff-top { display: flex; align-items: center; gap: 12px; padding: 12px 20px; font-size: 12px; }
 .mh-diff-top .mh-pill-btn { height: 30px; }
 .mh-diff-top .mh-push { font-size: 11px; }
@@ -157,7 +158,8 @@
 
 /* ---- right: details panel ---- */
 .mh-side {
-  width: 340px; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--mh-panel);
+  width: 340px; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr); background: var(--mh-panel);
   border-left: 1px solid var(--mh-line); animation: mh-slide 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .mh-side-head { display: flex; align-items: center; gap: 8px; padding: 16px 12px 10px 18px; }
@@ -229,7 +231,8 @@
 .mh-rail-item .mh-icon { color: #8d8d99; }
 .mh-rail-count { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--mh-lime-ink); }
 .mh-expanded {
-  position: absolute; inset: 0; z-index: 12; display: grid; grid-template-rows: auto minmax(0, 1fr);
+  position: absolute; inset: 0; z-index: 12; display: grid; grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   background: color-mix(in srgb, var(--mh-bg) 94%, transparent); backdrop-filter: blur(10px); animation: mh-fade 0.16s ease-out;
 }
 .mh-expanded-head { display: flex; align-items: center; gap: 12px; padding: 16px 22px; }

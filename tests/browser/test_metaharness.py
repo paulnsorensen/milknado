@@ -237,3 +237,21 @@ def test_expanded_graph_projects_and_classic_switch(
     page.mouse.move(2, 400)
     page.get_by_role("button", name="Classic view").click()
     expect(page.locator('[data-view="metaharness"]')).to_be_hidden()
+
+
+def test_long_goal_title_keeps_panes_inside_the_viewport(
+    page: Page, metaharness_server: MetaharnessServer
+) -> None:
+    ids = metaharness_server.ids
+    long_title = "Burn down every open issue into reviewable stacked PRs " * 6
+    _ = metaharness_server.graph.edit_node(
+        ids.goal, long_title.strip(), None, None, None, None, frozenset({"implement"})
+    )
+    _open(page, metaharness_server)
+    page.locator(".mh-crumbs").get_by_role("button", name="Projects").click()
+    page.locator(".mh-project").first.click()
+
+    expect(_node(page, ids.goal)).to_be_in_viewport()
+    actions = page.locator(".mh-chat-actions").bounding_box()
+    assert actions is not None
+    assert actions["x"] + actions["width"] <= 1440

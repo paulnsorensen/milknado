@@ -154,7 +154,7 @@
 
 /* ---- left: graph pane ---- */
 .mh-graph {
-  min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--mh-panel); border-right: 1px solid var(--mh-line); position: relative;
 }
 .mh-graph-top { display: flex; flex-direction: column; gap: 10px; padding: 16px 12px 8px 16px; }
@@ -164,6 +164,7 @@
   background: none; border: 0; padding: 3px 5px; border-radius: 6px; cursor: pointer; color: var(--mh-faint);
   font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
+.mh-crumbs > button { flex: none; }
 .mh-crumbs button.is-current { color: var(--mh-text); font-weight: 600; }
 .mh-crumbs button:hover { color: var(--mh-text); background: var(--mh-wash); }
 .mh-graph-body {
@@ -196,7 +197,11 @@
 }
 .mh-project-head { display: flex; align-items: baseline; gap: 8px; }
 .mh-project-head .mh-mono { margin-left: auto; font-size: 11px; }
-.mh-project-title { font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
+.mh-project-title {
+  min-width: 0; font-weight: 600; font-size: 14px; letter-spacing: -0.01em;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.mh-project-head .mh-mono { flex: none; }
 .mh-project-meta { font-size: 11.5px; font-weight: 500; color: var(--mh-faint); }
 .mh-project.is-need .mh-project-meta { color: var(--mh-lime-ink); }
 .mh-bar { display: block; height: 3px; border-radius: 2px; background: var(--mh-wash); overflow: hidden; }
