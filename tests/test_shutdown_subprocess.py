@@ -263,6 +263,8 @@ from pathlib import Path
 
 from milknado.app import _shutdown
 
+_shutdown.STOP_TIMEOUT_SECONDS = float(os.environ["SHUTDOWN_STOP_TIMEOUT"])
+
 _first_signal_at = None
 _original_record = _shutdown.ShutdownIntent.record
 _original_bounded_stop = _shutdown.bounded_stop
@@ -302,6 +304,9 @@ class _BlockedPopen(_original_popen):
 
 subprocess.Popen = _BlockedPopen
 """
+# The blocked launch holds cleanup until the deadline, so this CLI runs with a short
+# one. test_cli_signal_stops_real_worker runs with the production STOP_TIMEOUT_SECONDS.
+_BLOCKED_STOP_TIMEOUT = 2.0
 
 
 @pytest.mark.parametrize("interactive", [False, True], ids=["headless", "controller-pty"])
@@ -317,6 +322,7 @@ def test_cli_exits_while_worker_popen_is_blocked(
     monkeypatch.setenv("SHUTDOWN_SPAWN_MARKER", str(marker))
     monkeypatch.setenv("SHUTDOWN_SPAWN_RELEASE", str(release))
     monkeypatch.setenv("SHUTDOWN_CLEANUP_TIMING", str(timing))
+    monkeypatch.setenv("SHUTDOWN_STOP_TIMEOUT", str(_BLOCKED_STOP_TIMEOUT))
     proc, master = _start(repo, pid_file, interactive=interactive, injection=tmp_path)
     try:
         _wait_for(marker)
@@ -327,8 +333,8 @@ def test_cli_exits_while_worker_popen_is_blocked(
         assert exit_code == 128 + signum, _output(proc, master)
         assert timing.exists(), "bounded cleanup did not report completion"
         signal_at, deadline, completed_at = map(float, timing.read_text().split())
-        assert deadline == signal_at + STOP_TIMEOUT_SECONDS
-        assert completed_at - signal_at < STOP_TIMEOUT_SECONDS + 0.25
+        assert deadline == signal_at + _BLOCKED_STOP_TIMEOUT
+        assert completed_at - signal_at < _BLOCKED_STOP_TIMEOUT + 0.25
         assert not pid_file.exists(), "worker command ran after shutdown intent"
         with sqlite3.connect(db) as conn:
             rows = conn.execute("SELECT status FROM nodes WHERE status = 'running'").fetchall()

@@ -214,9 +214,12 @@ def test_untrusted_protocol_cannot_prove_execution(protocol: bytes) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec-status channel")
-def test_partial_readiness_without_eof_is_unknown() -> None:
+def test_partial_readiness_without_eof_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     from milknado.domains.common import WorkerIdentity
     from milknado.loop._process_gate import WorkerProcess
+
+    # The verdict comes from the report window expiring; its length is irrelevant.
+    monkeypatch.setattr("milknado.loop._process_gate._EXEC_REPORT_TIMEOUT", 0.2)
 
     proc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(2)"],

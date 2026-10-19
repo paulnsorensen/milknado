@@ -52,7 +52,8 @@ def _spec(tmp_path: Path, pipe_state: str) -> AgentRunSpec:
     return AgentRunSpec(
         cmd=[str(worker), pipe_state],
         prompt="request permission",
-        timeout=5.0,
+        # The closed-pipe worker hangs until the session timeout ends it.
+        timeout=5.0 if pipe_state == "open" else 2.0,
         log_dir=None,
         iteration=1,
         capture_result_text=True,
