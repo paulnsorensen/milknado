@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from tenacity import Retrying, retry_if_result, stop_after_delay, wait_fixed
+
 from milknado.domains.common import (
     GitPort,
     MikadoNode,
@@ -103,6 +105,17 @@ def _reconcile_cancel(
     return preserved
 
 
+def _terminal_run(graph: RunReaderPort, run_id: str) -> dict[str, object] | None:
+    record = graph.runs.get(run_id)
+    if record is None or record.get("status") == "running":
+        return None
+    return dict(record)
+
+
+def _not_finalized(record: dict[str, object] | None) -> bool:
+    return record is None
+
+
 def _await_cancel_finalize(graph: RunReaderPort, run_id: str) -> dict[str, object] | None:
     """Poll the run row for the async worker's terminal write, up to a bound.
 
@@ -110,13 +123,13 @@ def _await_cancel_finalize(graph: RunReaderPort, run_id: str) -> dict[str, objec
     elapses (the worker is wedged, dead, or never existed) so the caller can take
     over the terminal write itself.
     """
-    deadline = time.monotonic() + _CANCEL_FINALIZE_TIMEOUT_SECS
-    while time.monotonic() < deadline:
-        time.sleep(_CANCEL_FINALIZE_POLL_SECS)
-        record = graph.runs.get(run_id)
-        if record is not None and record.get("status") != "running":
-            return dict(record)
-    return None
+    poll = Retrying(
+        stop=stop_after_delay(_CANCEL_FINALIZE_TIMEOUT_SECS),
+        wait=wait_fixed(_CANCEL_FINALIZE_POLL_SECS),
+        retry=retry_if_result(_not_finalized),
+        retry_error_callback=lambda _state: None,
+    )
+    return poll(_terminal_run, graph, run_id)
 
 
 def _reconcile_terminal_cancel(
