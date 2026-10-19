@@ -15,7 +15,7 @@ from typing_extensions import override
 from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch import ReapRequest, reap, reap_orphaned_workers
-from milknado.domains.graph import MikadoGraph, NodeWorkers, WorkerEvidenceStore
+from milknado.domains.graph import MikadoGraph, NodeWorkers, WorkerEvidenceStore, WorkerRecord
 
 pytestmark = pytest.mark.real_process
 
@@ -204,7 +204,7 @@ def test_reap_accepts_helper_closure_between_refresh_and_retried_begin(
         graph.close()
 
 
-def test_reap_stops_retrying_begin_at_the_recovery_deadline(
+def test_reap_fails_fast_when_begin_conflicts_without_progress(
     tmp_path: Path,
     worker: psutil.Process,
     monkeypatch: pytest.MonkeyPatch,
@@ -221,10 +221,81 @@ def test_reap_stops_retrying_begin_at_the_recovery_deadline(
     monkeypatch.setattr(reap, "WorkerEvidenceStore", _AlwaysConflicting)
     started = time.monotonic()
     try:
+        request = ReapRequest(NodeWorkers(1), deadline=started + 5)
+        assert not reap_orphaned_workers(graph, ProcessAdapter(), request)
+        assert time.monotonic() - started < 1
+        assert "worker observation conflict without progress" in caplog.text
+        assert worker.status() != psutil.STATUS_ZOMBIE
+    finally:
+        graph.close()
+
+
+def test_reap_stops_retrying_begin_at_the_recovery_deadline(
+    tmp_path: Path,
+    worker: psutil.Process,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    helper = HelperIdentity("inv-1", 0, 2**31 - 1, 123.5)
+    graph = _recorded_graph(tmp_path, worker, helper)
+
+    class _HelperAlwaysAhead(WorkerEvidenceStore):
+        """Let the helper observe just before every supervisor begin, so each retry progresses."""
+
+        @override
+        def begin(self, key: ObservationKey) -> None:
+            ahead = ObservationKey(
+                "inv-1", "helper", key.sequence, helper.generation, helper.pid, helper.start_token
+            )
+            graph.runs.begin_worker_observation(ahead)
+            graph.runs.commit_worker_observation(ahead, ())
+            super().begin(key)
+
+    monkeypatch.setattr(reap, "WorkerEvidenceStore", _HelperAlwaysAhead)
+    started = time.monotonic()
+    try:
         request = ReapRequest(NodeWorkers(1), deadline=started + 0.5)
         assert not reap_orphaned_workers(graph, ProcessAdapter(), request)
-        assert time.monotonic() - started < 3
-        assert "worker recovery observation unresolved" in caplog.text
+        assert 0.5 <= time.monotonic() - started < 3
+        assert "worker evidence deadline expired" in caplog.text
         assert worker.status() != psutil.STATUS_ZOMBIE
+    finally:
+        graph.close()
+
+
+def test_reap_reports_deadline_while_live_helper_owns_observation(
+    tmp_path: Path,
+    worker: psutil.Process,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    current = psutil.Process()
+    helper = HelperIdentity("inv-1", 0, current.pid, current.create_time())
+    graph = _recorded_graph(tmp_path, worker, helper)
+    deadline = time.monotonic() + 0.5
+
+    class _HelperOwnsAtDeadline(WorkerEvidenceStore):
+        """Begin a helper observation first, then read it back as the deadline passes."""
+
+        @override
+        def begin(self, key: ObservationKey) -> None:
+            graph.runs.begin_worker_observation(_helper_key(helper))
+            super().begin(key)
+
+        @override
+        def get(self, invocation_id: str) -> WorkerRecord | None:
+            record = super().get(invocation_id)
+            time.sleep(max(0.0, deadline - time.monotonic()))
+            return record
+
+    monkeypatch.setattr(reap, "WorkerEvidenceStore", _HelperOwnsAtDeadline)
+    try:
+        request = ReapRequest(NodeWorkers(1), deadline=deadline)
+        assert not reap_orphaned_workers(graph, ProcessAdapter(), request)
+        assert "deadline expired: observation owner=helper" in caplog.text
+        assert "worker observation interrupted" not in caplog.text
+        assert worker.status() != psutil.STATUS_ZOMBIE
+        recorded = graph.runs.get_worker("inv-1")
+        assert recorded is not None and recorded.ended_at is None
     finally:
         graph.close()
