@@ -20,6 +20,7 @@ import milknado.domains.graph._follow_up as _follow_up
 import milknado.domains.graph._goal_claims as _goal_claims
 import milknado.domains.graph._goal_review as _goal_review
 import milknado.domains.graph._mutations as _mutations
+import milknado.domains.graph._operator_skip as _operator_skip
 import milknado.domains.graph._persistence as _persistence
 import milknado.domains.graph._plan_transaction as _plan_transaction
 import milknado.domains.graph._reads as _reads
@@ -296,6 +297,10 @@ class MikadoGraph(_AnalyticsFacade, _EdgeFacade, _GoalReviewFacade):
     @synchronized
     def set_subtree_status(self, root_id: int, target: NodeStatus) -> int:
         return _status.set_subtree_status(self._pipeline, self._conn, root_id, target)
+
+    @synchronized
+    def skip_failed(self, node_id: int) -> None:
+        _operator_skip.skip_failed(self._pipeline, self._conn, node_id)
 
     @synchronized
     def reconcile_completed_goals(self) -> int:
