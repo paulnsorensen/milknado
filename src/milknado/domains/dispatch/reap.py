@@ -79,6 +79,10 @@ def _supervisor_key(record: WorkerRecord) -> ObservationKey:
     )
 
 
+def _progress(record: WorkerRecord) -> tuple[int, str | None, str | None]:
+    return record.snapshot_seq, record.observation_owner, record.ended_at
+
+
 def _begin_observation(
     evidence: WorkerEvidenceStore,
     process: ProcessTerminationPort,
@@ -89,16 +93,24 @@ def _begin_observation(
 
     Each begin conflict means the helper moved the record forward, so re-read it and
     retry: the helper can commit and then close the record between a read and a begin.
-    The store's deadline bounds the retries.
+    The store's deadline bounds the retries; a conflict that left the record unchanged
+    cannot clear on retry, so it fails at once instead of spinning to the deadline.
     """
     current: WorkerRecord | None = record
     while current is not None and current.ended_at is None:
         if current.observation_owner is not None:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "worker evidence deadline expired: "
+                    + f"observation owner={current.observation_owner}"
+                )
             raise RuntimeError("worker observation interrupted")
         try:
             evidence.begin(_supervisor_key(current))
-        except RuntimeError:
+        except RuntimeError as conflict:
             latest = evidence.get(record.invocation_id)
+            if latest is not None and _progress(latest) == _progress(current):
+                raise RuntimeError("worker observation conflict without progress") from conflict
             current = _await_helper(evidence, process, latest, deadline)
         else:
             return current
