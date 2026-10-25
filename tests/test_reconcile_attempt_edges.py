@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import NodeStatus, RunResult
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs, reconcile_node_status
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 _NOW = "2026-01-01T00:00:00+00:00"
 _FAILED = RunResult("failed", 1, False, _NOW, error="worker failed")

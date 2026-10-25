@@ -12,11 +12,11 @@ from typing import IO, cast
 
 import pytest
 
+import milknado.loop._process_adapter as process_module
 from milknado.adapters import GitAdapter
-from milknado.adapters import process as process_module
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.graph import MikadoGraph
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

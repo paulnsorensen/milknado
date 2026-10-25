@@ -100,6 +100,14 @@ file-size:
 dead-code:
     uv run python scripts/check_dead_code.py
 
+# Hold src/ to the slice map in slices.toml (mirrors the slice-guard step in check-llm)
+slice-guard:
+    uv run python -m scripts.check_slices check --strict
+
+# Compare each slice's crust depth with depth-ratchet.json (mirrors the depth-ratchet step in check-llm)
+depth-ratchet:
+    uv run python -m scripts.check_depth check
+
 # Report whole-symbol zero-coverage dead code (requires coverage.xml from coverage-check)
 dead-code-coverage:
     uv run python scripts/check_dead_code_coverage.py
@@ -108,8 +116,8 @@ dead-code-coverage:
 typecheck:
     uv run basedpyright
 
-# Full build no autofix: lint → file-size → dead-code → coverage check → dead-code-coverage → typecheck (for CI validation)
-build-ci: lint file-size dead-code coverage-check dead-code-coverage typecheck
+# Full build no autofix: lint → file-size → dead-code → slice guard → depth ratchet → coverage check → dead-code-coverage → typecheck (for CI validation)
+build-ci: lint file-size dead-code slice-guard depth-ratchet coverage-check dead-code-coverage typecheck
     @echo "✅ CI build passed"
 
 # Agent gate: lint + format + dead code + tests + project coverage + diff coverage + typecheck.
@@ -137,6 +145,10 @@ check-llm:
         [("file-size", ["uv", "run", "python", "scripts/check_file_lengths.py"])],
         [("import-contracts", ["uv", "run", "lint-imports"])],
         [("dead-code", ["uv", "run", "python", "scripts/check_dead_code.py"])],
+        [
+            ("slice-guard", ["just", "slice-guard"]),
+            ("depth-ratchet", ["just", "depth-ratchet"]),
+        ],
         [("lint+format", ["just", "lint"])],
         [
             ("web-typecheck", ["npm", "--prefix", "web", "run", "typecheck"]),

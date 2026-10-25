@@ -12,10 +12,10 @@ import psutil
 import pytest
 from typing_extensions import override
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch import ReapRequest, reap, reap_orphaned_workers
 from milknado.domains.graph import MikadoGraph, NodeWorkers, WorkerEvidenceStore
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

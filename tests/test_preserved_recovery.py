@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import NodeStatus, RunResult
 from milknado.domains.dispatch import reconcile
 from milknado.domains.dispatch.reconcile import reconcile_orphaned_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 _NOW = "2026-01-01T00:00:00+00:00"
 _DEAD_PID = 999999

@@ -1,0 +1,145 @@
+# Slice map for the slice guard (scripts/check_slices.py) and the depth ratchet (scripts/check_depth.py).
+# A human owns this file. An agent may draft a change; a human approves it in review.
+# Schema: sliced-bread-guard slices.toml (paulnsorensen/sliced-bread-architecture#69), Python backend.
+# may_depend_on records the node edges that the code has at adoption; import-linter contracts in
+# pyproject.toml forbid the reverse arrows.
+version = 1
+
+[policy]
+language = "python"
+unmapped_files = "error"
+suppressions = "human-only"
+# Tests are outside the roots: a test may import slice internals.
+roots = ["src"]
+
+# Domain slices. Each crust is the slice `__init__.py`.
+
+[[slice]]
+name = "batching"
+paths = ["src/milknado/domains/batching"]
+crust = ["src/milknado/domains/batching/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common"]
+
+[[slice]]
+name = "coordinator"
+paths = ["src/milknado/domains/coordinator"]
+crust = ["src/milknado/domains/coordinator/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "execution", "graph", "loop", "planning"]
+
+[[slice]]
+name = "dispatch"
+paths = ["src/milknado/domains/dispatch"]
+crust = ["src/milknado/domains/dispatch/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "graph"]
+
+[[slice]]
+name = "execution"
+paths = ["src/milknado/domains/execution"]
+crust = ["src/milknado/domains/execution/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "dispatch", "graph", "loop", "planning"]
+
+[[slice]]
+name = "github"
+paths = ["src/milknado/domains/github"]
+crust = ["src/milknado/domains/github/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "graph", "reporting", "wiki"]
+
+[[slice]]
+name = "graph"
+paths = ["src/milknado/domains/graph"]
+crust = ["src/milknado/domains/graph/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["batching", "common"]
+
+[[slice]]
+name = "planning"
+paths = ["src/milknado/domains/planning"]
+crust = ["src/milknado/domains/planning/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["batching", "common", "graph"]
+
+[[slice]]
+name = "reporting"
+paths = ["src/milknado/domains/reporting"]
+crust = ["src/milknado/domains/reporting/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "graph"]
+
+[[slice]]
+name = "wiki"
+paths = ["src/milknado/domains/wiki"]
+crust = ["src/milknado/domains/wiki/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common", "graph", "reporting"]
+
+# The loop engine and the plugin loader are slices with their own crusts.
+
+[[slice]]
+name = "loop"
+paths = ["src/milknado/loop"]
+crust = ["src/milknado/loop/__init__.py"]
+shape = "thin-facade"
+# graph and dispatch: owner decision 2026-10-25, the worker-protection adapters moved into loop.
+may_depend_on = ["common", "dispatch", "graph", "root"]
+
+[[slice]]
+name = "plugins"
+paths = ["src/milknado/plugins"]
+crust = ["src/milknado/plugins/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["common"]
+
+# Spine nodes have no crust. `common` holds the shared domain values and ports.
+
+[[spine]]
+name = "common"
+paths = ["src/milknado/domains/common"]
+may_depend_on = []
+
+[[spine]]
+name = "adapters"
+paths = ["src/milknado/adapters"]
+may_depend_on = ["common", "coordinator", "dispatch", "execution", "github", "graph", "loop", "root", "wiki"]
+
+[[spine]]
+name = "app"
+paths = ["src/milknado/app"]
+may_depend_on = ["adapters", "batching", "common", "coordinator", "dispatch", "execution", "graph", "planning", "root"]
+
+[[spine]]
+name = "cli"
+paths = ["src/milknado/cli"]
+may_depend_on = [
+  "adapters", "app", "common", "coordinator", "dispatch", "execution", "github", "graph", "planning",
+  "plugins", "root", "web", "wiki",
+]
+
+[[spine]]
+name = "mcp"
+paths = ["src/milknado/mcp"]
+may_depend_on = [
+  "adapters", "app", "batching", "common", "dispatch", "execution", "github", "graph", "planning",
+  "root", "wiki",
+]
+
+[[spine]]
+name = "web"
+paths = ["src/milknado/web"]
+may_depend_on = ["adapters", "app", "common", "coordinator", "dispatch", "graph", "wiki"]
+
+# The package root modules: the version, the project bootstrap, and process logging.
+
+[[spine]]
+name = "root"
+paths = [
+  "src/milknado/__init__.py",
+  "src/milknado/domains/__init__.py",
+  "src/milknado/process_logging.py",
+  "src/milknado/project.py",
+]
+may_depend_on = ["common", "graph", "plugins"]

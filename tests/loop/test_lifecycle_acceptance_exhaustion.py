@@ -14,7 +14,6 @@ import psutil
 import pytest
 
 import milknado.loop._agent as agent
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import (
@@ -28,6 +27,7 @@ from milknado.loop._agent import (
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from milknado.loop._worker_evidence import LoopWorkerEvidence
 from milknado.loop.sessions import SessionChannel, run_session
 from tests.loop.worker_release import PlainWorkerRelease
 

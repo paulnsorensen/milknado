@@ -23,7 +23,6 @@ from milknado.adapters._loop_types import RunHandleView as _RunHandle
 from milknado.adapters._loop_types import (
     build_verify_prompt as _build_verify_prompt_impl,
 )
-from milknado.adapters._protection import loop_protection
 from milknado.domains.common import (
     CompletionTimeout,
     Gate,
@@ -43,6 +42,7 @@ from milknado.loop import (
     RunConfig,
     RunManager,
     RunStatus,
+    loop_protection,
 )
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected

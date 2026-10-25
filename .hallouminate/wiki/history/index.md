@@ -1,6 +1,7 @@
 # history
 
 <!-- HALLOUMINATE:INDEX-START -->
+- [architecture-gates-decision](./architecture-gates-decision.md) — Architecture gates — slice guard and depth ratchet decision
 - [archive-rebalance-001](./archive-rebalance-001.md) — ADR-001: archived_at flag over status enum or archive-root reparent  [status: accepted]
 - [archive-rebalance-002](./archive-rebalance-002.md) — ADR-002: archive gates destruction; reap is fail-closed only  [status: accepted]
 - [archive-rebalance-003](./archive-rebalance-003.md) — ADR-003: restructure = orphan grouping + structural report  [status: accepted]

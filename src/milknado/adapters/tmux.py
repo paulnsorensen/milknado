@@ -45,7 +45,7 @@ def _exec_receipt_command(window: RunWindow) -> tuple[str, ...]:
         sys.executable,
         "-P",
         "-m",
-        "milknado.adapters._tmux_exec",
+        "milknado.loop._tmux_exec",
         window.exec_nonce,
         str(window.exec_receipt_path),
         str(window.brief_path) if window.brief_path is not None else "-",

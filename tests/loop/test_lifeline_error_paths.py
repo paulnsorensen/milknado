@@ -125,7 +125,7 @@ def test_lifeline_completion_failure_keeps_open_evidence(
 )
 def test_lifeline_bootstrap_rejects_invalid_arguments(arguments: tuple[str, ...]) -> None:
     result = subprocess.run(
-        [sys.executable, "-m", "milknado.adapters._loop_lifeline", *arguments],
+        [sys.executable, "-m", "milknado.loop._lifeline_main", *arguments],
         capture_output=True,
         text=True,
         timeout=5,

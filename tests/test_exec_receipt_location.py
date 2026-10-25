@@ -10,7 +10,6 @@ from typing import cast
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import GitPort
 from milknado.domains.dispatch import _async_execution
 from milknado.domains.dispatch._async_types import AsyncRunRequest, AsyncWorkerContext
@@ -18,6 +17,7 @@ from milknado.domains.dispatch._runstate import exec_receipt_path, runs_dir
 from milknado.domains.dispatch.ports import GraphSessionPort, RunWindow, TmuxPort
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

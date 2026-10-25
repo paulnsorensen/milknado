@@ -16,7 +16,6 @@ from typing_extensions import override
 
 import milknado.domains.execution._node_attempts as _node_attempts
 import milknado.domains.execution.executor as _executor_module
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import (
     ProgressEvent,
     RunResult,
@@ -50,6 +49,7 @@ from milknado.domains.execution.executor import WorktreeManager
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
 from milknado.loop import RunStatus
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
+from milknado.loop._worker_release import LoopWorkerRelease
 
 pytestmark = pytest.mark.real_process
 
