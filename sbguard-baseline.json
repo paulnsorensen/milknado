@@ -29,11 +29,6 @@
     {
       "rule": "SB-01",
       "from": "src/milknado/adapters/_loop_session.py",
-      "to": "src/milknado/loop/_run_types.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_loop_session.py",
       "to": "src/milknado/loop/manager.py"
     },
     {
@@ -160,11 +155,6 @@
       "rule": "SB-01",
       "from": "src/milknado/domains/coordinator/projection.py",
       "to": "src/milknado/loop/sessions/__init__.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/domains/github/_intent.py",
-      "to": "src/milknado/domains/wiki/model.py"
     }
   ]
 }
