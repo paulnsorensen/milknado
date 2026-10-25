@@ -15,6 +15,7 @@ from filelock import FileLock
 
 import milknado.domains.graph._worker_persistence as _worker_persistence
 from milknado.domains.common import HelperIdentity, ObservationKey, WorkerIdentity, WorkerOwner
+from milknado.domains.graph._abandoned_observation import release_abandoned_observation
 from milknado.domains.graph._persistence import SCHEMA_VERSION, create_tables, migrate
 from milknado.domains.graph._sqlite_rows import fetchall, fetchone
 
@@ -212,6 +213,10 @@ class WorkerEvidenceStore:
     ) -> None:
         self._limit_wait()
         _worker_persistence.commit_observation(self._conn, key, descendants)
+
+    def release_abandoned(self, record: _worker_persistence.WorkerRecord) -> None:
+        self._limit_wait()
+        release_abandoned_observation(self._conn, record)
 
     def ready(self, helper: HelperIdentity, sequence: int) -> bool:
         self._limit_wait()
