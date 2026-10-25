@@ -4,7 +4,8 @@
 Ported from sliced-bread-depth-ratchet (paulnsorensen/sliced-bread-architecture#71) through the
 Python `ast` port in paulnsorensen/skillz-that-grillz. Every key is lower-is-better with
 tolerance 0. A slice is a `[[slice]]` of `slices.toml`; its crust is its `crust` list. The metric
-definitions live in `scripts/depth_metrics.py`.
+definitions live in `scripts/depth_metrics.py`, and the baseline codec lives in
+`scripts/depth_baseline.py`.
 
     python -m scripts.check_depth measure [--json]
     python -m scripts.check_depth init [--mode report|block]   refuses to overwrite the baseline
@@ -26,101 +27,29 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
-from typing import cast
 
-from scripts import slice_map
+from scripts import import_graph, slice_map
+from scripts.depth_baseline import (
+    BASELINE_FILE,
+    KEYS,
+    MEASUREMENT_VERSION,
+    MODES,
+    SHARES,
+    Baseline,
+    Caps,
+    decode,
+    encode,
+    number,
+    numerator,
+    read_document,
+    show,
+)
 from scripts.depth_metrics import Measure, Value, computed_imports, measure
-from scripts.slice_map import Graph, MapError
+from scripts.import_graph import Graph
+from scripts.slice_map import MapError
 
 ROOT = Path(__file__).resolve().parents[1]
-BASELINE_FILE = "depth-ratchet.json"
-# Increment when a definition changes a number; check then refuses an old baseline.
-MEASUREMENT_VERSION = 1
-SHARES = {"M08.share", "M10.share"}
-KEYS = (
-    "M08.crust_logic_statements",
-    "M08.share",
-    "M09.public_surface",
-    "M10.crust_complexity",
-    "M10.share",
-    "M12.unused_exports",
-)
-MODES = ("report", "block")
 SIZE_AWARE_STATEMENTS = 200  # Advisory only: never blocks, in any mode.
-Caps = dict[str, dict[str, Value]]  # slice -> key -> cap
-
-
-def _show(value: Value) -> str:
-    return f"{value[0]}/{value[1]}" if isinstance(value, tuple) else str(value)
-
-
-def _number(value: Value) -> Fraction:
-    return Fraction(value[0], value[1] or 1) if isinstance(value, tuple) else Fraction(value)
-
-
-def _numerator(value: Value) -> int:
-    return value if isinstance(value, int) else value[0]
-
-
-def _parse_value(key: str, raw: object, where: str) -> Value:
-    if key in SHARES:
-        parts = raw.split("/") if isinstance(raw, str) else []
-        if len(parts) == 2 and all(part.isdigit() for part in parts):
-            return int(parts[0]), int(parts[1])
-        raise MapError(f"{where}: {key} must be a 'numerator/denominator' string")
-    if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
-        return raw
-    raise MapError(f"{where}: {key} must be a non-negative integer")
-
-
-@dataclass(frozen=True)
-class Baseline:
-    mode: str
-    slices: Caps
-
-
-def _document(text: str, where: str) -> dict[str, object]:
-    try:
-        document = cast(object, json.loads(text))
-    except json.JSONDecodeError as error:
-        raise MapError(f"{where}: {error}") from error
-    fields = {"version", "measurement_version", "mode", "slices"}
-    return slice_map.table(document, where, set(), fields)
-
-
-def decode(text: str, where: str) -> Baseline:
-    top = _document(text, where)
-    if top.get("version") != 1 or top.get("mode") not in MODES or "slices" not in top:
-        raise MapError(f"{where}: version must be 1, mode one of {MODES}, and slices present")
-    if top.get("measurement_version") != MEASUREMENT_VERSION:
-        version = top.get("measurement_version")
-        raise MapError(
-            f"{where}: measurement_version {version} is not {MEASUREMENT_VERSION}; "
-            + "a human re-baselines after a definition change"
-        )
-    caps: Caps = {}
-    for name, row in slice_map.table(top["slices"], f"{where} slices", set(), None).items():
-        fields = slice_map.table(row, f"{where} slice {name}", set(), set(KEYS))
-        caps[name] = {
-            key: _parse_value(key, raw, f"{where} {name}") for key, raw in fields.items()
-        }
-    return Baseline(str(top["mode"]), caps)
-
-
-def encode(baseline: Baseline) -> str:
-    slices = {
-        name: {
-            key: _show(caps[key]) if key in SHARES else caps[key] for key in KEYS if key in caps
-        }
-        for name, caps in sorted(baseline.slices.items())
-    }
-    document = {
-        "version": 1,
-        "measurement_version": MEASUREMENT_VERSION,
-        "mode": baseline.mode,
-        "slices": slices,
-    }
-    return json.dumps(document, indent=2) + "\n"
 
 
 @dataclass
@@ -136,22 +65,22 @@ class Comparison:
     def judge(self, slot: tuple[str, str], value: Value, cap: Value) -> None:
         """Record one `(slice, key)` slot against its cap."""
         name, key = slot
-        if _number(value) > _number(cap):
+        if number(value) > number(cap):
             self.regressed = True
             note = ""
-            if key in SHARES and _numerator(value) <= _numerator(cap):
+            if key in SHARES and numerator(value) <= numerator(cap):
                 note = " denominator-shrink: the crust did not grow; internal code shrank"
-            self.lines.append(f"regressed {name} {key} {_show(cap)} -> {_show(value)}{note}")
-        elif _number(value) < _number(cap):
-            if key in SHARES and not self.accept_gains and _numerator(value) >= _numerator(cap):
+            self.lines.append(f"regressed {name} {key} {show(cap)} -> {show(value)}{note}")
+        elif number(value) < number(cap):
+            if key in SHARES and not self.accept_gains and numerator(value) >= numerator(cap):
                 self.held.append(
-                    f"held {name} {key} {_show(cap)} -> {_show(value)}: the share fell only "
+                    f"held {name} {key} {show(cap)} -> {show(value)}: the share fell only "
                     + "because internal code grew; a human may pass --accept-denominator-gains"
                 )
             else:
                 self.improved.setdefault(name, {})[key] = value
                 self.lines.append(
-                    f"improved {name} {key} {_show(cap)} -> {_show(value)}: run `tighten`"
+                    f"improved {name} {key} {show(cap)} -> {show(value)}: run `tighten`"
                 )
 
 
@@ -168,7 +97,7 @@ def compare(
             if key in caps:
                 result.judge((name, key), value, caps[key])
             else:
-                result.lines.append(f"new {name} {key} = {_show(value)} (no cap)")
+                result.lines.append(f"new {name} {key} = {show(value)} (no cap)")
     result.new = sorted(set(found) - set(baseline.slices))
     result.lines += [
         f"new {name}: no baseline; `tighten --adopt-new` adds it" for name in result.new
@@ -183,10 +112,10 @@ def compare(
 
 def _advisories(found: dict[str, Measure], graph: Graph) -> list[str]:
     lines = [
-        f"advisory M08.size-aware {name}: crust holds {_show(share)} of the slice's statements"
+        f"advisory M08.size-aware {name}: crust holds {show(share)} of the slice's statements"
         for name, measured in sorted(found.items())
-        if _number(measured.values["M08.crust_logic_statements"]) > SIZE_AWARE_STATEMENTS
-        and _number(share := measured.values["M08.share"]) > Fraction(1, 2)
+        if number(measured.values["M08.crust_logic_statements"]) > SIZE_AWARE_STATEMENTS
+        and number(share := measured.values["M08.share"]) > Fraction(1, 2)
     ]
     if computed := computed_imports(graph):
         lines.append(f"coverage: computed imports that no number follows: {', '.join(computed)}")
@@ -196,7 +125,7 @@ def _advisories(found: dict[str, Measure], graph: Graph) -> list[str]:
 def _table(found: dict[str, Measure]) -> str:
     header = ["slice", *KEYS, "module_init"]
     rows = [
-        [name, *(_show(measured.values[key]) for key in KEYS), str(measured.module_init)]
+        [name, *(show(measured.values[key]) for key in KEYS), str(measured.module_init)]
         for name, measured in sorted(found.items())
     ]
     widths = [max(len(row[index]) for row in [header, *rows]) for index in range(len(header))]
@@ -241,7 +170,7 @@ def _measure(run: _Run) -> int:
         return 0
     document = {
         name: {
-            "values": {key: _show(value) for key, value in measured.values.items()},
+            "values": {key: show(value) for key, value in measured.values.items()},
             "exports": measured.exports,
             "unused_exports": measured.unused,
             "module_init": measured.module_init,
@@ -307,13 +236,16 @@ def diff_baseline(root: Path, base: str) -> int:
     )
     if shown.returncode:
         raise MapError(f"{base} has no {BASELINE_FILE}")
+    current = root / BASELINE_FILE
+    if not current.is_file():
+        raise MapError(f"the working tree has no {BASELINE_FILE}")
     where = f"{base}:{BASELINE_FILE}"
-    version = _document(shown.stdout, where).get("measurement_version")
+    version = read_document(shown.stdout, where).get("measurement_version")
     if version != MEASUREMENT_VERSION:
         print(f"loosened measurement_version {version} -> {MEASUREMENT_VERSION}")
         return 0
     before = decode(shown.stdout, where)
-    after = decode((root / BASELINE_FILE).read_text(encoding="utf-8"), BASELINE_FILE)
+    after = decode(current.read_text(encoding="utf-8"), BASELINE_FILE)
     loosened_mode = before.mode == "block" and after.mode == "report"
     lines = ["loosened mode block -> report"] if loosened_mode else []
     for name, caps in sorted(before.slices.items()):
@@ -323,8 +255,8 @@ def diff_baseline(root: Path, base: str) -> int:
         for key, cap in caps.items():
             if key not in after.slices[name]:
                 lines.append(f"loosened removed {name} {key}")
-            elif _number(raised := after.slices[name][key]) > _number(cap):
-                lines.append(f"loosened raised {name} {key} {_show(cap)} -> {_show(raised)}")
+            elif number(raised := after.slices[name][key]) > number(cap):
+                lines.append(f"loosened raised {name} {key} {show(cap)} -> {show(raised)}")
     print("\n".join(lines) or "no loosening")
     return 0
 
@@ -341,7 +273,7 @@ def run(root: Path, args: _Args) -> int:
     if args.command == "diff-baseline":
         return diff_baseline(root, args.base)
     slices = slice_map.load(root)
-    graph = slice_map.build(root, slices)
+    graph = import_graph.build(root, slices)
     return COMMANDS[args.command](_Run(root, args, graph, measure(slices, graph)))
 
 

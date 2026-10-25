@@ -30,8 +30,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import cast
 
-from scripts import slice_map
-from scripts.slice_map import Graph, MapError, SliceMap
+from scripts import import_graph, slice_map
+from scripts.import_graph import Graph
+from scripts.slice_map import MapError, SliceMap
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_FILE = "sbguard-baseline.json"
@@ -221,7 +222,7 @@ def _line(identity: Identity) -> str:
 
 def check(root: Path, base: str, strict: bool) -> int:
     slices = slice_map.load(root)
-    graph = slice_map.build(root, slices)
+    graph = import_graph.build(root, slices)
     unresolved, found = violations(root, slices, graph)
     path = root / BASELINE_FILE
     baseline = decode(path.read_text(encoding="utf-8"), BASELINE_FILE) if path.is_file() else None
@@ -238,20 +239,16 @@ def check(root: Path, base: str, strict: bool) -> int:
             f"STALE [[suppress]] entry in slices.toml, remove it: {_line(entry)}"
             for entry in sorted(suppressed - found)
         ]
-    print("\n".join(lines) if lines else _passed(graph, baseline))
-    return 1 if lines else 0
-
-
-def _passed(graph: Graph, baseline: set[Identity] | None) -> str:
-    return (
-        f"slice guard: pass ({len(graph.files)} files, {len(graph.edges)} edges, "
-        f"{len(baseline or ())} baselined)"
+    summary = (
+        f"{len(graph.files)} files, {len(graph.edges)} edges, {len(baseline or ())} baselined"
     )
+    print("\n".join(lines) if lines else f"slice guard: pass ({summary})")
+    return 1 if lines else 0
 
 
 def baseline(root: Path, init: bool) -> int:
     slices = slice_map.load(root)
-    unresolved, found = violations(root, slices, slice_map.build(root, slices))
+    unresolved, found = violations(root, slices, import_graph.build(root, slices))
     path = root / BASELINE_FILE
     if init and path.exists():
         print(f"{BASELINE_FILE} exists; init refuses to overwrite it", file=sys.stderr)

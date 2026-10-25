@@ -1,222 +1,20 @@
-"""Depth ratchet: the metric definitions, the ratchet modes, tighten, and the gaming cases."""
+"""Depth ratchet: the ratchet modes, tighten, the baseline checks, and the gaming cases."""
 
 from __future__ import annotations
 
-import ast
-import json
-import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
 import pytest
 
-from scripts import check_depth as depth
-from scripts import depth_metrics as metrics
-from scripts.slice_map import MapError
-
-SRC = "src/shop"
-MAP = f"""version = 1
-
-[policy]
-language = "python"
-unmapped_files = "error"
-suppressions = "human-only"
-roots = ["src"]
-
-[[slice]]
-name = "orders"
-paths = ["{SRC}/orders"]
-crust = ["{SRC}/orders/__init__.py"]
-shape = "thin-facade"
-may_depend_on = []
-
-[[spine]]
-name = "app"
-paths = ["{SRC}/__init__.py", "{SRC}/_cli.py"]
-may_depend_on = ["orders"]
-"""
-CRUST = (
-    "from shop.orders._place import place, unused\n\n__all__ = ['place', 'total', 'unused']\n\n\n"
-    "def total(items):\n    return sum(items)\n"
-)
-INTERNAL = (
-    "def place(order, retry=1):\n    if order and retry:\n"
-    "        order.save()\n        order.log()\n"
-    "    return order\n\n\ndef unused():\n    return 0\n"
-)
-GROWN = CRUST + "    print(items)\n"
-TREE = {
-    "__init__.py": "",
-    "_cli.py": "from shop.orders import place, total\n\nprint(place, total)\n",
-    "orders/__init__.py": CRUST,
-    "orders/_place.py": INTERNAL,
-}
-
-
-def _statements(source: str) -> int:
-    return metrics.logic_statements(ast.parse(source))
-
-
-def _complexity(source: str) -> int:
-    return metrics.complexity(ast.parse(source))
-
-
-@pytest.mark.parametrize(
-    ("source", "count"),
-    [
-        ("def f(x):\n    '''Doc.'''\n    if x:\n        a = 1\n        b = 2\n", 3),
-        ("X = [i for i in range(3)]\nif X:\n    Y = 1\n", 0),
-        ("F = lambda x: x + 1\n", 1),
-        ("def f():\n    def g():\n        return 1\n    return g\n", 2),
-        ("class C:\n    X = 1\n\n    def m(self):\n        return self.X\n", 1),
-    ],
-)
-def test_logic_statements_count_function_bodies_only(source: str, count: int) -> None:
-    assert _statements(source) == count
-
-
-def test_reformatting_does_not_change_a_count() -> None:
-    one = "def f(x):\n    return [y for y in x if y]\n"
-    two = "def f(\n    x,\n):\n    return [\n        y\n        for y in x\n        if y\n    ]\n"
-    assert (_statements(one), _complexity(one)) == (_statements(two), _complexity(two))
-
-
-@pytest.mark.parametrize(
-    ("source", "count"),
-    [
-        ("def f():\n    return 1\n", 1),
-        ("def f(a, b=1, *, c=2):\n    if a and b or c:\n        pass\n", 6),
-        (
-            "def f(x):\n    for i in x:\n        try:\n            pass\n"
-            + "        except ValueError:\n            pass\n    return 1 if x else 2\n",
-            4,
-        ),
-        (
-            "def f(x):\n    match x:\n        case 1 if x:\n            pass\n"
-            + "        case _:\n            pass\n",
-            3,
-        ),
-        ("def f(x):\n    return [y for y in x if y]\n", 3),
-        ("def f(x):\n    def g(y):\n        if y:\n            pass\n    return g\n", 3),
-        ("F = lambda x=1: x\n", 2),
-    ],
-)
-def test_complexity_counts_decisions_and_defaults_per_function(source: str, count: int) -> None:
-    assert _complexity(source) == count
-
-
-def test_module_init_counts_top_level_logic_only() -> None:
-    source = (
-        '"""Doc."""\nimport os\nfrom typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    pass\n'
-        "X = 1\nY = os.getcwd()\nprint(Y)\n\n\nclass C:\n    pass\n"
-    )
-    assert metrics.module_init(ast.parse(source)) == 2
-
-
-@pytest.mark.parametrize(
-    ("source", "names"),
-    [
-        ("from a import b, _c\n__all__ = ('b', 'b')\n", ["b"]),
-        ("from a import b, _c\nX = 1\n_Y = 2\ndef f(): pass\n", ["X", "b", "f"]),
-        ("__all__: list[str] = ['b']\n", ["b"]),
-        ("import a.b\nZ: int = 1\nclass K: pass\nasync def g(): pass\n", ["K", "Z", "a", "g"]),
-    ],
-)
-def test_exports_read_a_literal_all_or_the_public_names(source: str, names: list[str]) -> None:
-    assert metrics.exports(ast.parse(source)) == names
-
-
-@pytest.mark.parametrize(
-    "source",
-    [
-        "__all__ = names()\n",
-        "__all__ = ['b']\n__all__ += ['c']\n",
-        "__all__ = ['b']\n__all__.extend(['c'])\n",
-        "__all__ = ['b', 1]\n",
-    ],
-)
-def test_a_computed_or_reused_all_is_an_input_error(source: str) -> None:
-    with pytest.raises(MapError):
-        _ = metrics.exports(ast.parse(source))
-
-
-@dataclass
-class Tree:
-    root: Path
-    capsys: pytest.CaptureFixture[str]
-
-    def write(self, path: str, text: str) -> None:
-        (self.root / path).parent.mkdir(parents=True, exist_ok=True)
-        _ = (self.root / path).write_text(text, encoding="utf-8")
-
-    def depth(self, *args: str) -> tuple[int, str]:
-        _ = self.capsys.readouterr()
-        code = depth.main(list(args), self.root)
-        captured = self.capsys.readouterr()
-        return code, captured.out + captured.err
-
-    def values(self) -> dict[str, str]:
-        code, out = self.depth("measure", "--json")
-        assert code == 0, out
-        return cast(dict[str, dict[str, dict[str, str]]], json.loads(out))["orders"]["values"]
-
-    def baseline(self) -> dict[str, object]:
-        text = (self.root / depth.BASELINE_FILE).read_text(encoding="utf-8")
-        return cast(dict[str, object], json.loads(text))
-
-    def save(self, document: dict[str, object]) -> None:
-        _ = (self.root / depth.BASELINE_FILE).write_text(json.dumps(document), encoding="utf-8")
-
-    def caps(self) -> dict[str, object]:
-        return cast(dict[str, dict[str, object]], self.baseline()["slices"])["orders"]
-
-    def init(self, mode: str = "block") -> None:
-        assert self.depth("init", "--mode", mode)[0] == 0
+from scripts.depth_baseline import BASELINE_FILE
+from tests.depth_fixture import CRUST, GROWN, INTERNAL, MAP, SRC, Tree, make_tree
+from tests.slice_fixture import git
 
 
 @pytest.fixture
 def tree(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Tree:
-    fixture = Tree(tmp_path, capsys)
-    fixture.write("slices.toml", MAP)
-    for name, text in TREE.items():
-        fixture.write(f"{SRC}/{name}", text)
-    return fixture
-
-
-def test_the_fixture_numbers(tree: Tree) -> None:
-    assert tree.values() == {
-        "M08.crust_logic_statements": "1",
-        "M08.share": "1/6",
-        "M09.public_surface": "3",
-        "M10.crust_complexity": "1",
-        "M10.share": "1/6",
-        "M12.unused_exports": "1",
-    }
-
-
-def test_measure_prints_a_table(tree: Tree) -> None:
-    code, out = tree.depth("measure")
-    assert code == 0
-    assert out.splitlines()[1].split() == ["orders", "1", "1/6", "3", "1", "1/6", "1", "0"]
-
-
-@pytest.mark.parametrize(
-    ("source", "unused"),
-    [
-        ("from shop.orders import unused\n\nprint(unused)\n", "0"),
-        ("from shop.orders import unused\n", "1"),  # An unreferenced import is not a use.
-        ("from shop import orders\n\norders.unused()\n", "0"),
-        ("import shop.orders\n\nshop.orders.unused()\n", "0"),
-        ("import shop.orders as o\n\nprint(o)\n", "0"),  # A bare module use uses every export.
-        ("from shop.orders import *\n", "0"),
-        ("from shop.orders._place import unused\n\nprint(unused)\n", "1"),  # A bypass is no use.
-        ("from shop.orders import unused\n\n__all__ = ['unused']\n", "0"),  # A re-export is a use.
-    ],
-)
-def test_m12_counts_each_use_form_through_the_crust(tree: Tree, source: str, unused: str) -> None:
-    tree.write(f"{SRC}/__init__.py", source)
-    assert tree.values()["M12.unused_exports"] == unused
+    return make_tree(tmp_path, capsys)
 
 
 def test_crust_growth_blocks_in_block_mode_and_reports_in_report_mode(tree: Tree) -> None:
@@ -227,7 +25,7 @@ def test_crust_growth_blocks_in_block_mode_and_reports_in_report_mode(tree: Tree
     assert code == 1, out
     assert "regressed orders M08.crust_logic_statements 1 -> 2" in out
     assert "regressed orders M08.share 1/6 -> 2/7" in out
-    (tree.root / depth.BASELINE_FILE).unlink()
+    (tree.root / BASELINE_FILE).unlink()
     tree.write(f"{SRC}/orders/__init__.py", CRUST)
     tree.init("report")
     tree.write(f"{SRC}/orders/__init__.py", GROWN)
@@ -365,7 +163,7 @@ def test_an_invalid_baseline_is_an_input_error(tree: Tree, field: str, value: ob
 
 def test_a_missing_or_broken_baseline_is_an_input_error(tree: Tree) -> None:
     assert tree.depth("check")[0] == 2
-    tree.write(depth.BASELINE_FILE, "{")
+    tree.write(BASELINE_FILE, "{")
     assert tree.depth("check")[0] == 2
 
 
@@ -380,22 +178,13 @@ def test_check_names_computed_imports_and_large_crusts(tree: Tree) -> None:
     assert f"coverage: computed imports that no number follows: {SRC}/_cli.py:3" in out
 
 
-def _git(root: Path, *args: str) -> None:
-    _ = subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
-
-
 @pytest.mark.real_process
 def test_diff_baseline_lists_loosening(tree: Tree) -> None:
     tree.init()
-    _git(tree.root, "init", "-q")
+    git(tree.root, "init", "-q")
     assert tree.depth("diff-baseline", "--base", "HEAD")[0] == 2  # No commit holds a baseline.
-    _git(tree.root, "add", "-A")
-    _git(tree.root, "commit", "-q", "-m", "base")
+    git(tree.root, "add", "-A")
+    git(tree.root, "commit", "-q", "-m", "base")
     assert tree.depth("diff-baseline", "--base", "HEAD") == (0, "no loosening\n")
     document = tree.baseline()
     document["mode"] = "report"
@@ -410,3 +199,10 @@ def test_diff_baseline_lists_loosening(tree: Tree) -> None:
     assert "loosened removed orders M12.unused_exports" in out
     tree.save({**document, "slices": {}})
     assert "loosened removed slice orders" in tree.depth("diff-baseline", "--base", "HEAD")[1]
+    (tree.root / BASELINE_FILE).unlink()
+    code, out = tree.depth("diff-baseline", "--base", "HEAD")
+    assert (code, out) == (2, f"error: the working tree has no {BASELINE_FILE}\n")
+    tree.save({**document, "measurement_version": 0})
+    git(tree.root, "commit", "-q", "-am", "an older measurement")
+    (tree.root / BASELINE_FILE).unlink()
+    assert tree.depth("diff-baseline", "--base", "HEAD")[0] == 2  # Even for an older base.

@@ -2,64 +2,16 @@
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from scripts import check_slices as guard
+from tests.slice_fixture import BACK_EDGE, MAP, SRC, TREE, git
 
 # Each case commits a fixture tree to a real git repository for the SB-07 base.
 pytestmark = pytest.mark.real_process
-
-SRC = "src/shop"
-MAP = f"""version = 1
-
-[policy]
-language = "python"
-unmapped_files = "error"
-suppressions = "human-only"
-roots = ["src"]
-
-[[slice]]
-name = "orders"
-paths = ["{SRC}/orders"]
-crust = ["{SRC}/orders/__init__.py"]
-shape = "thin-facade"
-may_depend_on = ["pricing"]
-requires = ["pricing"]
-
-[[slice]]
-name = "pricing"
-paths = ["{SRC}/pricing"]
-crust = ["{SRC}/pricing/__init__.py"]
-shape = "thin-facade"
-may_depend_on = []
-
-[[spine]]
-name = "app"
-paths = ["{SRC}/__init__.py", "{SRC}/_cli.py"]
-may_depend_on = ["orders", "pricing"]
-"""
-TREE = {
-    "__init__.py": "",
-    "_cli.py": "from shop.orders import place\n\nprint(place)\n",
-    "orders/__init__.py": "from shop.orders._place import place\n\n__all__ = ['place']\n",
-    "orders/_place.py": "from shop.pricing import price\n\n\ndef place():\n    return price()\n",
-    "pricing/__init__.py": "from shop.pricing._tiers import price\n\n__all__ = ['price']\n",
-    "pricing/_tiers.py": "def price():\n    return 1\n",
-}
-BACK_EDGE = "from shop.orders import place\n\n\ndef price():\n    return 1\n"
-
-
-def _git(root: Path, *args: str) -> None:
-    _ = subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
-        cwd=root,
-        check=True,
-        capture_output=True,
-    )
 
 
 @dataclass
@@ -75,8 +27,8 @@ class Repo:
         return self.root / SRC / name
 
     def commit(self) -> None:
-        _git(self.root, "add", "-A")
-        _git(self.root, "commit", "-q", "--allow-empty", "-m", "base")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-q", "--allow-empty", "-m", "base")
 
     def guard(self, *args: str) -> tuple[int, str]:
         _ = self.capsys.readouterr()
@@ -107,7 +59,7 @@ def repo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Repo:
     for name, text in TREE.items():
         fixture.write(f"{SRC}/{name}", text)
     fixture.write("slices.toml", MAP)
-    _git(tmp_path, "init", "-q")
+    git(tmp_path, "init", "-q")
     return fixture
 
 
@@ -136,6 +88,17 @@ def test_sb00_an_unresolved_first_party_import_fails_and_blocks_init(repo: Repo)
         "from shop.orders import _place\n",
         "from shop import orders\norders._place.place()\n",
         "from .orders import _place\n",
+        "def a():\n    from shop import orders as api\n    api._place.place()\n\n\n"
+        + "def b():\n    from shop import pricing as api\n",  # One alias per function scope.
+        "from shop import orders as api\n\n\n"  # A default is evaluated outside the function.
+        + "def f(x=api._place.place):\n    from shop import pricing as api\n",
+        "from shop import orders as api\n\n\n"  # So is a decorator.
+        + "@api._place.place\ndef f():\n    from shop import pricing as api\n",
+        "from shop import orders as api\n\n\n"  # A comprehension does not see the class scope.
+        + "class C:\n    from shop import pricing as api\n    X = [api._place for _ in (1,)]\n",
+        "def setup():\n    global api\n    import shop.orders as api\n\n\napi._place.place()\n",
+        "def outer():\n    api = None\n\n    def inner():\n        nonlocal api\n"
+        + "        import shop.orders as api\n\n    api._place.place()\n",
     ],
 )
 def test_sb01_each_form_of_a_crust_bypass_fails(repo: Repo, bypass: str) -> None:
@@ -261,45 +224,6 @@ def test_a_suppression_with_a_reason_accepts_one_identity_and_goes_stale(repo: R
     repo.passes()
     repo.source("_extra.py").unlink()
     _ = repo.fails("STALE [[suppress]] entry")
-
-
-@pytest.mark.parametrize(
-    "broken",
-    [
-        MAP.replace(f'paths = ["{SRC}/pricing"]', f'paths = ["{SRC}/pri*"]'),
-        MAP.replace(
-            f'paths = ["{SRC}/pricing"]', f'paths = ["{SRC}/pricing", "{SRC}/orders/_place.py"]'
-        ),
-        MAP.replace('shape = "thin-facade"', 'shape = "thin-facade"\nowner = "x"', 1),
-        MAP.replace(f'crust = ["{SRC}/pricing/__init__.py"]', f'crust = ["{SRC}/_cli.py"]'),
-        MAP + '\n[[suppress]]\nrule = "SB-00"\nfrom = "a"\nto = "b"\nreason = "r"\n',
-        MAP + '\n[[suppress]]\nrule = "SB-04"\nfrom = "a"\nto = "b"\nreason = ""\n',
-        MAP.replace('requires = ["pricing"]', 'requires = ["app"]'),
-        MAP.replace("may_depend_on = []", 'may_depend_on = ["pricing"]'),
-        MAP.replace('language = "python"', 'language = "typescript"'),
-        MAP.replace("version = 1", "version = 2"),
-        MAP + '\n[[spine]]\nname = "app"\npaths = ["src"]\nmay_depend_on = []\n',
-        "version = ",
-    ],
-    ids=[
-        "glob in paths",
-        "overlap",
-        "unknown field",
-        "crust outside",
-        "SB-00 suppression",
-        "empty reason",
-        "requires outside may_depend_on",
-        "depends on itself",
-        "wrong language",
-        "wrong version",
-        "duplicate name",
-        "invalid toml",
-    ],
-)
-def test_invalid_maps_are_input_errors(repo: Repo, broken: str) -> None:
-    repo.adopt()
-    repo.write("slices.toml", broken)
-    assert repo.guard("check", "--base", "HEAD")[0] == 2
 
 
 def test_a_missing_base_is_an_input_error(repo: Repo, monkeypatch: pytest.MonkeyPatch) -> None:

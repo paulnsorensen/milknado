@@ -1,14 +1,15 @@
 # Architecture gates — slice guard and depth ratchet decision
 
 The slice guard (`scripts/check_slices.py`) and the depth ratchet (`scripts/check_depth.py`) read one human-owned `slices.toml` through `scripts/slice_map.py`.
+`scripts/import_graph.py` builds the import graph of the mapped tree. It resolves an attribute chain through the import bindings of its lexical scope, so two functions that reuse one alias do not hide a crust bypass.
 They are a port of the Python `ast` gates in paulnsorensen/skillz-that-grillz (PR 530).
 Those gates port two TypeScript prototypes in paulnsorensen/sliced-bread-architecture: sliced-bread-guard (PR 69) and sliced-bread-depth-ratchet (PR 71).
-`just check-llm` and `just build-ci` run both gates. Their pytest suites are `tests/test_check_slices.py` and `tests/test_check_depth.py`.
+`just check-llm` and `just build-ci` run both gates. Their pytest suites are `tests/test_check_slices.py`, `tests/test_slice_map.py`, `tests/test_check_depth.py`, and `tests/test_depth_metrics.py`.
 
 ### ADR-architecture-gates-001: Port the skillz-that-grillz Python gates  [status: accepted]
 
 - **Context:** The upstream tools support TypeScript only. skillz-that-grillz already has a Python `ast` port with the upstream rule IDs (SB-00 to SB-07), metric keys (M08, M09, M10, M12), and file formats.
-- **Decision:** Copy that port into `scripts/`. Adapt it to the milknado style: 99-column lines, at most four parameters, pytest suites, and `python -m scripts.<tool>` so that the modules import `scripts.slice_map`. The metric definitions move to `scripts/depth_metrics.py`, so each file stays readable.
+- **Decision:** Copy that port into `scripts/`. Adapt it to the milknado style: 99-column lines, at most four parameters, pytest suites, and `python -m scripts.<tool>` so that the modules import `scripts.slice_map`. The metric definitions move to `scripts/depth_metrics.py`, and the baseline codec moves to `scripts/depth_baseline.py`. Each script stays under the 300-line limit.
 - **Consequences:** The `packages/*/src` roots check is gone, because milknado has one root, `src`. The import-linter contracts in `pyproject.toml` stay. They overlap SB-01 and SB-02, and the overlap is intentional.
 
 ### ADR-architecture-gates-002: Domain slices are slices; common, adapters, and entry points are spine  [status: accepted]

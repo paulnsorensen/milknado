@@ -13,8 +13,9 @@ import ast
 from dataclasses import dataclass
 from typing import cast
 
-from scripts import slice_map
-from scripts.slice_map import Graph, MapError, Node, SliceMap
+from scripts import import_graph
+from scripts.import_graph import Graph
+from scripts.slice_map import MapError, Node, SliceMap
 
 FunctionLike = ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda
 Value = int | tuple[int, int]  # a count, or a share as (numerator, denominator)
@@ -180,20 +181,27 @@ def _bound_names(targets: list[ast.expr]) -> set[str]:
 
 def _imported_uses(tree: ast.Module, module: str, is_package: bool, crust: str) -> set[str] | None:
     """Return the names a file imports from `crust` and uses; None for a star import."""
-    used: set[str] = set()
+    aliases = [
+        alias
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and import_graph.absolute(node, module, is_package) == crust
+        for alias in node.names
+    ]
+    if any(alias.name == "*" for alias in aliases):
+        return None
+    if not aliases:
+        return set()
+    try:
+        listed = set(_all(tree) or ())
+    except MapError:
+        return {alias.name for alias in aliases}  # A computed `__all__` can re-export any name.
     loads = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
-    listed = set(_all(tree) or ())
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.ImportFrom)
-            and slice_map.absolute(node, module, is_package) == crust
-        ):
-            for alias in node.names:
-                if alias.name == "*":
-                    return None
-                if (local := alias.asname or alias.name) in loads or local in listed:
-                    used.add(alias.name)
-    return used
+    return {
+        alias.name
+        for alias in aliases
+        if (alias.asname or alias.name) in loads or (alias.asname or alias.name) in listed
+    }
 
 
 def _uses(graph: Graph, file: str, crust: str, names: list[str]) -> set[str]:
@@ -203,31 +211,34 @@ def _uses(graph: Graph, file: str, crust: str, names: list[str]) -> set[str]:
     if imported is None:
         return set(names)
     used = imported & set(names)
-    bindings = slice_map.module_bindings(tree, module, is_package)
-    bound = {local for local, target in bindings.items() if target == crust}
-    chains = {
-        local: target for local, target in bindings.items() if crust.startswith(target + ".")
-    }
-    values: set[int] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Attribute):
+    scoped = import_graph.scoped_bindings(tree, module, is_package)
+    values = {id(node.value) for node, _ in scoped if isinstance(node, ast.Attribute)}
+    for node, bindings in scoped:
+        if isinstance(node, ast.Attribute):
+            used |= _attribute_uses(node, bindings, crust, names)
+        elif (
+            isinstance(node, ast.Name)
+            and crust in bindings.get(node.id, ())
+            and id(node) not in values
+        ):
+            return set(names)  # A bare crust module reference can reach any export.
+    return used
+
+
+def _attribute_uses(
+    node: ast.Attribute, bindings: import_graph.Bindings, crust: str, names: list[str]
+) -> set[str]:
+    """Return the crust export names that one attribute chain reaches through a binding."""
+    local, _, rest = (import_graph.dotted(node) or "").partition(".")
+    used: set[str] = set()
+    for target in bindings.get(local, ()):
+        if target != crust and not crust.startswith(target + "."):
             continue
-        values.add(id(node.value))
-        local, _, rest = (slice_map.dotted(node) or "").partition(".")
-        if local in bound:
-            full = f"{crust}.{rest}"
-        elif local in chains:
-            full = f"{chains[local]}.{rest}"
-        else:
-            continue
+        full = f"{target}.{rest}"
         name = full.removeprefix(crust + ".").split(".")[0]
         if full.startswith(crust + ".") and name in names:
             used.add(name)
-    bare = any(
-        isinstance(node, ast.Name) and node.id in bound and id(node) not in values
-        for node in ast.walk(tree)
-    )
-    return set(names) if bare else used
+    return used
 
 
 @dataclass(frozen=True)
@@ -284,5 +295,5 @@ def computed_imports(graph: Graph) -> list[str]:
         f"{file}:{node.lineno}"
         for file, tree in graph.trees.items()
         for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and slice_map.dotted(node.func) in dynamic
+        if isinstance(node, ast.Call) and import_graph.dotted(node.func) in dynamic
     ]
