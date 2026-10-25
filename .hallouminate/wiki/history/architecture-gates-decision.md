@@ -28,4 +28,10 @@ Those gates port two TypeScript prototypes in paulnsorensen/sliced-bread-archite
 - **Decision:** `check --base auto` uses `$GATE_BASE`, else `HEAD^1` in GitHub Actions, else the merge base with `origin/main`. The CI `build` job checks out with `fetch-depth: 2`; the `web` job already fetches full history.
 - **Consequences:** A clone without `origin/main` must set `GATE_BASE`, or the guard exits 2.
 
-_Source: port of skillz-that-grillz PR 530 · Updated: 2026-10-25_
+### ADR-architecture-gates-005: Move worker-protection adapters into loop  [status: accepted]
+
+- **Context:** 31 of the adoption bypasses imported `loop` internals from `adapters`. The fixes were to widen the `loop` crust by about 21 names, to re-map `loop` as spine, or to move the consumers into `loop`.
+- **Decision:** The owner chose to move the consumers. `loop` may depend on `graph` and `dispatch`, and the `loop` M09 cap may rise for the moved facades only. Iteration 2 moved `process.py` (now `loop/_process_adapter.py`), `_protection.py`, `_tmux_exec.py`, `_loop_lifeline.py` (now `loop/_lifeline_main.py`), `_loop_worker_evidence.py`, `_loop_worker_release.py`, and `coordinator_worker_recovery.py` (now `loop/_worker_recovery.py`). The `loop` crust gained `ProcessAdapter`, `CoordinatorWorkerRecovery`, and `loop_protection` (M09 9 to 12). `adapters/__init__.py` re-exports the two adapters, so `cli` needs no `loop` edge.
+- **Consequences:** The baseline fell from 31 to 19 entries. `adapters/loop.py` cannot move while `execution` imports `RunStatus` and `CompletionVerdict` from `loop`, because `loop -> execution` would be a cycle. `coordinator_turns.py` has the same problem through `coordinator`. Those moves need another owner decision.
+
+_Source: port of skillz-that-grillz PR 530; owner decisions 2026-10-25 · Updated: 2026-10-25_

@@ -43,7 +43,7 @@ def _wrapper(path: Path, *command: str) -> list[str]:
         f"MILKNADO_NODE_ID={node.id}",
         sys.executable,
         "-m",
-        "milknado.adapters._tmux_exec",
+        "milknado.loop._tmux_exec",
         "current-nonce",
         str(path),
         "-",

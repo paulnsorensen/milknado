@@ -442,7 +442,7 @@ The supported minimum filelock 3.19.1 otherwise changes a precreated private loc
 Shutdown fixture markers use atomic replacement so visibility implies complete identity data.[^pr503-marker]
 
 [^pr503-recovery]: src/milknado/domains/dispatch/reap.py:117-139; tests/test_worker_recovery_errors.py.
-[^pr503-signals]: src/milknado/adapters/process.py:100-122; src/milknado/mcp/_loop_node_runner.py:135-152; tests/test_process_termination_budget.py; tests/test_loop_node_runner_signal_subprocess.py. The signal fixture exercises the real runner and OS signals with a stub RunLoop.
+[^pr503-signals]: src/milknado/loop/_process_adapter.py:100-122; src/milknado/mcp/_loop_node_runner.py:135-152; tests/test_process_termination_budget.py; tests/test_loop_node_runner_signal_subprocess.py. The signal fixture exercises the real runner and OS signals with a stub RunLoop.
 [^pr503-lifecycle]: src/milknado/loop/_process_lifecycle.py:182-296; src/milknado/loop/_agent.py:833-914,1082-1143; tests/loop/test_lifecycle_acceptance_exhaustion.py; tests/loop/test_lifecycle_error_paths.py; tests/loop/test_all_worker_context.py.
 [^pr503-observation]: src/milknado/loop/_process_identity.py:43-49; tests/loop/test_process_identity_errors.py.
 [^pr503-filelock]: src/milknado/domains/graph/worker_evidence.py:93; tests/test_worker_evidence_errors.py. Repeated-open regression fails before the fix and passes with filelock 3.19.1.

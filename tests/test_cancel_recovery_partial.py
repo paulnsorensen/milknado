@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import MikadoNode, NodeStatus, RunResult
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs, reconcile_node_status
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 _NOW = "2026-01-01T00:00:00+00:00"
 

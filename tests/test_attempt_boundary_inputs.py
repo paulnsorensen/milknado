@@ -6,8 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters._tmux_exec import main
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.coordinator._task_attempt_workflow import (
     finish_task_attempt,
     link_task_run,
@@ -15,6 +13,8 @@ from milknado.domains.coordinator._task_attempt_workflow import (
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import MikadoGraph, TaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
+from milknado.loop._tmux_exec import main
 
 _NOW = "2026-01-01T00:00:00+00:00"
 

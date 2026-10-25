@@ -13,11 +13,11 @@ from typing import cast
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import GitPort, MikadoNode, NodeStatus, RunResult
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, RunRecord, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

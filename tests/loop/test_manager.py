@@ -12,7 +12,6 @@ import psutil
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import SessionInput, WorkerOwner
 from milknado.domains.graph import open_standalone_worker_evidence
 from milknado.loop._events import (
@@ -29,6 +28,7 @@ from milknado.loop._run_types import (
     RunState,
     RunStatus,
 )
+from milknado.loop._worker_evidence import LoopWorkerEvidence
 from milknado.loop.manager import ManagedRun, RunManager
 from tests.loop.helpers import (
     MOCK_SUBPROCESS,

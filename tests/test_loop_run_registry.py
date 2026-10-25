@@ -354,8 +354,8 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     before this window elapses, so the sweep never fires on a real run."""
     from datetime import UTC, datetime, timedelta
 
-    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
+    from milknado.loop._process_adapter import ProcessAdapter
 
     _ = graph.add_node("pidless dispatch")
 

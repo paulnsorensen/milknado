@@ -11,12 +11,12 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import NodeStatus, RunResult, WorkerOwner
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
+from milknado.loop._worker_evidence import LoopWorkerEvidence
+from milknado.loop._worker_release import LoopWorkerRelease
 
 pytestmark = pytest.mark.real_process
 

@@ -15,13 +15,13 @@ import psutil
 import pytest
 
 from milknado.adapters import GitAdapter
-from milknado.adapters.process import ProcessAdapter
 from milknado.app.loop import LoopStartRequest, _claim_loop  # pyright: ignore[reportPrivateUsage]
 from milknado.domains.common import NodeStatus, ObservationKey, WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, NodeWorkers, RunWorkers
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

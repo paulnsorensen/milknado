@@ -8,11 +8,6 @@
     },
     {
       "rule": "SB-01",
-      "from": "src/milknado/adapters/_loop_lifeline.py",
-      "to": "src/milknado/loop/_lifeline.py"
-    },
-    {
-      "rule": "SB-01",
       "from": "src/milknado/adapters/_loop_local_runs.py",
       "to": "src/milknado/loop/_events.py"
     },
@@ -40,36 +35,6 @@
       "rule": "SB-01",
       "from": "src/milknado/adapters/_loop_types.py",
       "to": "src/milknado/loop/_events.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_loop_worker_evidence.py",
-      "to": "src/milknado/loop/_process_identity.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_loop_worker_release.py",
-      "to": "src/milknado/loop/_process_gate.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_protection.py",
-      "to": "src/milknado/loop/_process_contract.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_protection.py",
-      "to": "src/milknado/loop/_process_registry.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_tmux_exec.py",
-      "to": "src/milknado/loop/_process_gate.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/_tmux_exec.py",
-      "to": "src/milknado/loop/_process_lifecycle.py"
     },
     {
       "rule": "SB-01",
@@ -108,11 +73,6 @@
     },
     {
       "rule": "SB-01",
-      "from": "src/milknado/adapters/coordinator_worker_recovery.py",
-      "to": "src/milknado/loop/_process_identity.py"
-    },
-    {
-      "rule": "SB-01",
       "from": "src/milknado/adapters/loop.py",
       "to": "src/milknado/loop/_events.py"
     },
@@ -124,26 +84,6 @@
     {
       "rule": "SB-01",
       "from": "src/milknado/adapters/loop.py",
-      "to": "src/milknado/loop/_process_lifecycle.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/process.py",
-      "to": "src/milknado/loop/_process_contract.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/process.py",
-      "to": "src/milknado/loop/_process_gate.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/process.py",
-      "to": "src/milknado/loop/_process_identity.py"
-    },
-    {
-      "rule": "SB-01",
-      "from": "src/milknado/adapters/process.py",
       "to": "src/milknado/loop/_process_lifecycle.py"
     },
     {

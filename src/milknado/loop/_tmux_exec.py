@@ -14,7 +14,6 @@ from typing import NoReturn, cast
 
 import msgspec
 
-from milknado.adapters._protection import protection_from_env
 from milknado.domains.dispatch import (
     ExecutedReceipt,
     FailedReceipt,
@@ -24,6 +23,7 @@ from milknado.domains.dispatch import (
 )
 from milknado.loop._process_gate import SpawnOptions, StartEvidence
 from milknado.loop._process_lifecycle import spawn_protected
+from milknado.loop._protection import protection_from_env
 
 
 def _receipt(path: Path, receipt: Receipt) -> None:

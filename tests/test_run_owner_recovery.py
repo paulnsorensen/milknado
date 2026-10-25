@@ -13,7 +13,6 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.app.worker_recovery import reconcile_loop_workers
 from milknado.domains.common import NodeStatus, RunResult, WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch import reconcile
@@ -25,6 +24,7 @@ from milknado.domains.graph import (
     WorkerEvidenceStore,
     open_standalone_worker_evidence,
 )
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 
@@ -157,7 +157,7 @@ def test_blocked_cleanup_does_not_hold_process_exit(tmp_path: Path) -> None:
 import os, signal, subprocess, sys, time
 from pathlib import Path
 import psutil
-from milknado.adapters.process import ProcessAdapter
+from milknado.loop._process_adapter import ProcessAdapter
 from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.dispatch.reap import ReapRequest, reap_orphaned_workers
 from milknado.domains.graph import MikadoGraph, NodeWorkers

@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import NodeStatus
 from milknado.domains.dispatch.reconcile import fail_stale_running_runs
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
+from milknado.loop._process_adapter import ProcessAdapter
 
 pytestmark = pytest.mark.real_process
 

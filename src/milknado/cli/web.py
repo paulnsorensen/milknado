@@ -89,9 +89,8 @@ def _coordinator_host(
     project_root: Path,
     review_decision: ReviewDecisionPort | None,
 ) -> tuple[CoordinatorControl, NativeCoordinatorTurns]:
-    from milknado.adapters import DeferredProviderRecovery, ExistingWorktreeRecovery
+    from milknado import adapters
     from milknado.adapters.coordinator_turns import NativeCoordinatorTurns
-    from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecovery
     from milknado.app.plan import build_planner
     from milknado.domains.coordinator import (
         CoordinatorControl,
@@ -105,9 +104,9 @@ def _coordinator_host(
         recovery_runtime=RecoveryRuntime(
             graph.groups,
             project_root,
-            DeferredProviderRecovery(),
-            ExistingWorktreeRecovery(project_root),
-            CoordinatorWorkerRecovery(config.db_path),
+            adapters.DeferredProviderRecovery(),
+            adapters.ExistingWorktreeRecovery(project_root),
+            adapters.CoordinatorWorkerRecovery(config.db_path),
         ),
         review_decision=review_decision,
         turn_runtime=turn_runtime,

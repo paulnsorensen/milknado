@@ -84,7 +84,8 @@ name = "loop"
 paths = ["src/milknado/loop"]
 crust = ["src/milknado/loop/__init__.py"]
 shape = "thin-facade"
-may_depend_on = ["common", "root"]
+# graph and dispatch: owner decision 2026-10-25, the worker-protection adapters moved into loop.
+may_depend_on = ["common", "dispatch", "graph", "root"]
 
 [[slice]]
 name = "plugins"
