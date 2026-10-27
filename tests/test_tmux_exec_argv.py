@@ -24,5 +24,5 @@ def test_exec_receipt_command_isolates_the_interpreter_from_cwd(tmp_path: Path) 
         sys.executable,
         "-P",
         "-m",
-        "milknado.adapters._tmux_exec",
+        "milknado.loop._tmux_exec",
     )

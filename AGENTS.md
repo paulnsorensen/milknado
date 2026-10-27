@@ -47,6 +47,23 @@ Never substitute a pipeline- or framework-generic gate set (e.g. bare `pytest` +
 orchestration (skills, sub-agents, CI scaffolding) asks "what are the quality gates", the
 answer is `just check-llm`, matching `quality_gates` in `milknado.toml`.
 
+### Architecture gates
+
+`check-llm` and `build-ci` run two architecture gates that read one human-owned
+`slices.toml`. See `.hallouminate/wiki/history/architecture-gates-decision.md`.
+
+- `slices.toml` maps every `src/` file to one slice or spine node. A human owns it.
+- The slice guard (`just slice-guard`, `scripts/check_slices.py`) enforces it.
+  `sbguard-baseline.json` holds adopted violations and only shrinks.
+  When you remove a violation, run `uv run python -m scripts.check_slices baseline --shrink`.
+- A new module goes into a mapped path, or a human adds the path to `slices.toml`.
+- The depth ratchet (`just depth-ratchet`, `scripts/check_depth.py`) caps six depth keys
+  per slice in `depth-ratchet.json` (block mode).
+  When `check` reports `improved`, run `uv run python -m scripts.check_depth tighten` in the same change.
+  When it reports `regressed`, move the logic behind the crust, or ask the human owner to raise the cap.
+- Never edit `slices.toml`, `sbguard-baseline.json`, or `depth-ratchet.json` to make a check pass.
+  Do not pass `--accept-denominator-gains`; that decision belongs to the human owner.
+
 ## TUI Pull Request Evidence
 
 Open a pull request for TUI changes after `just check-llm` passes.

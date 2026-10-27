@@ -6,7 +6,7 @@ import signal
 
 import pytest
 
-from milknado.adapters._tmux_exec import (
+from milknado.loop._tmux_exec import (
     _terminate,  # pyright: ignore[reportPrivateUsage]
 )
 

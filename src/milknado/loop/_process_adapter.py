@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, cast
 
-from milknado.adapters._protection import protection_from_env
 from milknado.domains.common import WorkerIdentity, identity_state, pid_alive
 from milknado.domains.dispatch import Descendant, ProcessOutcome, WorkerCleanupResult
 from milknado.loop._process_contract import ProtectionContext
@@ -19,6 +18,7 @@ from milknado.loop._process_gate import SpawnOptions, StartEvidence
 from milknado.loop._process_identity import observe_descendants
 from milknado.loop._process_identity import terminate_verified_result as terminate_verified
 from milknado.loop._process_lifecycle import spawn_protected
+from milknado.loop._protection import protection_from_env
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,12 +12,12 @@ import msgspec
 import psutil
 import pytest
 
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from milknado.loop._worker_evidence import LoopWorkerEvidence
 from tests.loop.worker_release import PlainWorkerRelease
 
 pytestmark = [
@@ -40,8 +40,8 @@ import sys
 import time
 from pathlib import Path
 import psutil
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
+from milknado.loop._worker_evidence import LoopWorkerEvidence
+from milknado.loop._worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.loop._process_lifecycle import ProtectionContext, SpawnOptions, spawn_protected
 

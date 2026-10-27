@@ -10,15 +10,15 @@ from pathlib import Path
 import psutil
 import pytest
 
-import milknado.adapters._loop_worker_release as release_module
 import milknado.loop._process_startup as startup
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
+import milknado.loop._worker_release as release_module
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, WorkerProcess, spawn_gated
 from milknado.loop._process_lifecycle import spawn_protected
 from milknado.loop._process_registry import WorkerRegistry
+from milknado.loop._worker_evidence import LoopWorkerEvidence
 
 pytestmark = pytest.mark.real_process
 

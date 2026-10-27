@@ -7,11 +7,11 @@ from pathlib import Path
 
 import psutil
 
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_registry import WorkerRegistry
+from milknado.loop._worker_evidence import LoopWorkerEvidence
+from milknado.loop._worker_release import LoopWorkerRelease
 from milknado.project import load_project_config
 
 

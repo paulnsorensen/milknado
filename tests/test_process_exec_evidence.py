@@ -10,12 +10,12 @@ from pathlib import Path
 import psutil
 import pytest
 
-from milknado.adapters._loop_worker_evidence import LoopWorkerEvidence
-from milknado.adapters._loop_worker_release import LoopWorkerRelease
 from milknado.domains.common import WorkerOwner
 from milknado.domains.graph import MikadoGraph, StartTaskAttempt
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, WorkerProcess, spawn_gated
+from milknado.loop._worker_evidence import LoopWorkerEvidence
+from milknado.loop._worker_release import LoopWorkerRelease
 
 pytestmark = pytest.mark.real_process
 
@@ -95,7 +95,7 @@ def test_unlinked_release_skips_graph_initialization(
     def no_graph(_path: Path) -> MikadoGraph:
         pytest.fail("unlinked graph opened")
 
-    monkeypatch.setattr("milknado.adapters._loop_worker_release.MikadoGraph", no_graph)
+    monkeypatch.setattr("milknado.loop._worker_release.MikadoGraph", no_graph)
     worker = spawn_gated(_options((sys.executable, "-c", "pass")))
     try:
         _release_worker(worker, context)
@@ -214,9 +214,12 @@ def test_untrusted_protocol_cannot_prove_execution(protocol: bytes) -> None:
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX exec-status channel")
-def test_partial_readiness_without_eof_is_unknown() -> None:
+def test_partial_readiness_without_eof_is_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     from milknado.domains.common import WorkerIdentity
     from milknado.loop._process_gate import WorkerProcess
+
+    # The verdict comes from the report window expiring; its length is irrelevant.
+    monkeypatch.setattr("milknado.loop._process_gate._EXEC_REPORT_TIMEOUT", 0.2)
 
     proc = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(2)"],

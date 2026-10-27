@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from contextlib import suppress
+from dataclasses import dataclass, replace
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Thread
@@ -105,6 +106,31 @@ def _begin_observation(
     return current
 
 
+def _release_abandoned(
+    evidence: WorkerEvidenceStore, process: ProcessTerminationPort, record: WorkerRecord
+) -> WorkerRecord | None:
+    """Take over an observation only when its supervisor died between begin and commit.
+
+    A live, unknown, or mismatched supervisor, or a helper observer, keeps the fence.
+    """
+    if record.observation_owner is None:
+        return record
+    if record.observation_owner == "supervisor" and (
+        process.supervisor_state(record.supervisor_pid, record.supervisor_start_token) == "gone"
+    ):
+        # The store refuses an observation that another observer began or moved.
+        with suppress(RuntimeError):
+            evidence.release_abandoned(record)
+            return replace(record, observation_owner=None, observation_seq=None)
+    _logger.error(
+        "worker recovery unresolved: invocation_id=%s interrupted observation=%s sequence=%s",
+        record.invocation_id,
+        record.observation_owner,
+        record.observation_seq,
+    )
+    return None
+
+
 def _prepare_worker(
     evidence: WorkerEvidenceStore,
     process: ProcessTerminationPort,
@@ -112,16 +138,10 @@ def _prepare_worker(
     deadline: float,
 ) -> WorkerRecord | None:
     """Return the observed record, a record the helper closed, or None when unresolved."""
-    if record.observation_owner is not None:
-        _logger.error(
-            "worker recovery unresolved: invocation_id=%s interrupted observation=%s sequence=%s",
-            record.invocation_id,
-            record.observation_owner,
-            record.observation_seq,
-        )
-        return None
     try:
-        begun = _begin_observation(evidence, process, record, deadline)
+        if (released := _release_abandoned(evidence, process, record)) is None:
+            return None
+        begun = _begin_observation(evidence, process, released, deadline)
         if begun is not None and begun.ended_at is not None:
             return begun
         if begun is not None:

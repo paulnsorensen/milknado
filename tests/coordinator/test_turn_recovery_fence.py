@@ -9,7 +9,6 @@ from typing import cast
 import psutil
 import pytest
 
-from milknado.adapters.coordinator_worker_recovery import CoordinatorWorkerRecovery
 from milknado.domains.common import WorkerIdentity, WorkerOwner
 from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 from milknado.domains.coordinator.control_models import Recover, StartGoal, StartTurn
@@ -24,6 +23,7 @@ from milknado.domains.coordinator.recovery import (
     RecoveryRuntime,
 )
 from milknado.domains.graph import ExecutionGroup, MikadoGraph, WorkerEvidenceStore
+from milknado.loop._worker_recovery import CoordinatorWorkerRecovery
 
 
 class Runtime:
@@ -208,9 +208,7 @@ def test_worker_recovery_selects_exact_runtime_turn_with_group_association(
         verified.append(identity.invocation_id)
         return False
 
-    monkeypatch.setattr(
-        "milknado.adapters.coordinator_worker_recovery.terminate_verified", terminate
-    )
+    monkeypatch.setattr("milknado.loop._worker_recovery.terminate_verified", terminate)
     verifier = CoordinatorWorkerRecovery(graph.db_path)
     assert verifier.terminated("turn", 999999, 1.0)
     assert verified == ["matching"]
@@ -238,9 +236,7 @@ def _termination_result(monkeypatch: pytest.MonkeyPatch, survived: bool) -> None
         del identity, descendants, deadline
         return survived
 
-    monkeypatch.setattr(
-        "milknado.adapters.coordinator_worker_recovery.terminate_verified", terminate
-    )
+    monkeypatch.setattr("milknado.loop._worker_recovery.terminate_verified", terminate)
 
 
 def test_worker_recovery_refuses_worker_owned_by_another_supervisor(tmp_path: Path) -> None:

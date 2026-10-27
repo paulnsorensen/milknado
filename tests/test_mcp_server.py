@@ -13,11 +13,11 @@ from typing import TypedDict, cast
 import pytest
 from fastmcp import Context
 
-from milknado.adapters.process import ProcessAdapter
 from milknado.domains.common import RunResult, WorktreeMode
 from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.dispatch import reconcile_node_status
 from milknado.domains.graph import MikadoGraph, RunRecord
+from milknado.loop._process_adapter import ProcessAdapter
 from milknado.mcp._core import GraphNodeSummary, mcp
 from milknado.mcp.follow_up import milknado_track_follow_up
 from milknado.mcp.run import (

@@ -15,7 +15,6 @@ from milknado.adapters._group_action_session import (
     drain_group_commands,
     record_group_command,
 )
-from milknado.adapters._protection import loop_protection
 from milknado.adapters.recovery import ExistingWorktreeRecovery
 from milknado.domains.common import (
     MilknadoConfig,
@@ -33,6 +32,7 @@ from milknado.domains.coordinator import (
     TurnRuntimeResult,
 )
 from milknado.domains.graph import MikadoGraph, TaskAttempt
+from milknado.loop import loop_protection
 from milknado.loop._agent import AgentRunSpec
 from milknado.loop._process_contract import ProtectionContext
 from milknado.loop._process_gate import SpawnOptions

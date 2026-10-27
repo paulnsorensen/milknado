@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_group_action_session.py",
+      "to": "src/milknado/loop/sessions/__init__.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_local_runs.py",
+      "to": "src/milknado/loop/_events.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_session.py",
+      "to": "src/milknado/loop/_events.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_session.py",
+      "to": "src/milknado/loop/_process_registry.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_session.py",
+      "to": "src/milknado/loop/manager.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_session.py",
+      "to": "src/milknado/loop/sessions/__init__.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/_loop_types.py",
+      "to": "src/milknado/loop/_events.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/_agent.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/_process_contract.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/_process_gate.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/_process_lifecycle.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/_process_registry.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/sessions/__init__.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/coordinator_turns.py",
+      "to": "src/milknado/loop/sessions/_codex_policy.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/loop.py",
+      "to": "src/milknado/loop/_events.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/loop.py",
+      "to": "src/milknado/loop/_process_gate.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/adapters/loop.py",
+      "to": "src/milknado/loop/_process_lifecycle.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/cli/graph.py",
+      "to": "src/milknado/domains/graph/render_dot.py"
+    },
+    {
+      "rule": "SB-01",
+      "from": "src/milknado/domains/coordinator/projection.py",
+      "to": "src/milknado/loop/sessions/__init__.py"
+    }
+  ]
+}

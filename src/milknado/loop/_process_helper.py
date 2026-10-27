@@ -107,7 +107,7 @@ def start_helper(
             (
                 sys.executable,
                 "-m",
-                "milknado.adapters._loop_lifeline",
+                "milknado.loop._lifeline_main",
                 str(context.db_path),
                 str(read_fd),
                 worker.identity.invocation_id,

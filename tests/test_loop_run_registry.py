@@ -354,8 +354,8 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     before this window elapses, so the sweep never fires on a real run."""
     from datetime import UTC, datetime, timedelta
 
-    from milknado.adapters.process import ProcessAdapter
     from milknado.domains.dispatch import fail_stale_running_runs
+    from milknado.loop._process_adapter import ProcessAdapter
 
     _ = graph.add_node("pidless dispatch")
 
@@ -371,6 +371,14 @@ def test_stale_sweep_recovers_pidless_executor_row_after_timeout_elapses(
     assert _run_record(graph, run_id)["status"] == "failed"
 
 
+@pytest.fixture
+def short_cancel_finalize(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Shrink the cancel confirm bound; these tests assert what happens after it elapses."""
+    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_TIMEOUT_SECS", 0.05)
+    monkeypatch.setattr(cancel_module, "_CANCEL_FINALIZE_POLL_SECS", 0.01)
+
+
+@pytest.mark.usefixtures("short_cancel_finalize")
 def test_cancel_refuses_pidless_run_without_owner_without_writing_marker(
     graph: MikadoGraph, tmp_path: Path
 ) -> None:
@@ -437,6 +445,7 @@ def test_mcp_functions_accept_executor_run_id(tmp_path: Path) -> None:
         mcp_graph.close()
 
 
+@pytest.mark.usefixtures("short_cancel_finalize")
 def test_cancel_stale_adopted_round_run_id_is_a_noop(tmp_path: Path) -> None:
     """Blocker 1B hardening: for an adopted (review-owned) execution, the
     node's run_id fence stays pinned to the parent/owner fence

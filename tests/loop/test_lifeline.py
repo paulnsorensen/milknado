@@ -53,7 +53,7 @@ def test_lifeline_ready_then_supervisor_eof_stops_worker(tmp_path: Path) -> None
             [
                 sys.executable,
                 "-m",
-                "milknado.adapters._loop_lifeline",
+                "milknado.loop._lifeline_main",
                 str(db_path),
                 str(lifeline_read),
                 "inv-1",
@@ -110,7 +110,7 @@ def test_lifeline_eof_does_not_extend_cleanup_for_busy_database(tmp_path: Path) 
             [
                 sys.executable,
                 "-m",
-                "milknado.adapters._loop_lifeline",
+                "milknado.loop._lifeline_main",
                 str(db_path),
                 str(read_fd),
                 "inv-1",
