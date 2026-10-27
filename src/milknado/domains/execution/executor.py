@@ -11,7 +11,6 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
-from enum import Enum, auto
 from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TypedDict, cast
@@ -83,7 +82,9 @@ from milknado.domains.execution._review import (
 from milknado.domains.execution._review_policy import ReviewDecision, ReviewPolicy, decide_review
 from milknado.domains.execution._stop import (
     LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    WatchStep,
     force_stop_graph_run,
+    stop_failed,
     stop_graph_run,
 )
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
@@ -110,17 +111,6 @@ _LOOP_CANCEL_POLL_SECS = 0.25
 # the retry cadence caps at one error line per minute (~1.4k lines/day) instead
 # of polling at full rate forever. Retry-until-stopped semantics are preserved.
 _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS = 60.0
-
-
-class _WatchStep(Enum):
-    IDLE = auto()
-    STOP_FAILED = auto()
-    DONE = auto()
-
-
-def _stop_failed(step: _WatchStep) -> bool:
-    return step is _WatchStep.STOP_FAILED
-
 
 _TRANSIENT_EXIT_CODES = frozenset({124, 137, 143})
 _TRANSIENT_MSG_RE = re.compile(
@@ -791,9 +781,9 @@ class Executor:
             wait=wait_exponential(
                 multiplier=_LOOP_CANCEL_POLL_SECS, max=_LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS
             ),
-            retry=retry_if_result(_stop_failed),
+            retry=retry_if_result(stop_failed),
         )
-        while retry_stop(self._watch_cancel_step, run_id, rdir) is _WatchStep.IDLE:
+        while retry_stop(self._watch_cancel_step, run_id, rdir) is WatchStep.IDLE:
             time.sleep(_LOOP_CANCEL_POLL_SECS)
 
     def _finalize_dead_watched_thread(self, run_id: str) -> None:
@@ -816,16 +806,16 @@ class Executor:
             ),
         )
 
-    def _watch_cancel_step(self, run_id: str, rdir: Path) -> _WatchStep:
+    def _watch_cancel_step(self, run_id: str, rdir: Path) -> WatchStep:
         if self._loop.get_run(run_id) is None:
             # The run record is gone; nothing left to watch.
             self._unconfirmed_stop_run_ids.discard(run_id)
-            return _WatchStep.DONE
+            return WatchStep.DONE
         if not self._loop.is_run_alive(run_id):
             self._finalize_dead_watched_thread(run_id)
-            return _WatchStep.DONE
+            return WatchStep.DONE
         if not is_cancel_requested(rdir, run_id):
-            return _WatchStep.IDLE
+            return WatchStep.IDLE
         try:
             stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
@@ -835,7 +825,7 @@ class Executor:
                 + "sentinel is set",
                 run_id,
             )
-            return _WatchStep.STOP_FAILED
+            return WatchStep.STOP_FAILED
         if not stopped:
             _logger.error(
                 "force-stop could not confirm exit for cancelled loop "
@@ -843,9 +833,9 @@ class Executor:
                 + "retrying while the sentinel is set",
                 run_id,
             )
-            return _WatchStep.STOP_FAILED
+            return WatchStep.STOP_FAILED
         self._finalize_watcher_stop(run_id)
-        return _WatchStep.DONE
+        return WatchStep.DONE
 
     def _finalize_watcher_stop(self, run_id: str) -> None:
         """A confirmed force-stop: finalize the row cancelled, unless the

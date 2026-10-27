@@ -149,9 +149,8 @@ def _reconcile_terminal_cancel(
 def _adopt_pre_finalized_run(graph: MikadoGraph, git: GitPort, run_id: str) -> dict[str, object]:
     final = _await_cancel_finalize(graph, run_id)
     if final is None:
-        record = graph.runs.get(run_id)
-        final = dict(record) if record is not None else None
-    if final is None or final.get("status") == "running":
+        final = _terminal_run(graph, run_id)
+    if final is None:
         raise RuntimeError(
             f"run {run_id!r} has no confirmed worker owner; state and worktree preserved"
         )
@@ -170,10 +169,9 @@ def _recover_dead_owner(
             f"run {run_id!r} worker recovery unresolved; state and worktree preserved"
         )
     _ = fail_stale_running_runs(graph, node_id, process)
-    record = graph.runs.get(run_id)
-    if record is None or record.get("status") == "running":
+    final = _terminal_run(graph, run_id)
+    if final is None:
         raise RuntimeError(f"run {run_id!r} dead-owner recovery lost its terminal write")
-    final: dict[str, object] = dict(record)
     reconcile_node_status(graph, node_id, cast(str, final["status"]), run_id=run_id)
     final["worktree_preserved"] = node.worktree_path
     return final
@@ -223,12 +221,11 @@ def _cancel_async_run(
     try:
         final = _await_cancel_finalize(graph, run_id)
         if final is None:
-            latest = graph.runs.get(run_id)
-            if latest is None or latest.get("status") == "running":
-                raise RuntimeError(
-                    f"run {run_id!r} has not confirmed worker exit; state and worktree preserved"
-                )
-            final = dict(latest)
+            final = _terminal_run(graph, run_id)
+        if final is None:
+            raise RuntimeError(
+                f"run {run_id!r} has not confirmed worker exit; state and worktree preserved"
+            )
     finally:
         clear_cancel(rdir, run_id)
     final = _reconcile_terminal_cancel(cast("MikadoGraph", graph), git, run_id, final)
