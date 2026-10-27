@@ -3,10 +3,23 @@
 from __future__ import annotations
 
 import time
+from enum import Enum, auto
 
 from milknado.domains.common import LoopPort
 
 LOOP_CANCEL_STOP_TIMEOUT_SECS = 5.0
+
+
+class WatchStep(Enum):
+    """Outcome of one cancel-watcher check on a loop run."""
+
+    IDLE = auto()
+    STOP_FAILED = auto()
+    DONE = auto()
+
+
+def stop_failed(step: WatchStep) -> bool:
+    return step is WatchStep.STOP_FAILED
 
 
 def stop_graph_run(
