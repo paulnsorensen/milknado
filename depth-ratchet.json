@@ -4,11 +4,11 @@
   "mode": "block",
   "slices": {
     "batching": {
-      "M08.crust_logic_statements": 7,
-      "M08.share": "7/388",
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/388",
       "M09.public_surface": 14,
-      "M10.crust_complexity": 3,
-      "M10.share": "3/210",
+      "M10.crust_complexity": 0,
+      "M10.share": "0/210",
       "M12.unused_exports": 2
     },
     "coordinator": {
