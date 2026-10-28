@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
-from milknado.domains.common import SessionAction, SessionEvent, SessionInput
+from milknado.domains.common import ProviderFamily, SessionAction, SessionEvent, SessionInput
 
-ProviderFamily = Literal["claude", "codex"]
 RecoveryOutcome = Literal["reattached", "resumed", "unknown_turn", "unavailable", "unsupported"]
 
 
