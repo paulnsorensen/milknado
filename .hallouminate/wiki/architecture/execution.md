@@ -365,7 +365,7 @@ Later finalization can close an unrelated descriptor after the operating system 
 
 Native worker sessions separate decoded protocol events from raw diagnostic output.
 `LoopSessionMixin` selects supported worker commands and attaches durable session storage
-(`src/milknado/adapters/_loop_session.py:23`).
+(`src/milknado/loop/_loop_session.py:18`).
 
 - OMP uses RPC, Claude uses bidirectional stream-json, and Codex uses app-server messages.
 - `SessionChannel` persists input admission before it accepts a command.
@@ -832,7 +832,7 @@ sentinel.
 - `src/milknado/domains/execution/run_loop/_node.py` — bounded `run_node` driver and shared terminal, timeout, and stop handling.
 - `src/milknado/domains/execution/_models.py` — execution results and typed dispatch failures.
 - `src/milknado/domains/dispatch/brief.py` — `render_brief` (shared worker context and result-deposit instructions).
-- `src/milknado/adapters/loop.py` — LOOP.md loop scaffolding.
+- `src/milknado/loop/_loop_adapter.py` — `LoopAdapter`, LOOP.md loop scaffolding.
 - `src/milknado/domains/dispatch/runner.py` — subprocess spawn, async worker, cancel, orphan recovery, `reconcile_node_status`.
 - `src/milknado/domains/dispatch/_runstate.py` — run-id format, log tail, cancel sentinel (run *state* lives in the SQLite `runs` table).
 - `src/milknado/adapters/tmux.py` — `TmuxAdapter`, `RunWindow`, exact-match targeting, the POSIX-sh window wrapper.

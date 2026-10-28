@@ -21,6 +21,8 @@ from typing import (
     runtime_checkable,
 )
 
+from milknado.domains.common import StopReason
+
 LogLevel = Literal["info", "error"]
 """Valid log levels for :class:`LogMessageData` events."""
 
@@ -29,13 +31,6 @@ OutputStream = Literal["stdout", "stderr"]
 
 LOG_INFO: LogLevel = "info"
 LOG_ERROR: LogLevel = "error"
-
-StopReason = Literal["completed", "error", "user_requested"]
-"""Valid reason strings for :class:`RunStoppedData` events."""
-
-STOP_COMPLETED: StopReason = "completed"
-STOP_ERROR: StopReason = "error"
-STOP_USER_REQUESTED: StopReason = "user_requested"
 
 
 class EventType(Enum):

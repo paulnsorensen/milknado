@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import yaml
 
+from milknado.domains.common import CompletionVerdict
 from milknado.loop._events import (
     CommandsCompletedData,
     CommandsStartedData,
@@ -32,13 +33,7 @@ from milknado.loop._events import (
     TurnCappedData,
 )
 from milknado.loop._frontmatter import LOOP_MARKER
-from milknado.loop._run_types import (
-    DEFAULT_COMPLETION_SIGNAL,
-    Command,
-    CompletionVerdict,
-    RunConfig,
-    RunState,
-)
+from milknado.loop._run_types import DEFAULT_COMPLETION_SIGNAL, Command, RunConfig, RunState
 from milknado.loop._runner import RunResult
 
 # ── Patch targets ─────────────────────────────────────────────────────

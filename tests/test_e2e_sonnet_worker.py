@@ -24,10 +24,10 @@ from pathlib import Path
 import pytest
 
 from milknado.adapters.git import GitAdapter
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common.types import NodeStatus
 from milknado.domains.execution import ExecutionConfig, Executor, RunLoop
 from milknado.domains.graph import MikadoGraph
+from milknado.loop._loop_adapter import LoopAdapter
 
 # ---------------------------------------------------------------------------
 # Skip guard

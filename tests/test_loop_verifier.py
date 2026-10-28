@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.adapters.loop import LoopAdapter
+from milknado.domains.common import CompletionVerdict
 from milknado.domains.common.config import Gate
 from milknado.domains.execution.completion import (
     _GATE_TIMEOUT_SECONDS,  # pyright: ignore[reportPrivateUsage]
@@ -34,7 +34,7 @@ from milknado.domains.execution.completion import (
     build_completion_verifier,
 )
 from milknado.domains.graph import MikadoGraph
-from milknado.loop import CompletionVerdict
+from milknado.loop._loop_adapter import LoopAdapter
 from milknado.loop._run_types import DEFAULT_COMMAND_TIMEOUT
 
 

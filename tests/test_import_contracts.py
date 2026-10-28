@@ -92,6 +92,10 @@ def test_layering_contracts_are_declared() -> None:
         "milknado.domains.graph._verification",
         "milknado.domains.wiki._locate",
         "milknado.domains.wiki._serialize",
+        "milknado.loop._loop_adapter",
+        "milknado.loop._loop_local_runs",
+        "milknado.loop._loop_session",
+        "milknado.loop._loop_types",
     ]
     assert barrel_contract["allow_indirect_imports"] is True
 

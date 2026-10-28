@@ -19,6 +19,7 @@ import milknado.domains.execution.executor as _executor_module
 from milknado.domains.common import (
     ProgressEvent,
     RunResult,
+    RunStatus,
     SessionInput,
     SessionView,
     TerminalRunOutcome,
@@ -47,7 +48,6 @@ from milknado.domains.execution import (
 from milknado.domains.execution._models import CompletionResult, DispatchResult, PreservedWorkerRun
 from milknado.domains.execution.executor import WorktreeManager
 from milknado.domains.graph import FinalizeTaskFailure, MikadoGraph
-from milknado.loop import RunStatus
 from milknado.loop._process_gate import SpawnOptions, StartEvidence, spawn_gated
 from milknado.loop._worker_release import LoopWorkerRelease
 

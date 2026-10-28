@@ -12,7 +12,6 @@ from typing import TextIO, cast
 
 import pytest
 
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.execution import PreservedWorkerRun
 from milknado.domains.graph import (
     MikadoGraph,
@@ -20,6 +19,7 @@ from milknado.domains.graph import (
     WorkerEvidenceStore,
     default_worker_db_path,
 )
+from milknado.loop._loop_adapter import LoopAdapter
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker
 
@@ -110,7 +110,7 @@ def test_graph_backed_review_has_no_synthetic_run(tmp_path: Path) -> None:
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows retains its existing launch backend")
 def test_raw_run_manager_rejects_missing_durable_context(tmp_path: Path) -> None:
-    from milknado.loop import RunManager
+    from milknado.loop.manager import RunManager
     from tests.loop.helpers import make_config
 
     manager = RunManager()
