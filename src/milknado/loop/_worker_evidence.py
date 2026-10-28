@@ -29,6 +29,13 @@ class LoopWorkerEvidence:
     def with_deadline(self, deadline: float) -> LoopWorkerEvidence:
         return LoopWorkerEvidence(self.db_path, deadline)
 
+    @contextmanager
+    def held(self) -> Generator[None, None, None]:
+        # When a per-operation connection is the last one open, its close checkpoints and
+        # deletes the WAL: four fsyncs per operation. An idle connection prevents that.
+        with self._store():
+            yield
+
     def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
         with self._store() as store:
             store.record_worker(owner, worker)

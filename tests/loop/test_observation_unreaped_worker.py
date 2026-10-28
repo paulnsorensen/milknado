@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import cast
 
@@ -46,6 +47,9 @@ class _Evidence:
 
     def with_deadline(self, deadline: float) -> WorkerEvidence:
         return self
+
+    def held(self) -> AbstractContextManager[None]:
+        return nullcontext()
 
     def record_worker(self, owner: WorkerOwner, worker: WorkerIdentity) -> None:
         pass

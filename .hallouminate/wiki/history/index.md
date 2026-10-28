@@ -21,5 +21,6 @@
 - [sliced-bread-crust-002](./sliced-bread-crust-002.md) — ADR — Ordered curds for crust redesign (sliced-bread-crust-002)
 - [sliced-bread-crust-003](./sliced-bread-crust-003.md) — ADR — App owns policy; entrypoints thin I/O (sliced-bread-crust-003)
 - [web-ui-shared-node-detail](./web-ui-shared-node-detail.md) — ADR — Cross-feature web UI state lives in `web/src/shared/`
+- [worker-evidence-slow-fsync](./worker-evidence-slow-fsync.md) — Worker Evidence on a Slow Disk
 - [workflow-executor-decision](./workflow-executor-decision.md) — Decision — Native Dynamic-Workflow ("ultracode") Execution Backend
 <!-- HALLOUMINATE:INDEX-END -->

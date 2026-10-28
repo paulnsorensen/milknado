@@ -92,7 +92,7 @@ class ProcessAdapter:
 
     def _run_protected(self, launch: _InlineLaunch) -> ProcessOutcome:
         context = self._protection_context(launch)
-        with launch.log_path.open("wb") as log:
+        with launch.log_path.open("wb") as log, context.evidence.held():
             options = SpawnOptions(
                 launch.argv,
                 launch.cwd,
