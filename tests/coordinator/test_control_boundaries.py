@@ -4,7 +4,7 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import SessionContext, SessionEvent, SessionInput
-from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices, ProviderBinding
+from milknado.domains.coordinator import CoordinatorControl, CoordinatorServices
 from milknado.domains.coordinator.control_models import (
     CreateGroup,
     DispatchTask,
@@ -13,6 +13,7 @@ from milknado.domains.coordinator.control_models import (
     RuntimeAction,
     StartGoal,
 )
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session
 from milknado.domains.graph import MikadoGraph
 from milknado.loop.sessions import ProviderSessionIdentity, RuntimeSession, SessionChannel
