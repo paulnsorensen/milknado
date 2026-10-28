@@ -67,20 +67,14 @@ class TestLoopCrustContract:
             "Attribution docstring must cite fork: paulnsorensen/ralphify"
         )
 
-    def test_five_names_importable(self) -> None:
-        """WHY: the spec acceptance criterion is 'from milknado.loop import
-        EventType, QueueEmitter, RunConfig, RunManager, RunStatus' — each name
-        must resolve to a real object, not None."""
-        from milknado.loop import EventType, QueueEmitter, RunConfig, RunManager, RunStatus
+    def test_adapters_facade_reexports_loop_crust_adapter(self) -> None:
+        """WHY: LoopAdapter lives in the loop slice; the adapters facade must hand
+        out the same class so wiring code needs no loop internals."""
+        import milknado.loop as loop_pkg
+        from milknado.adapters import LoopAdapter
 
-        for name, obj in [
-            ("EventType", EventType),
-            ("QueueEmitter", QueueEmitter),
-            ("RunConfig", RunConfig),
-            ("RunManager", RunManager),
-            ("RunStatus", RunStatus),
-        ]:
-            assert obj is not None, f"milknado.loop.{name} resolved to None"
+        assert LoopAdapter is loop_pkg.LoopAdapter
+        assert "LoopAdapter" in loop_pkg.__all__
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +126,7 @@ class TestSeamRename:
     def test_loop_adapter_satisfies_loop_port(self) -> None:
         """WHY: LoopPort is the protocol boundary; LoopAdapter is the only
         implementation — they must be structurally compatible at import time."""
-        from milknado.adapters.loop import LoopAdapter
+        from milknado.loop import LoopAdapter
 
         # Runtime isinstance check against a Protocol requires runtime_checkable.
         # We verify compatibility by asserting the adapter exposes every method

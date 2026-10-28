@@ -15,7 +15,6 @@ import psutil
 import pytest
 
 from milknado.adapters import FlockSlotPool
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     CrgPort,
     GitPort,
@@ -29,8 +28,9 @@ from milknado.domains.common.errors import InvalidTransition
 from milknado.domains.execution import Executor, PreservedWorkerRun
 from milknado.domains.execution._stop import stop_graph_run
 from milknado.domains.graph import HostCapacityFull, MikadoGraph
-from milknado.loop import EventType, QueueEmitter, RunConfig
-from milknado.loop._events import Event, NoData
+from milknado.loop._events import Event, EventType, NoData, QueueEmitter
+from milknado.loop._loop_adapter import LoopAdapter
+from milknado.loop._run_types import RunConfig
 
 pytestmark = [
     pytest.mark.real_process,
@@ -146,7 +146,7 @@ def test_reviewer_run_stopped_does_not_confirm_worker(
             assert self.emitter is not None
             self.emitter.queue.put(Event(EventType.RUN_STOPPED, run_id, NoData()))
 
-    monkeypatch.setattr("milknado.adapters.loop.RunManager", ReviewManager)
+    monkeypatch.setattr("milknado.loop._loop_adapter.RunManager", ReviewManager)
     try:
         adapter = LoopAdapter(graph=graph)
         with pytest.raises(PreservedWorkerRun) as preserved:

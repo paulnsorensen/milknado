@@ -4,23 +4,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.adapters._loop_local_runs import (
-    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
-)
-from milknado.adapters.loop import (
-    MAX_CONSECUTIVE_AGENT_FAILURES,
-    MILKNADO_COMPLETION_SIGNAL,
-    LoopAdapter,
-    _build_loop_content,  # pyright: ignore[reportPrivateUsage]
-    _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
-)
 from milknado.domains.common import RunResult, SessionView
 from milknado.domains.common.config import Gate
 from milknado.domains.common.errors import CompletionTimeout
 from milknado.domains.common.protocols import ProgressEvent, TerminalRunOutcome, VerifySpecResult
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.graph import MikadoGraph
-from milknado.loop import EventType
+from milknado.loop._events import EventType
+from milknado.loop._loop_adapter import (
+    MAX_CONSECUTIVE_AGENT_FAILURES,
+    MILKNADO_COMPLETION_SIGNAL,
+    LoopAdapter,
+    _build_loop_content,  # pyright: ignore[reportPrivateUsage]
+    _build_verify_prompt,  # pyright: ignore[reportPrivateUsage]
+)
+from milknado.loop._loop_local_runs import (
+    _parse_verify_output,  # pyright: ignore[reportPrivateUsage]
+)
 
 
 @pytest.fixture()
@@ -39,7 +39,7 @@ def adapter(mock_manager: MagicMock) -> LoopAdapter:
 
 
 class TestCreateRun:
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_creates_config_and_delegates(
         self,
         mock_config_cls: MagicMock,
@@ -83,7 +83,7 @@ class TestCreateRun:
         )
         assert result is mock_run
 
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_bounds_worker_loop_with_max_iterations(
         self,
         mock_config_cls: MagicMock,
@@ -258,7 +258,8 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -277,7 +278,7 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import RunStatus
+        from milknado.domains.common import RunStatus
 
         event = MagicMock(type=EventType.RUN_STOPPED, run_id="run-1")
         run = MagicMock()
@@ -292,7 +293,8 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -310,7 +312,7 @@ class TestWaitForNextCompletion:
     def test_marks_failed_timeout_outcome(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        from milknado.loop import RunStatus
+        from milknado.domains.common import RunStatus
 
         event = MagicMock(type=EventType.RUN_STOPPED, run_id="run-1")
         run = MagicMock()
@@ -331,7 +333,8 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         noise = MagicMock()
         noise.type = EventType.ITERATION_COMPLETED
@@ -355,7 +358,8 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         event1 = MagicMock()
         event1.type = EventType.RUN_STOPPED
@@ -381,7 +385,8 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         progress = MagicMock()
         progress.type = EventType.ITERATION_STARTED
@@ -407,7 +412,7 @@ class TestWaitForNextCompletion:
         adapter: LoopAdapter,
         mock_manager: MagicMock,
     ) -> None:
-        from milknado.loop import EventType
+        from milknado.loop._events import EventType
 
         event = MagicMock()
         event.type = EventType.RUN_STOPPED
@@ -556,7 +561,7 @@ class TestVerifySpec:
             goal_delta="verification unavailable: no agent configured",
         )
 
-    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.loop._loop_adapter.RunManager")
     def test_done_signal(
         self,
         mock_manager_cls: MagicMock,
@@ -572,7 +577,7 @@ class TestVerifySpec:
         result = adapter.verify_spec("spec", "graph")
         assert result == VerifySpecResult(outcome="done")
 
-    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.loop._loop_adapter.RunManager")
     def test_gaps_signal_with_delta(
         self,
         mock_manager_cls: MagicMock,
@@ -589,7 +594,7 @@ class TestVerifySpec:
         result = adapter.verify_spec("spec", "graph")
         assert result == VerifySpecResult(outcome="gaps", goal_delta="missing auth")
 
-    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.loop._loop_adapter.RunManager")
     def test_timeout_returns_gaps(
         self,
         mock_manager_cls: MagicMock,
@@ -599,7 +604,7 @@ class TestVerifySpec:
         local_q: queue.Queue[MagicMock] = queue.Queue()
         mock_manager = _setup_verify_mocks(mock_manager_cls, local_q)
 
-        with patch("milknado.adapters._loop_local_runs.time") as mock_time:
+        with patch("milknado.loop._loop_local_runs.time") as mock_time:
             # deadline = monotonic() + 120; the next reading is past it, so
             # remaining <= 0 trips before any blocking queue.get().
             mock_time.monotonic.side_effect = [0.0, 200.0]  # pyright: ignore[reportAny]
@@ -609,7 +614,7 @@ class TestVerifySpec:
         assert result == VerifySpecResult(outcome="gaps", goal_delta="verification timed out")
 
     def test_queue_timeout_stops_and_joins_verifier(self) -> None:
-        from milknado.adapters._loop_local_runs import drain_verify_run
+        from milknado.loop._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         events = MagicMock()
@@ -654,7 +659,7 @@ def _put_stopped(q: queue.Queue[MagicMock]) -> None:
 
 
 class TestRunNodeReviewTimeout:
-    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.loop._loop_adapter.RunManager")
     def test_timeout_returns_error_verdict(
         self,
         mock_manager_cls: MagicMock,
@@ -681,7 +686,7 @@ class TestRunNodeReviewTimeout:
 
 
 class TestDrainVerifyRunExceptionHandler:
-    @patch("milknado.adapters.loop.RunManager")
+    @patch("milknado.loop._loop_adapter.RunManager")
     def test_exception_in_drain_returns_gaps(
         self,
         mock_manager_cls: MagicMock,
@@ -711,7 +716,7 @@ class TestDrainVerifyRunExceptionHandler:
     ) -> None:
         import logging
 
-        from milknado.adapters._loop_local_runs import drain_verify_run
+        from milknado.loop._loop_local_runs import drain_verify_run
 
         manager = MagicMock()
         manager.stop_and_join.side_effect = RuntimeError("stop boom")  # pyright: ignore[reportAny]
@@ -731,7 +736,8 @@ class TestProgressDelivery:
     def test_progress_events_collected_from_queue(
         self, adapter: LoopAdapter, mock_manager: MagicMock
     ) -> None:
-        from milknado.loop import EventType, RunStatus
+        from milknado.domains.common import RunStatus
+        from milknado.loop._events import EventType
 
         _PROGRESS = getattr(EventType, "PROGRESS", None)
         if _PROGRESS is None:
@@ -805,7 +811,7 @@ class TestWaitForNextCompletionTimeout:
     def test_raises_when_deadline_already_passed(self, adapter: LoopAdapter) -> None:
         """Covers line 91: remaining <= 0 branch in wait_for_next_completion."""
 
-        with patch("milknado.adapters.loop.time") as mock_time:
+        with patch("milknado.loop._loop_adapter.time") as mock_time:
             # start, deadline=start+timeout, remaining<=0 check
             mock_time.monotonic.side_effect = [0.0, 100.0, 100.0, 100.0]  # pyright: ignore[reportAny]
             with pytest.raises(CompletionTimeout):
@@ -813,7 +819,7 @@ class TestWaitForNextCompletionTimeout:
 
 
 class TestCreateRunWithProjectRoot:
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_mcp_config_injected_when_exists(
         self,
         mock_config_cls: MagicMock,
@@ -837,7 +843,7 @@ class TestCreateRunWithProjectRoot:
         call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
         assert "--mcp-config" in call_kwargs["agent"]
 
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_mcp_config_not_injected_for_omp(
         self,
         mock_config_cls: MagicMock,
@@ -859,7 +865,7 @@ class TestCreateRunWithProjectRoot:
 
         assert mock_config_cls.call_args.kwargs["agent"] == "omp"
 
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_no_mcp_config_when_file_missing(
         self,
         mock_config_cls: MagicMock,
@@ -881,7 +887,7 @@ class TestCreateRunWithProjectRoot:
         call_kwargs = mock_config_cls.call_args[1]  # pyright: ignore[reportAny]
         assert "--mcp-config" not in call_kwargs["agent"]
 
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_log_dir_routed_to_loop_logs(
         self,
         mock_config_cls: MagicMock,
@@ -909,7 +915,7 @@ class TestGenerateLoopMdWriteError:
 
         bad_path = tmp_path / "nonexistent_dir" / "LOOP.md"
         # Make the parent non-writable to force OSError
-        with patch("milknado.adapters.loop.Path.write_text") as mock_write:
+        with patch("milknado.loop._loop_adapter.Path.write_text") as mock_write:
             mock_write.side_effect = OSError("disk full")
             with pytest.raises(LoopMarkdownWriteError) as exc_info:
                 _ = adapter.generate_loop_md(
@@ -978,7 +984,7 @@ class TestGetRunFailureDetail:
 
 
 class TestWorkerFailureCap:
-    @patch("milknado.adapters.loop.RunConfig")
+    @patch("milknado.loop._loop_adapter.RunConfig")
     def test_create_run_caps_consecutive_failures(
         self, mock_config_cls: MagicMock, adapter: LoopAdapter
     ) -> None:

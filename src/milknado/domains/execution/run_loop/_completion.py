@@ -6,12 +6,11 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
-from milknado.domains.common import TerminalRunOutcome
+from milknado.domains.common import RunStatus, TerminalRunOutcome
 from milknado.domains.execution._models import RebaseConflict
 from milknado.domains.execution.run_loop._logging import ts
 from milknado.domains.execution.run_loop._scheduler import Scheduler
 from milknado.domains.execution.run_loop.state import TerminalRunState
-from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import LoopPort

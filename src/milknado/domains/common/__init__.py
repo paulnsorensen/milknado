@@ -73,6 +73,7 @@ from milknado.domains.common.protocols import (
     VerifySpecResult,
 )
 from milknado.domains.common.redaction import redact_control_text
+from milknado.domains.common.run_lifecycle import CompletionVerdict, RunStatus, StopReason
 from milknado.domains.common.session import (
     SessionAction,
     SessionContext,
@@ -111,6 +112,7 @@ __all__ = [
     "BUILTIN_FLAVORS",
     "Gate",
     "CompletionTimeout",
+    "CompletionVerdict",
     "CrgPort",
     "GitPort",
     "GitOperationError",
@@ -130,6 +132,8 @@ __all__ = [
     "NodeStatus",
     "RebaseResult",
     "RunResult",
+    "RunStatus",
+    "StopReason",
     "WorktreeMode",
     "PluginHook",
     "PluginMeta",

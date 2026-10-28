@@ -149,7 +149,7 @@ def _fetch_run_states(
     run_ids = [n.run_id for n in nodes if n.run_id and n.status == NodeStatus.RUNNING]
     if not run_ids:
         return None, []
-    from milknado.adapters.loop import LoopAdapter
+    from milknado.adapters import LoopAdapter
 
     adapter = LoopAdapter()
     states: dict[str, str] = {}

@@ -12,17 +12,12 @@ import msgspec
 import pytest
 
 from milknado.adapters import FlockSlotPool
-from milknado.adapters._loop_local_runs import (
-    _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
-    drain_review_run,
-)
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     Gate,
     GitPort,
     MikadoNode,
     ProgressEvent,
+    RunStatus,
     SessionContext,
     SessionInput,
     SessionView,
@@ -59,7 +54,13 @@ from milknado.loop._events import (
     NullEmitter,
     QueueEmitter,
 )
-from milknado.loop._run_types import RunConfig, RunState, RunStatus
+from milknado.loop._loop_adapter import LoopAdapter
+from milknado.loop._loop_local_runs import (
+    _parse_review_verdict,  # pyright: ignore[reportPrivateUsage]
+    drain_review_run,
+)
+from milknado.loop._loop_types import ReviewVerdict
+from milknado.loop._run_types import RunConfig, RunState
 from milknado.loop.manager import ManagedRun, RunManager
 from tests.test_execution import FakeCrg, FakeGit
 
@@ -915,7 +916,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _advance_clock() -> float:
         return next(clock)
 
-    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _advance_clock)
+    monkeypatch.setattr("milknado.loop._loop_local_runs.time.monotonic", _advance_clock)
     timed_out = drain_review_run(
         timeout_manager,
         "timeout",
@@ -938,7 +939,7 @@ def test_review_drain_reports_timeout_and_stop_failures(monkeypatch: pytest.Monk
     def _zero_clock() -> float:
         return 0.0
 
-    monkeypatch.setattr("milknado.adapters._loop_local_runs.time.monotonic", _zero_clock)
+    monkeypatch.setattr("milknado.loop._loop_local_runs.time.monotonic", _zero_clock)
     empty = drain_review_run(
         empty_manager,
         "empty",
@@ -1085,7 +1086,7 @@ def test_loop_adapter_runs_bounded_review_in_pinned_worktree(
             )
             self.emitter.queue.put(Event(EventType.RUN_STOPPED, run_id, NoData()))
 
-    monkeypatch.setattr("milknado.adapters.loop.RunManager", FakeManager)
+    monkeypatch.setattr("milknado.loop._loop_adapter.RunManager", FakeManager)
     adapter = LoopAdapter()
     verdict = adapter.run_node_review(
         "age", "review prompt", tmp_path, tmp_path, timeout_seconds=1800.0

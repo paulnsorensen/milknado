@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 from milknado.domains.common import RunHandle
-from milknado.loop import RunConfig
+from milknado.loop._run_types import RunConfig
 
 if TYPE_CHECKING:
     from milknado.loop._events import EventData
