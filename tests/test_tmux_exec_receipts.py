@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -62,6 +63,31 @@ def test_tmux_receipt_confirms_normal_target_exit(tmp_path: Path) -> None:
     assert read_exec_evidence(receipt, "current-nonce") == "executed"
     assert read_exec_evidence(receipt, "old-nonce") is None
     assert json.loads(receipt.read_text())["returncode"] == 7
+
+
+@pytest.mark.skipif(shutil.which("strace") is None, reason="strace injects the fsync latency")
+def test_tmux_receipt_confirms_exit_when_database_fsync_is_slow(tmp_path: Path) -> None:
+    # Each fsync on the project database waits 0.5 s, as on a saturated disk. Worker startup
+    # must still fit its 8 s evidence budget and confirm the target before the receipt ends.
+    receipt = tmp_path / "exec.json"
+    command = _wrapper(receipt, sys.executable, "-c", "raise SystemExit(7)")
+    database = default_config(tmp_path).db_path
+    slow_paths = (database, Path(f"{database}-wal"), database.parent)
+    result = subprocess.run(
+        [
+            "strace",
+            *("-f", "--seccomp-bpf", "-qq", "-o", os.devnull),
+            *("-e", "trace=fsync,fdatasync"),
+            *("-e", "inject=fsync,fdatasync:delay_enter=500000"),
+            *(option for path in slow_paths for option in ("-P", str(path))),
+            *command,
+        ],
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 7, result.stderr.decode()[-2000:]
+    assert read_exec_evidence(receipt, "current-nonce") == "executed"
 
 
 def test_tmux_receipt_rejects_preexec_failure_and_signal(tmp_path: Path) -> None:
