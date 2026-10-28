@@ -9,6 +9,7 @@ from milknado.domains.common.agent_argv import (
     resolve_worker_tools,
     validate_worker_argv,
 )
+from milknado.domains.common.capabilities import ProviderFamily, runtime_capabilities
 from milknado.domains.common.config import (
     LoadedConfig,
     MilknadoConfig,
@@ -187,4 +188,6 @@ __all__ = [
     "VerifySpecResult",
     "HostCapacityPort",
     "SlotLease",
+    "ProviderFamily",
+    "runtime_capabilities",
 ]

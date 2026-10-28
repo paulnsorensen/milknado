@@ -4,13 +4,11 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from milknado.domains.common import SessionInput
+from milknado.domains.common import ProviderFamily, SessionInput, runtime_capabilities
 from milknado.loop._agent import AgentResult, AgentRunSpec
-from milknado.loop.sessions._capabilities import runtime_capabilities
 from milknado.loop.sessions._channel import SessionChannel
 from milknado.loop.sessions._protocol import (
     ProtocolStep,
-    ProviderFamily,
     ProviderSessionIdentity,
     RecoveryReceipt,
     RuntimeRecoveryRequest,
