@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Literal, cast
+from typing import cast
 
 import msgspec
 
-from milknado.domains.common import MikadoEdge, MikadoNode
+from milknado.domains.common import (
+    MikadoEdge,
+    MikadoNode,
+    ProviderFamily,
+    runtime_capabilities,
+)
 from milknado.domains.coordinator.journal import snapshot_control_history
 from milknado.domains.coordinator.model import (
     ControlRecord,
@@ -26,7 +31,6 @@ from milknado.domains.graph import (
     RunRecord,
     subtree_post_order,
 )
-from milknado.loop.sessions import runtime_capabilities
 
 
 class CoordinatorStatus(msgspec.Struct, frozen=True):
@@ -137,7 +141,7 @@ def _project_snapshot(
     )
     links = links_for_session(conn, session_id)
     events, recovery, latest = snapshot_control_history(conn, session_id, cursor)
-    capabilities = runtime_capabilities(cast(Literal["claude", "codex"], session.provider))
+    capabilities = runtime_capabilities(cast(ProviderFamily, session.provider))
     return CoordinatorSnapshot(
         session=session,
         goal=nodes[0],

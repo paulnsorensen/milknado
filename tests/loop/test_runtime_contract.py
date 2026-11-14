@@ -9,7 +9,12 @@ from typing import Literal, cast
 import msgspec
 import pytest
 
-from milknado.domains.common import SessionContext, SessionEvent, SessionInput
+from milknado.domains.common import (
+    SessionContext,
+    SessionEvent,
+    SessionInput,
+    runtime_capabilities,
+)
 from milknado.loop._agent import AgentRunSpec
 from milknado.loop.sessions import (
     ProtocolStep,
@@ -20,7 +25,6 @@ from milknado.loop.sessions import (
     RuntimeSession,
     SessionChannel,
     SessionProtocol,
-    runtime_capabilities,
     start_or_resume,
     submit_runtime_action,
 )
