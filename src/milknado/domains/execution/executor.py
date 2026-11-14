@@ -19,6 +19,7 @@ from tenacity import (
     RetryCallState,
     Retrying,
     retry_if_exception,
+    retry_if_result,
     stop_after_attempt,
     wait_exponential,
 )
@@ -81,7 +82,9 @@ from milknado.domains.execution._review import (
 from milknado.domains.execution._review_policy import ReviewDecision, ReviewPolicy, decide_review
 from milknado.domains.execution._stop import (
     LOOP_CANCEL_STOP_TIMEOUT_SECS,
+    WatchStep,
     force_stop_graph_run,
+    stop_failed,
     stop_graph_run,
 )
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
@@ -772,27 +775,16 @@ class Executor:
 
     def _watch_loop_cancel(self, run_id: str, rdir: Path) -> None:
         """Poll loop for one cancel watcher — see _spawn_loop_cancel_watcher
-        for the full behavioral contract this implements."""
-        backoff = _LOOP_CANCEL_POLL_SECS
-        while True:
-            run = self._loop.get_run(run_id)
-            if run is None:
-                # The run record is gone; nothing left to watch.
-                self._unconfirmed_stop_run_ids.discard(run_id)
-                return
-            if not self._loop.is_run_alive(run_id):
-                self._finalize_dead_watched_thread(run_id)
-                return
-            if not is_cancel_requested(rdir, run_id):
-                backoff = _LOOP_CANCEL_POLL_SECS
-                time.sleep(_LOOP_CANCEL_POLL_SECS)
-                continue
-            stopped, backoff = self._attempt_watcher_force_stop(run_id, backoff)
-            if stopped is None:
-                continue
-            if stopped:
-                self._finalize_watcher_stop(run_id)
-            return
+        for the full behavioral contract this implements. Each idle poll starts
+        a fresh retry, so the backoff resets once the cancel sentinel clears."""
+        retry_stop = Retrying(
+            wait=wait_exponential(
+                multiplier=_LOOP_CANCEL_POLL_SECS, max=_LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS
+            ),
+            retry=retry_if_result(stop_failed),
+        )
+        while retry_stop(self._watch_cancel_step, run_id, rdir) is WatchStep.IDLE:
+            time.sleep(_LOOP_CANCEL_POLL_SECS)
 
     def _finalize_dead_watched_thread(self, run_id: str) -> None:
         """The watched thread already exited with no cancel ever requested:
@@ -814,15 +806,16 @@ class Executor:
             ),
         )
 
-    def _attempt_watcher_force_stop(
-        self, run_id: str, backoff: float
-    ) -> tuple[bool | None, float]:
-        """One force-stop attempt for a cancel-requested run.
-
-        Returns ``(None, new_backoff)`` after a transient failure (logged
-        and slept already) so the caller keeps polling, or ``(confirmed,
-        backoff)`` once force_stop_run itself resolved either way.
-        """
+    def _watch_cancel_step(self, run_id: str, rdir: Path) -> WatchStep:
+        if self._loop.get_run(run_id) is None:
+            # The run record is gone; nothing left to watch.
+            self._unconfirmed_stop_run_ids.discard(run_id)
+            return WatchStep.DONE
+        if not self._loop.is_run_alive(run_id):
+            self._finalize_dead_watched_thread(run_id)
+            return WatchStep.DONE
+        if not is_cancel_requested(rdir, run_id):
+            return WatchStep.IDLE
         try:
             stopped = self.force_stop_run(run_id, timeout=LOOP_CANCEL_STOP_TIMEOUT_SECS)
         except Exception:
@@ -832,8 +825,7 @@ class Executor:
                 + "sentinel is set",
                 run_id,
             )
-            time.sleep(backoff)
-            return None, min(backoff * 2, _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS)
+            return WatchStep.STOP_FAILED
         if not stopped:
             _logger.error(
                 "force-stop could not confirm exit for cancelled loop "
@@ -841,9 +833,9 @@ class Executor:
                 + "retrying while the sentinel is set",
                 run_id,
             )
-            time.sleep(backoff)
-            return None, min(backoff * 2, _LOOP_CANCEL_RETRY_BACKOFF_MAX_SECS)
-        return True, backoff
+            return WatchStep.STOP_FAILED
+        self._finalize_watcher_stop(run_id)
+        return WatchStep.DONE
 
     def _finalize_watcher_stop(self, run_id: str) -> None:
         """A confirmed force-stop: finalize the row cancelled, unless the

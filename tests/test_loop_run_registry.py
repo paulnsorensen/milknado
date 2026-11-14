@@ -16,7 +16,7 @@ import milknado.domains.dispatch.cancel as cancel_module
 import milknado.domains.execution.executor as executor_module
 from milknado.adapters import ProcessAdapter
 from milknado.domains.common import Gate, GitPort, LoopPort
-from milknado.domains.dispatch._runstate import request_cancel, runs_dir
+from milknado.domains.dispatch._runstate import clear_cancel, request_cancel, runs_dir
 from milknado.domains.dispatch.cancel import cancel_run
 from milknado.domains.execution import ExecutionConfig, Executor
 from milknado.domains.graph import MikadoGraph, RunRecord
@@ -274,6 +274,58 @@ def test_watcher_retry_backoff_doubles_and_caps(
     assert backoff_sleeps[:7] == [0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0]
     assert backoff_sleeps[7:], "backoff must reach the ceiling"
     assert all(s == cap for s in backoff_sleeps[7:])
+
+
+def _await_condition(check: Callable[[], bool], real_sleep: Callable[[float], None]) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not check():
+        real_sleep(0.005)
+    assert check(), "watcher did not reach the expected state"
+
+
+def test_watcher_backoff_resets_after_cancel_clears(
+    graph: MikadoGraph, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cleared cancel sentinel ends the failure streak: the next cancel
+    backs off from the poll cadence again, not from the old streak's delay."""
+    _ = graph.add_node("wedged backoff reset")
+    loop = FakeLoop(live=True, id_prefix="reset")
+    executor = _executor_with_loop(graph, loop)
+    result = executor.dispatch(1, _config(tmp_path))
+    loop.force_stop_result = False
+    rdir = runs_dir(tmp_path)
+
+    real_sleep = time.sleep
+    sleeps: list[float] = []
+    watcher_name = f"loop-cancel-watch-{result.run_id}"
+
+    def _recording_sleep(secs: float) -> None:
+        # Count only this run's watcher: watchers leaked by earlier tests also sleep.
+        if threading.current_thread().name == watcher_name:
+            sleeps.append(secs)
+        real_sleep(0.001)
+
+    monkeypatch.setattr(time, "sleep", _recording_sleep)
+    request_cancel(rdir, result.run_id)
+    _await_condition(lambda: len(loop.force_stopped) >= 5, real_sleep)
+
+    clear_cancel(rdir, result.run_id)
+    settle_from = len(sleeps)
+    _await_condition(lambda: len(sleeps) >= settle_from + 20, real_sleep)
+    stops_after_clear = len(loop.force_stopped)
+    idle_from = len(sleeps)
+    _await_condition(lambda: len(sleeps) >= idle_from + 20, real_sleep)
+    assert len(loop.force_stopped) == stops_after_clear, "watcher must idle once cancel clears"
+
+    rearmed_at = len(sleeps)
+    request_cancel(rdir, result.run_id)
+    _await_condition(lambda: len(loop.force_stopped) >= stops_after_clear + 4, real_sleep)
+    loop.force_stop_result = True
+    _await_condition(lambda: _run_record(graph, result.run_id)["status"] != "running", real_sleep)
+
+    poll = executor_module._LOOP_CANCEL_POLL_SECS  # pyright: ignore[reportPrivateUsage]
+    rearmed_backoff = [s for s in sleeps[rearmed_at:] if s > poll]
+    assert rearmed_backoff[:2] == [0.5, 1.0]
 
 
 def test_completed_loop_run_row_is_finalized(graph: MikadoGraph, tmp_path: Path) -> None:
