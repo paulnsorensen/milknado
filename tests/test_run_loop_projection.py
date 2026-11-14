@@ -2,9 +2,9 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from milknado.domains.common import RunStatus
 from milknado.domains.execution.run_loop._projection import project_state
 from milknado.domains.execution.run_loop.state import ActiveRunFacts, ProjectionFacts, RunLoopState
-from milknado.loop import RunStatus
 
 
 def facts(*runs: ActiveRunFacts, durations: tuple[float, ...] = ()) -> ProjectionFacts:

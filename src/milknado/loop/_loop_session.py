@@ -8,10 +8,10 @@ from pathlib import Path
 
 from milknado.domains.common import SessionAction, SessionContext, SessionInput, SessionView
 from milknado.domains.graph import MikadoGraph, admit_session_command
-from milknado.loop import QueueEmitter, RunConfig, RunManager
-from milknado.loop._events import Event, EventData
+from milknado.loop._events import Event, EventData, QueueEmitter
 from milknado.loop._process_registry import WorkerRegistry
-from milknado.loop.manager import ManagedRun
+from milknado.loop._run_types import RunConfig
+from milknado.loop.manager import ManagedRun, RunManager
 from milknado.loop.sessions import is_supported
 
 

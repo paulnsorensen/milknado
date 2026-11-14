@@ -5,15 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from milknado.domains.common import CompletionVerdict, RunStatus
 from milknado.loop._frontmatter import LOOP_MARKER
 from milknado.loop._run_types import (
     DEFAULT_COMMAND_TIMEOUT,
     RUN_ID_LENGTH,
     Command,
-    CompletionVerdict,
     RunConfig,
     RunState,
-    RunStatus,
     generate_run_id,
 )
 
@@ -100,11 +99,6 @@ class TestCompletionVerdict:
         verdict = CompletionVerdict(ok=True, feedback="")
         with pytest.raises(AttributeError):
             verdict.ok = False  # pyright: ignore[reportAttributeAccessIssue]
-
-    def test_is_public_loop_api(self):
-        import milknado.loop
-
-        assert milknado.loop.CompletionVerdict is CompletionVerdict
 
     def test_run_config_defaults_completion_verifier_to_none(self, tmp_path: Path):
         config = RunConfig(

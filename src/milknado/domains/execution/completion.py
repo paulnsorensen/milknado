@@ -8,8 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Final
 
+from milknado.domains.common import CompletionVerdict
 from milknado.domains.common.flavor_codec import Gate
-from milknado.loop import CompletionVerdict
 
 _GATE_TIMEOUT_SECONDS: Final[float] = 1800.0
 _GIT_QUERY_TIMEOUT_SECONDS: Final[float] = 60.0

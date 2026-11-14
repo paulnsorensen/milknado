@@ -12,7 +12,7 @@ import psutil
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
-from milknado.domains.common import SessionInput, WorkerOwner
+from milknado.domains.common import CompletionVerdict, RunStatus, SessionInput, WorkerOwner
 from milknado.domains.graph import open_standalone_worker_evidence
 from milknado.loop._events import (
     EventType,
@@ -21,13 +21,7 @@ from milknado.loop._events import (
 from milknado.loop._process_contract import ProtectionContext, WorkerHandle
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import spawn_protected
-from milknado.loop._run_types import (
-    RUN_ID_LENGTH,
-    CompletionVerdict,
-    RunConfig,
-    RunState,
-    RunStatus,
-)
+from milknado.loop._run_types import RUN_ID_LENGTH, RunConfig, RunState
 from milknado.loop._worker_evidence import LoopWorkerEvidence
 from milknado.loop.manager import ManagedRun, RunManager
 from tests.loop.helpers import (

@@ -7,11 +7,11 @@ import queue
 import re
 import time
 
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters._loop_types import event_text as _event_text
 from milknado.domains.common import VerifySpecResult
-from milknado.loop import EventType, RunManager
-from milknado.loop._events import Event, EventData
+from milknado.loop._events import Event, EventData, EventType
+from milknado.loop._loop_types import ReviewVerdict
+from milknado.loop._loop_types import event_text as _event_text
+from milknado.loop.manager import RunManager
 
 _logger = logging.getLogger(__name__)
 

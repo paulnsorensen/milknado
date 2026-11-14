@@ -7,12 +7,16 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from milknado.domains.common import SessionContext, SessionEvent, SessionInput
-from milknado.loop._events import STOP_COMPLETED, STOP_ERROR, STOP_USER_REQUESTED, StopReason
+from milknado.domains.common import (
+    CompletionVerdict,
+    RunStatus,
+    SessionContext,
+    SessionEvent,
+    SessionInput,
+)
 from milknado.loop._process_contract import WorkerHandle
 from milknado.loop._process_gate import SpawnOptions
 
@@ -34,42 +38,6 @@ def generate_run_id() -> str:
     return uuid.uuid4().hex[:RUN_ID_LENGTH]
 
 
-class RunStatus(Enum):
-    """Lifecycle status of a run.
-
-    Transitions follow a simple path: ``PENDING`` → ``RUNNING`` →
-    terminal (``COMPLETED``, ``STOPPED``, or ``FAILED``).
-    """
-
-    PENDING = "pending"
-    RUNNING = "running"
-    STOPPED = "stopped"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-    @property
-    def reason(self) -> StopReason:
-        """Return the reason string for terminal statuses.
-
-        Used in ``RUN_STOPPED`` event data.  Only valid for terminal
-        statuses (``COMPLETED``, ``FAILED``, ``STOPPED``).
-
-        Raises :class:`ValueError` for non-terminal statuses.
-        """
-        reason = _STATUS_REASONS.get(self)
-        if reason is None:
-            raise ValueError(f"{self.name} is not a terminal status")
-        return reason
-
-
-# Maps terminal run statuses to the reason string emitted in RUN_STOPPED events.
-_STATUS_REASONS: dict[RunStatus, StopReason] = {
-    RunStatus.COMPLETED: STOP_COMPLETED,
-    RunStatus.FAILED: STOP_ERROR,
-    RunStatus.STOPPED: STOP_USER_REQUESTED,
-}
-
-
 @dataclass(slots=True)
 class Command:
     """A named command from LOOP.md frontmatter."""
@@ -77,18 +45,6 @@ class Command:
     name: str
     run: str
     timeout: float = DEFAULT_COMMAND_TIMEOUT
-
-
-@dataclass(frozen=True, slots=True)
-class CompletionVerdict:
-    """Tier-2 completion check result returned by a ``completion_verifier``.
-
-    ``ok=True`` accepts the completion; ``ok=False`` rejects it and
-    ``feedback`` is injected into the next iteration's context.
-    """
-
-    ok: bool
-    feedback: str
 
 
 @dataclass(slots=True)

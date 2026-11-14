@@ -32,6 +32,7 @@ from milknado.domains.common import (
     NodeKind,
     NodeSpec,
     RunResult,
+    RunStatus,
     SessionContext,
     SessionEvent,
 )
@@ -48,7 +49,6 @@ from milknado.domains.graph import (
     GoalReviewRequest,
     MikadoGraph,
 )
-from milknado.loop import RunStatus
 
 
 def _as_run_loop(value: object) -> RunLoop:

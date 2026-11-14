@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
+from milknado.domains.common import CompletionVerdict, RunStatus
 from milknado.loop._agent import AgentResult
 from milknado.loop._events import (
     BoundEmitter,
@@ -16,13 +17,7 @@ from milknado.loop._events import (
     NullEmitter,
     QueueEmitter,
 )
-from milknado.loop._run_types import (
-    Command,
-    CompletionVerdict,
-    RunConfig,
-    RunState,
-    RunStatus,
-)
+from milknado.loop._run_types import Command, RunConfig, RunState
 from milknado.loop._runner import RunResult
 from milknado.loop.adapters import select_adapter
 from milknado.loop.engine import (

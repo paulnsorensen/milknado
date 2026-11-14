@@ -13,11 +13,11 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.common import SessionContext, SessionEvent, SessionInput
+from milknado.domains.common import RunStatus, SessionContext, SessionEvent, SessionInput
 from milknado.domains.graph import MikadoGraph
 from milknado.loop._agent import AgentResult, AgentRunSpec
 from milknado.loop._events import OutputStream
-from milknado.loop._run_types import RunConfig, RunState, RunStatus
+from milknado.loop._run_types import RunConfig, RunState
 from milknado.loop.engine import run_loop
 from milknado.loop.sessions import SessionChannel, run_session
 from tests.attached_owner_delivery_fixtures import AttachedCommand, admit_from_process
