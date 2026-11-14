@@ -89,12 +89,13 @@ def spawn_protected(
     deadline = time.monotonic() + 8
     evidence = context.evidence.with_deadline(deadline)
     try:
-        evidence.record_worker(context.owner, worker.identity)
-        acquired.recorded = True
-        sequence = _snapshot(worker, evidence)
-        acquired.helper, acquired.write_fd = start_helper(
-            worker, context, HelperStart(sequence, 0, deadline)
-        )
+        with evidence.held():
+            evidence.record_worker(context.owner, worker.identity)
+            acquired.recorded = True
+            sequence = _snapshot(worker, evidence)
+            acquired.helper, acquired.write_fd = start_helper(
+                worker, context, HelperStart(sequence, 0, deadline)
+            )
         protected = worker_type(worker, acquired.helper, acquired.write_fd, context)
         acquired.protected = protected
         protected.ticket = ticket

@@ -139,6 +139,9 @@ class WorkerEvidenceStore:
         self._deadline: float | None = deadline
         try:
             conn.row_factory = sqlite3.Row
+            # A WAL commit then skips fsync. An OS crash can still drop the newest rows, but
+            # those rows describe processes that died with the OS. A process crash drops none.
+            _ = conn.execute("PRAGMA synchronous=NORMAL")
             self._limit_wait()
             row = fetchone(conn, "PRAGMA user_version")
             columns: set[str] = set()
