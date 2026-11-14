@@ -12,7 +12,7 @@ from starlette.testclient import TestClient
 from milknado.cli.web import _host_dependencies
 from milknado.domains.batching import BatchPlan
 from milknado.domains.common import CONTROLLER_MASTER_ENV, MilknadoConfig, SessionInput
-from milknado.domains.coordinator import CoordinatorControl, ProviderBinding
+from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     DecideGoalReview,
     PlanGoal,
@@ -22,6 +22,7 @@ from milknado.domains.coordinator.control_models import (
     StartGoal,
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
 from milknado.domains.coordinator.recovery import (
     ProviderIdentity,

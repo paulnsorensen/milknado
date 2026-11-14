@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.coordinator import CoordinatorControl, ProviderBinding
+from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import (
     CoordinatorCommandReceipt,
     Recover,
@@ -14,6 +14,7 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.journal import control_history
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.model import RecoveryReceipt as ModelRecoveryReceipt
 from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
 from milknado.domains.coordinator.recovery import (

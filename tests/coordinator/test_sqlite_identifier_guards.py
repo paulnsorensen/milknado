@@ -4,13 +4,12 @@ from typing import cast
 import msgspec
 import pytest
 
-from milknado.domains.coordinator import (
-    CoordinatorCommand,
+from milknado.domains.coordinator import CoordinatorCommand, CoordinatorControl, StartGoal
+from milknado.domains.coordinator.control_models import (
     CoordinatorCommandReceipt,
-    CoordinatorControl,
-    StartGoal,
+    CreateGroup,
+    RecordRevision,
 )
-from milknado.domains.coordinator.control_models import CreateGroup, RecordRevision
 from milknado.domains.graph import MikadoGraph
 
 

@@ -18,9 +18,9 @@ from milknado.domains.common import (
     SessionEvent,
     SessionInput,
 )
-from milknado.domains.coordinator import EntityLink, ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
 from milknado.domains.coordinator.journal import control_history
+from milknado.domains.coordinator.model import EntityLink, ProviderBinding
 from milknado.domains.coordinator.persistence import (
     bind_provider_session,
     link_entity,

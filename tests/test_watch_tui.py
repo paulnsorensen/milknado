@@ -22,8 +22,8 @@ from milknado.app.run_tui import ExecutionApp
 from milknado.app.run_view_app import ExecutionSnapshotApp
 from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.coordinator import ControlEvent
 from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.model import ControlEvent
 from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.graph import MikadoGraph, NodeDetailResponse
 

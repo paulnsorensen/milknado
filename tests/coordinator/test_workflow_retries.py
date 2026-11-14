@@ -7,13 +7,13 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import SessionContext, SessionInput
-from milknado.domains.coordinator import ControlEvent, EntityLink, ProviderBinding
 from milknado.domains.coordinator.commands import (
     CoordinatorAction,
     record_control_once,
     submit_coordinator_action,
 )
 from milknado.domains.coordinator.journal import append_control_event, control_history
+from milknado.domains.coordinator.model import ControlEvent, EntityLink, ProviderBinding
 from milknado.domains.coordinator.persistence import (
     bind_provider_session,
     link_entity,

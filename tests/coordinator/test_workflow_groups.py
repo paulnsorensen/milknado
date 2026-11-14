@@ -8,8 +8,8 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import NodeStatus
-from milknado.domains.coordinator import EntityLink
 from milknado.domains.coordinator.journal import control_history
+from milknado.domains.coordinator.model import EntityLink
 from milknado.domains.coordinator.persistence import link_entity, links_for_session
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome

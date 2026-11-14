@@ -3,9 +3,10 @@ from pathlib import Path
 from typing import cast
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.coordinator import ControlEvent, CoordinatorControl
+from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator.control_models import StartGoal
 from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.model import ControlEvent
 from milknado.domains.graph import MikadoGraph
 
 

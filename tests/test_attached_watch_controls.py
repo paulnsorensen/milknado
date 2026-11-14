@@ -10,8 +10,8 @@ from textual.widgets import Select, Static
 from milknado.app.watch import AttachedWatchSource, WatchSnapshotSource, graph_command_admitter
 from milknado.app.watch_tui import WatchApp
 from milknado.domains.common import NodeKind, NodeSpec, SessionContext
-from milknado.domains.coordinator import ControlEvent
 from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.model import ControlEvent
 from milknado.domains.coordinator.persistence import start_coordinator
 from milknado.domains.graph import MikadoGraph
 from milknado.domains.graph._session_persistence import view_session
