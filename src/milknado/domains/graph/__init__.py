@@ -11,6 +11,7 @@ from milknado.domains.graph._follow_up import FollowUpRequest, FollowUpSource
 from milknado.domains.graph._goal_review_scope import top_level_goal
 from milknado.domains.graph._group_binding import bind_execution_group_provider
 from milknado.domains.graph._plan_transaction import graph_revision
+from milknado.domains.graph._render_dot import render_dot
 from milknado.domains.graph._run_persistence import RunRecord
 from milknado.domains.graph._task_attempt_models import (
     FailureDisposition,
@@ -55,7 +56,6 @@ from milknado.domains.graph.rebalance import (
     StructureReport,
     render_report,
 )
-from milknado.domains.graph.render_dot import render_dot
 from milknado.domains.graph.runnability import invalid_subtree_node_ids, validate_runnable_roots
 from milknado.domains.graph.snapshot import connect_readonly
 from milknado.domains.graph.snapshot_models import (

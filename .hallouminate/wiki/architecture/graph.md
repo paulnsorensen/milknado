@@ -197,9 +197,13 @@ These modules take the shared SQLite connection and keep the facade within its e
   `_creation` transaction functions.
 - **`traversals.py`** — `walk_ancestors`, a leaf→root single-path walk.
 - **`display.py`** — rendering only.
-- **`render_dot.py`** — pure Graphviz DOT renderer for the *live* graph
+- **`_render_dot.py`** — pure Graphviz DOT renderer for the *live* graph
   (`render_dot(nodes, children_map)`, PR #362), the sibling of the wiki
-  domain's roadmap-document renderer. Output is deterministic: nodes sorted by
+  domain's roadmap-document renderer. The module name is private and differs
+  from the `render_dot` crust export. The slice guard resolves
+  `from milknado.domains.graph import render_dot` to a same-named submodule
+  first, so a `render_dot.py` module made a false SB-01 violation.
+  Output is deterministic: nodes sorted by
   `id`, edges collected into a sorted deduped set (so diamonds and repeated
   wiring collapse), labels escaped for backslash/quote/control chars. Shape
   encodes `NodeKind` (`box3d`/`folder`/`box`); archived nodes render dashed in
