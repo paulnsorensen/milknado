@@ -20,8 +20,8 @@ just check-llm   # lint + format + dead code + typecheck + tests + project cover
 It is token-efficient by design: on success it prints a single PASS line; on failure
 it prints only the failing step's output. Do not run the individual recipes to gate —
 `check-llm` covers lint, format, **dead code**, **typecheck**, tests, project coverage,
-and **diff coverage** in one shot. Diff coverage mirrors `codecov/patch`: it fails if the lines this
-branch changes (vs `origin/main`) aren't covered to 95% — catching a CI patch failure
+and **diff coverage** in one shot. Diff coverage mirrors codecov/patch: it fails if the lines this
+branch changes (vs origin/main) aren't covered to 95% — catching a CI patch failure
 before you push. Dead code is `vulture` over `src/` only (config in `pyproject.toml`):
 code reachable solely from tests counts as dead, so deleting a symbol means deleting its
 tests too. Suppress a genuine false positive with a line-level `# noqa: V1xx`, or add a
@@ -116,6 +116,12 @@ Milknado is a Mikado execution engine — it decomposes goals into dependency gr
 - **Entry points**: `milknado` CLI (`src/milknado/cli/`, `milknado.cli:app`), `milknado-mcp` MCP server (`src/milknado/mcp/server.py`, `milknado.mcp.server:main`)
 - **Architecture**: Sliced Bread — vertical slices under `src/milknado/domains/`, adapters in `src/milknado/adapters/`
 - **Tests**: `tests/` — pytest, 95% coverage required (matches `codecov.yml`)
+
+## Nested Instructions
+
+`src/milknado/domains/`, `src/milknado/adapters/`, `src/milknado/app/`, `src/milknado/cli/`, `src/milknado/mcp/`, `src/milknado/loop/`, `web/`, and `tests/` each have an `AGENTS.md` for that subtree.
+Read it before you edit a file there.
+Each nested `CLAUDE.md` is a symlink to its `AGENTS.md`, so Claude Code loads it.
 
 ## Code Style
 
