@@ -140,7 +140,7 @@ def test_startup_does_not_import_ortools_solver() -> None:
     probe = (
         "import sys\n"
         "import {module}\n"
-        "loaded = sorted(m for m in sys.modules if m.startswith('ortools'))\n"
+        "loaded = sorted(m for m in sys.modules if m.startswith(('ortools', 'tiktoken')))\n"
         "assert not loaded, loaded\n"
     )
     for module in ("milknado.cli", "milknado.mcp.server"):
@@ -156,5 +156,14 @@ def test_startup_does_not_import_ortools_solver() -> None:
 def test_batching_crust_rejects_unknown_attribute() -> None:
     import milknado.domains.batching as batching
 
-    with pytest.raises(AttributeError):
+    with pytest.raises(AttributeError, match="'milknado.domains.batching' has no attribute"):
         _ = batching.does_not_exist
+
+
+def test_batching_crust_loads_solver_and_tokenizer_on_access() -> None:
+    import milknado.domains.batching as batching
+    from milknado.domains.batching.solver import plan_batches
+    from milknado.domains.batching.weights import estimate_tokens
+
+    assert batching.plan_batches is plan_batches
+    assert batching.estimate_tokens is estimate_tokens
