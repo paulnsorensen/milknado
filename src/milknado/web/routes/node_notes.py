@@ -65,8 +65,7 @@ def _skip(commands: GraphEditCommands, node_id: int, body: RetryBody) -> MikadoN
         raise ValueError(f"node {node_id} is {node.status.value}; only a failed node skips")
     reason = f" {body.note}" if body.note is not None else ""
     _append_note(commands, node, f"Skipped by the operator.{reason}")
-    _ = commands.graph.set_todo_status(node_id, NodeStatus.PENDING)
-    _ = commands.graph.set_todo_status(node_id, NodeStatus.DONE)
+    commands.graph.skip_failed(node_id)
     return _existing(commands, node_id)
 
 

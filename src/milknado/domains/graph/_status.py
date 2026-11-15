@@ -130,21 +130,28 @@ def mark_blocked(pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: in
     transition_status(pipeline, conn, node_id, NodeStatus.BLOCKED)
 
 
+def apply_todo_status(
+    pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
+) -> bool:
+    """Validate and apply one facade request inside the caller's transaction."""
+    node = _reads.get_node(conn, node_id)
+    if node is None:
+        raise ValueError(f"Node {node_id} not found")
+    _reject_archived(conn, node_id)
+    if target is NodeStatus.DONE:
+        validate_done_verification(conn, node_id, [node])
+    validate_todo_status(node, target)
+    _assert_execution_admitted(conn, node, target)
+    return _apply_subtree_status(pipeline, conn, node, target)
+
+
 def set_todo_status(
     pipeline: StatusPipeline, conn: sqlite3.Connection, node_id: int, target: NodeStatus
 ) -> bool:
     """Validate verification and transition before applying one facade request."""
     _ = conn.execute("BEGIN IMMEDIATE")
     with conn:
-        node = _reads.get_node(conn, node_id)
-        if node is None:
-            raise ValueError(f"Node {node_id} not found")
-        _reject_archived(conn, node_id)
-        if target is NodeStatus.DONE:
-            validate_done_verification(conn, node_id, [node])
-        validate_todo_status(node, target)
-        _assert_execution_admitted(conn, node, target)
-        return _apply_subtree_status(pipeline, conn, node, target)
+        return apply_todo_status(pipeline, conn, node_id, target)
 
 
 def set_subtree_status(
