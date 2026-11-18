@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goal desk · Milknado spike</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; background: #101922; color: #eff5fa; font: 16px/1.5 system-ui, sans-serif }
+  main { max-width: 62rem; margin: auto; padding: clamp(1rem, 4vw, 3rem) }
+  h1, h2, p { margin: 0 0 .65rem }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem) }
+  h2 { font-size: 1.14rem }
+  .label { color: #88e6ce; font-weight: 700 }
+  .muted, dt { color: #b8cad9 }
+  section { border: 1px solid #405569; background: #192734; border-radius: .75rem; padding: 1rem }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: 1rem }
+  .edge { margin: 1rem 0 .5rem; font-weight: 700; color: #ffd98e }
+  dl { margin: 0 }
+  dd { margin: 0 0 .5rem; font-weight: 650 }
+  .queue, .controls { margin-top: 1rem }
+  ul { padding-left: 1.25rem; margin-bottom: 0 }
+  li { margin-bottom: .5rem }
+  button { font: inherit; background: #273c4f; color: inherit; border: 1px solid #8298aa;
+    border-radius: .4rem; padding: .35rem .65rem; margin: .2rem; cursor: pointer }
+  button:focus-visible { outline: 3px solid #88e6ce; outline-offset: 2px }
+  button:disabled { color: #afbecb; background: transparent; border-color: #546779; cursor: default }
+</style>
+<main>
+  <p class="label">MILKNADO / EXPERIMENT / FIXTURE DATA</p>
+  <h1>Publish the onboarding guide</h1>
+  <p class="muted">Local demo only. These controls do not send requests or start work.</p>
+  <p class="edge">A → B · B requires accepted evidence from A</p>
+  <div class="grid" aria-live="polite">
+    <section>
+      <h2>A · Draft the guide</h2>
+      <dl>
+        <dt>Active attempt and backend</dt><dd id="attempt"></dd>
+        <dt>Runtime</dt><dd id="runtime"></dd>
+        <dt>Goal acceptance</dt><dd id="review"></dd>
+        <dt>Artifact</dt><dd id="artifact"></dd>
+      </dl>
+    </section>
+    <section>
+      <h2>B · Publish the guide</h2>
+      <p id="b-status"></p>
+      <p class="muted">No attempt. This view does not schedule work.</p>
+    </section>
+  </div>
+  <section class="queue">
+    <h2>Blocked / needs human</h2>
+    <ul>
+      <li id="dependency" aria-live="polite"></li>
+      <li id="review-task" hidden>Review A's draft before accepting it.</li>
+      <li><span id="question" aria-live="polite"></span>
+        <button id="answer">Answer fixture question</button></li>
+      <li id="permission">Provider permission · pending<br>
+        Use T3 to decide. This demo has no permission access.
+        <button disabled>Approve in T3</button></li>
+    </ul>
+  </section>
+  <section class="controls">
+    <h2>Fixture controls</h2>
+    <button id="complete">Complete A runtime</button>
+    <button id="accept">Accept A evidence</button>
+    <button id="cancel">Request cancellation</button>
+    <button id="disconnect">Disconnect</button>
+    <button id="replace">Load replacement fixture</button>
+    <button id="replay">Replay old completion</button>
+    <button id="reset">Reset fixture</button>
+    <p id="notice" role="status"></p>
+  </section>
+</main>
+<script src="demo.js"></script>
+</html>
