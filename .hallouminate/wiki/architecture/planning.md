@@ -166,4 +166,26 @@ inherited encapsulation smell" and
 [^goal-context]: src/milknado/domains/planning/planner.py:179-190.
 [^goal-context-replay]: src/milknado/domains/coordinator/planning_workflow.py:27-35; src/milknado/domains/coordinator/plans.py:20-53.
 
-_Source: merged PR #518 and current PR #520 source/tests · Updated: 2026-10-09 · Supersedes: shared context filenames and unlocked proposal persistence._
+## Planning pipeline extraction for runtime reuse
+
+Milknado planning and code intelligence have an extraction boundary before graph mutation.
+The public application `plan_batches` function returns a serialized batch plan without creating graph nodes.
+The batching bridge separately applies tasks, dependencies, and file claims.[^runtime-seam]
+
+[T3 Code](../sources/t3-code.md) provides outside-MCP thread control that could run planner and worker agents.
+That runtime capability does not remove Milknado's reviewed graph application, dependency admission, or result acceptance.
+A successful T3 command records intent, not accepted project work.[^t3-intent]
+
+The full `Planner` remains coupled to agent subprocess launch, graph context, and graph application.
+Milknado wraps the external `code-review-graph` store and tooling; it does not implement that intelligence engine.
+The reusable value is manifest validation, impact-informed dependencies, batching, and context policy.[^runtime-coupling]
+
+Extraction is a research option, not an approved architecture change.
+A live trial must reject premature dependent work and false acceptance after a successful provider turn.
+No such trial runs in this source-review pass.
+
+[^runtime-seam]: src/milknado/app/plan_batches.py:85-116; src/milknado/domains/planning/batching_bridge.py:17-113; verified at c9250b8f039e4c06b38df728c3aade180a489614.
+[^t3-intent]: https://github.com/pingdotgg/t3code/blob/6ab633f6d6e8273f08a060137ab64463638787ce/apps/server/src/orchestration-v2/EventSink.ts (lines 314-340 and 814-864, verified 2026-11-17).
+[^runtime-coupling]: src/milknado/domains/planning/planner.py:70-125; src/milknado/adapters/crg.py:61-165; src/milknado/domains/batching/graph_build.py:27-97; src/milknado/domains/batching/solver.py:211-271.
+
+_Source: prior PR #518/#520 evidence plus pinned Milknado and T3 Code comparison · Updated: 2026-11-17 · Supersedes: prior shared-context and unlocked-persistence behavior only; no runtime replacement decision._
