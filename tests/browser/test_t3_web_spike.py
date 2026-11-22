@@ -1,3 +1,5 @@
+"""T3 web spike checks. The gate's browser lane runs only tests/browser."""
+
 from pathlib import Path
 
 import pytest

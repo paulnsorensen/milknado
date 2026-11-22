@@ -8,10 +8,11 @@ Open [index.html](index.html) in a browser from your checkout. No server, build,
 - Load the replacement fixture and replay the old completion. A-02 stays active and has no evidence.
 - Answer the fixture question. Provider permission stays pending. Use T3 itself for a real permission decision.
 
-Run the browser checks with existing project dependencies and Chromium:
+`just check-llm` runs the browser checks in its browser lane.
+To run only these checks with existing project dependencies and Chromium:
 
 ```sh
-UV_PYTHON=3.12 uv run pytest -m browser -q tests/spikes/test_t3_web_demo.py
+UV_PYTHON=3.12 uv run pytest -m browser -q tests/browser/test_t3_web_spike.py
 ```
 
 ## Proposed server boundary
