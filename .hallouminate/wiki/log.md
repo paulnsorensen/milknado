@@ -136,3 +136,15 @@
 
 - 2026-10-17 · node-runner-removal · merged · history/workflow-executor-decision.md, architecture/prompt-threading.md, roadmaps/milestone-0-3-0/coordinator-run-entity.md, roadmaps/milestone-0-3-0/golden-path-walkthrough.md · in-session Workflow path removed; retired roadmaps/milestone-0-3-0/broaden-ultracode-e2e.md and ultracode-install-ergonomics.md
 
+
+
+2026-11-17 · d20e8a1cdd3fddcc · new-page · sources/t3-code.md · Pinned T3 runtime and external MCP boundaries; five Sol research/check agents plus parent source verification; no live integration. All nine frozen probes pass.
+2026-11-17 · d20e8a1cdd3fddcc · merged · architecture/planning.md · Record the existing batch-plan extraction boundary; retain graph approval and acceptance policy; no replacement decision.
+2026-11-17 · d20e8a1cdd3fddcc · merged · architecture/web-metaharness-view.md · Record browser MCP, permission, and auth limits; correct composer retry mapping; distinguish source evidence from live verification.
+
+
+2026-11-17 · e0499de28f6ab053 · merged · sources/t3-code.md · Verified backend second pass: reproduced 5.56× broad and 2.69× narrow source-size ratios; durable safeguards on both sides; rejected unsupported process-cleanup ranking. Four frozen retrieval probes pass; no final warnings.
+
+
+2026-11-18 · 240f8798b8911449 · merged · architecture/web-metaharness-view.md · Add an unapproved pluggable execution backend proposal: goal/runtime ownership, durable attempt mapping, cancellation scopes, capabilities, and live-trial criteria. Sol boundary check and parent source verification reject a drop-in LoopPort claim. Four frozen probes pass after one section-opening repair.
+
