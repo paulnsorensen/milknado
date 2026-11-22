@@ -1,16 +1,23 @@
 import json
+import os
 import resource
 import signal
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Literal, ParamSpec, TypeVar
 
 import msgspec
 import pytest
 
+from milknado.domains.batching import plan_batches
+from scripts.spikes.t3_planning import __main__ as planning
 from scripts.spikes.t3_planning.__main__ import main
+
+P = ParamSpec("P")
+R = TypeVar("R")
 
 pytestmark = pytest.mark.real_process
 
@@ -98,10 +105,26 @@ def _build_index(project: Path, home: Path) -> None:
     assert (project / ".code-review-graph" / "graph.db").is_file()
 
 
-@pytest.mark.parametrize("indexed", [False, True], ids=["no-index", "index"])
-def test_plan_writes_only_output(project: Path, tmp_path: Path, indexed: bool) -> None:
-    if indexed:
-        _build_index(project, tmp_path / "home")
+def _corrupt_index(project: Path) -> None:
+    index = project / ".code-review-graph" / "graph.db"
+    index.parent.mkdir()
+    _ = index.write_bytes(b"not a SQLite database\n" * 8)
+
+
+@pytest.mark.parametrize("index", ["none", "built", "corrupt"])
+def test_plan_writes_only_output(
+    project: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    index: Literal["none", "built", "corrupt"],
+) -> None:
+    match index:
+        case "built":
+            _build_index(project, tmp_path / "home")
+        case "corrupt":
+            _corrupt_index(project)
+        case "none":
+            pass
     manifest = _request(project, DEPENDENT)
     output = tmp_path / "plan.json"
     before = _tree(tmp_path)
@@ -111,7 +134,16 @@ def test_plan_writes_only_output(project: Path, tmp_path: Path, indexed: bool) -
     assert result.version == 1
     assert result.plan.batches == DEPENDENT_BATCHES
     assert result.plan.solver_status == "OPTIMAL"
-    assert result.crg_index_present is indexed
+    assert result.crg_index_present is (index == "built")
+    assert ("CRG index unreadable" in capsys.readouterr().err) is (index == "corrupt")
+    umask = _umask()
+    assert output.stat().st_mode & 0o777 == 0o644 & ~umask
+
+
+def _umask() -> int:
+    current = os.umask(0)
+    _ = os.umask(current)
+    return current
 
 
 @pytest.mark.parametrize(
@@ -147,6 +179,32 @@ def test_existing_output_stops_before_planning(
     assert "File exists" in capsys.readouterr().err
     assert output.read_text() == "keep\n"
     assert not (project / ".milknado").exists()
+
+
+def _then(step: Callable[P, R], effect: Callable[[], object]) -> Callable[P, R]:
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        result = step(*args, **kwargs)
+        _ = effect()
+        return result
+
+    return wrapped
+
+
+def test_plan_published_during_solve_is_kept(
+    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = project.parent / "plan.json"
+    publish_other = _then(plan_batches, lambda: output.write_text("other\n"))
+    monkeypatch.setattr(planning, "plan_batches", publish_other)
+    assert _run(project, DEPENDENT) == 1
+    assert "File exists" in capsys.readouterr().err
+    assert output.read_text() == "other\n"
+    assert sorted(path.name for path in project.parent.iterdir()) == [
+        "plan.json",
+        "project",
+        "request.json",
+        "tmp",
+    ]
 
 
 def _limit_file_size() -> None:

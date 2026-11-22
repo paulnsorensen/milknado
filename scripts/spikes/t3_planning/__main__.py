@@ -3,7 +3,9 @@
 import argparse
 import errno
 import os
+import secrets
 import shutil
+import sqlite3
 import sys
 import tempfile
 from collections.abc import Generator
@@ -12,6 +14,9 @@ from pathlib import Path
 from typing import Annotated, Literal, TypedDict, cast
 
 import msgspec
+from code_review_graph.errors import (  # pyright: ignore[reportMissingTypeStubs]
+    CodeReviewGraphError,
+)
 
 from milknado.adapters.crg import CrgAdapter
 from milknado.domains.batching import MEGA_BATCH_THRESHOLD, BatchPlan, plan_batches
@@ -54,7 +59,17 @@ def _index_copy(root: Path) -> Generator[CrgAdapter | None, None, None]:
         for source in (index, index.with_name(f"{index.name}-wal")):
             if source.is_file():
                 _ = shutil.copyfile(source, copy.with_name(source.name))
-        yield CrgAdapter(Path(scratch))
+        yield _readable(CrgAdapter(Path(scratch)))
+
+
+def _readable(crg: CrgAdapter) -> CrgAdapter | None:
+    """Open the copy before solving, so an unreadable index cannot fail mid-solve."""
+    try:
+        _ = crg.get_impact_radius([])
+    except (sqlite3.Error, CodeReviewGraphError) as error:
+        print(f"warning: CRG index unreadable, planning without it: {error}", file=sys.stderr)
+        return None
+    return crg
 
 
 def _plan(root: Path, request: Request, *, force_single_batch: bool) -> Result:
@@ -83,17 +98,17 @@ def _plan(root: Path, request: Request, *, force_single_batch: bool) -> Result:
 
 
 def _publish(output: Path, document: bytes) -> None:
-    descriptor, name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
-    draft = Path(name)
+    """Link a complete draft to the output; an output that appeared meanwhile raises."""
+    draft = output.with_name(f".{output.name}.{secrets.token_hex(8)}")
+    descriptor = os.open(draft, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             _ = stream.write(document)
             stream.flush()
             os.fsync(stream.fileno())
-        _ = draft.replace(output)
-    except BaseException:
+        os.link(draft, output)
+    finally:
         draft.unlink(missing_ok=True)
-        raise
 
 
 def main(argv: list[str] | None = None) -> int:
