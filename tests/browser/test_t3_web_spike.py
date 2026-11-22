@@ -39,6 +39,17 @@ def test_runtime_uncertainty_and_stale_result(page: Page) -> None:
     expect(page.locator("#review")).to_have_text("No evidence")
 
 
+def test_late_completion_arrives_while_cancel_is_unconfirmed(page: Page) -> None:
+    _ = page.goto(DEMO.as_uri())
+    page.get_by_role("button", name="Request cancellation").click()
+    expect(page.locator("#runtime")).to_have_text("Cancellation requested · stop unconfirmed")
+    page.get_by_role("button", name="Complete A runtime").click()
+    expect(page.locator("#runtime")).to_have_text("Completed")
+    expect(page.locator("#review")).to_have_text("Evidence ready · awaiting review")
+    expect(page.locator("#review-task")).to_be_visible()
+    expect(page.get_by_role("button", name="Complete A runtime")).to_be_disabled()
+
+
 def test_question_answer_does_not_approve_permission(page: Page) -> None:
     _ = page.goto(DEMO.as_uri())
     page.get_by_role("button", name="Answer fixture question").click()

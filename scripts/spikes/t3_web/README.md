@@ -4,6 +4,7 @@ Open [index.html](index.html) in a browser from your checkout. No server, build,
 
 - Select **Complete A runtime**. The draft appears, but B stays blocked.
 - Select **Accept A evidence**. B becomes ready. The demo does not start B.
+- Reset. Request cancellation, then complete A. The stop was not confirmed, so a late completion shows as Completed with evidence.
 - Reset. Request cancellation, then disconnect. The stop remains unconfirmed, and the runtime becomes unknown.
 - Load the replacement fixture and replay the old completion. A-02 stays active and has no evidence.
 - Answer the fixture question. Provider permission stays pending. Use T3 itself for a real permission decision.
