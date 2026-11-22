@@ -42,8 +42,8 @@ class Unresolved(RuntimeError):
 class Launch(msgspec.Struct, frozen=True):
     projectId: str
     threadId: str
-    runId: str
-    status: Status
+    runId: str | None
+    status: Status | None
 
 
 class Run(msgspec.Struct, frozen=True):
@@ -62,8 +62,8 @@ class Read(msgspec.Struct, frozen=True):
 
 class Wait(msgspec.Struct, frozen=True):
     threadId: str
-    runId: str
-    status: Status
+    runId: str | None
+    status: Status | Literal["idle"]
     timedOut: bool
 
 
