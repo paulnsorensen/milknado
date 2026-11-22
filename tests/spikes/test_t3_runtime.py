@@ -5,8 +5,18 @@ from sqlite3 import connect
 
 import pytest
 
-from scripts.spikes.t3_runtime.backend import Journal, Unresolved
-from scripts.spikes.t3_runtime.demo import Fixture, serve
+from scripts.spikes.t3_runtime.backend import Journal, RunRef, Unresolved
+from scripts.spikes.t3_runtime.demo import Fixture, ToolCall, serve
+
+
+def _replying(monkeypatch: pytest.MonkeyPatch, reply: object) -> Fixture:
+    fixture = Fixture()
+
+    def invoke(_call: ToolCall) -> object:
+        return reply
+
+    monkeypatch.setattr(fixture, "invoke", invoke)
+    return fixture
 
 
 def test_dependency_and_recovery(tmp_path: Path) -> None:
@@ -79,3 +89,26 @@ def test_cancel_ack_is_not_completion_and_approval_is_unsupported(tmp_path: Path
             journal.accept(a)
         with pytest.raises(Unresolved, match="A is not accepted"):
             _ = journal.start("B")
+
+
+def test_idle_wait_reply_is_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    idle = {"threadId": "thread-1", "runId": None, "status": "idle", "timedOut": False}
+    with (
+        serve(_replying(monkeypatch, idle)) as backend,
+        pytest.raises(Unresolved, match="Wait reply does not identify the bound run"),
+    ):
+        _ = backend.wait(RunRef(backend.environment, "thread-1", "run-1"))
+
+
+def test_unbound_launch_reply_is_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+    unbound = {
+        "projectId": "fixture-project",
+        "threadId": "thread-1",
+        "runId": None,
+        "status": None,
+    }
+    with (
+        serve(_replying(monkeypatch, unbound)) as backend,
+        pytest.raises(Unresolved, match="Launch did not bind"),
+    ):
+        _ = backend.start("A", "request-key")
