@@ -148,3 +148,5 @@
 
 2026-11-18 · 240f8798b8911449 · merged · architecture/web-metaharness-view.md · Add an unapproved pluggable execution backend proposal: goal/runtime ownership, durable attempt mapping, cancellation scopes, capabilities, and live-trial criteria. Sol boundary check and parent source verification reject a drop-in LoopPort claim. Four frozen probes pass after one section-opening repair.
 
+
+2026-11-22 · wiki-harvest · merged · conventions/build-and-gates.md · Reconcile the gate page with the justfile: concurrent lanes, serial real-process and coverage steps, slice guard, depth ratchet, and web and browser suites.
