@@ -2,10 +2,12 @@ import json
 import os
 import resource
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Mapping
+from contextlib import closing
 from pathlib import Path
 from typing import Literal, ParamSpec, TypeVar
 
@@ -111,18 +113,33 @@ def _corrupt_index(project: Path) -> None:
     _ = index.write_bytes(b"not a SQLite database\n" * 8)
 
 
-@pytest.mark.parametrize("index", ["none", "built", "corrupt"])
+def _damage_file_lookup(project: Path) -> None:
+    """Overwrite the file-path index page; the header and schema stay readable."""
+    index = project / ".code-review-graph" / "graph.db"
+    query = "SELECT page_size, rootpage FROM pragma_page_size, sqlite_master WHERE name = ?"
+    with closing(sqlite3.connect(index)) as db:
+        cursor = db.execute(query, ("idx_nodes_file",))
+        page_size, page = msgspec.convert(cursor.fetchone(), type=tuple[int, int], strict=True)
+    with index.open("r+b") as stream:
+        _ = stream.seek((page - 1) * page_size)
+        _ = stream.write(b"\xff" * page_size)
+
+
+@pytest.mark.parametrize("index", ["none", "built", "corrupt", "damaged"])
 def test_plan_writes_only_output(
     project: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
-    index: Literal["none", "built", "corrupt"],
+    index: Literal["none", "built", "corrupt", "damaged"],
 ) -> None:
     match index:
         case "built":
             _build_index(project, tmp_path / "home")
         case "corrupt":
             _corrupt_index(project)
+        case "damaged":
+            _build_index(project, tmp_path / "home")
+            _damage_file_lookup(project)
         case "none":
             pass
     manifest = _request(project, DEPENDENT)
@@ -135,9 +152,10 @@ def test_plan_writes_only_output(
     assert result.plan.batches == DEPENDENT_BATCHES
     assert result.plan.solver_status == "OPTIMAL"
     assert result.crg_index_present is (index == "built")
-    assert ("CRG index unreadable" in capsys.readouterr().err) is (index == "corrupt")
+    warnings = capsys.readouterr().err.count("CRG index unreadable")
+    assert warnings == (index in {"corrupt", "damaged"})
     umask = _umask()
-    assert output.stat().st_mode & 0o777 == 0o644 & ~umask
+    assert output.stat().st_mode & 0o777 == 0o600 & ~umask
 
 
 def _umask() -> int:

@@ -3,13 +3,13 @@
 import argparse
 import errno
 import os
-import secrets
 import shutil
 import sqlite3
 import sys
 import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Literal, TypedDict, cast
 
@@ -59,17 +59,7 @@ def _index_copy(root: Path) -> Generator[CrgAdapter | None, None, None]:
         for source in (index, index.with_name(f"{index.name}-wal")):
             if source.is_file():
                 _ = shutil.copyfile(source, copy.with_name(source.name))
-        yield _readable(CrgAdapter(Path(scratch)))
-
-
-def _readable(crg: CrgAdapter) -> CrgAdapter | None:
-    """Open the copy before solving, so an unreadable index cannot fail mid-solve."""
-    try:
-        _ = crg.get_impact_radius([])
-    except (sqlite3.Error, CodeReviewGraphError) as error:
-        print(f"warning: CRG index unreadable, planning without it: {error}", file=sys.stderr)
-        return None
-    return crg
+        yield CrgAdapter(Path(scratch))
 
 
 def _plan(root: Path, request: Request, *, force_single_batch: bool) -> Result:
@@ -83,14 +73,21 @@ def _plan(root: Path, request: Request, *, force_single_batch: bool) -> Result:
             "new_relationships": request.new_relationships or [],
         }
     )
+    solve = partial(
+        plan_batches,
+        manifest.changes,
+        request.budget,
+        new_relationships=manifest.new_relationships,
+        root=root,
+    )
     with _index_copy(root) as crg:
-        plan = plan_batches(
-            manifest.changes,
-            request.budget,
-            crg=crg,
-            new_relationships=manifest.new_relationships,
-            root=root,
-        )
+        try:
+            plan = solve(crg=crg)
+        except (sqlite3.Error, CodeReviewGraphError) as error:
+            # Damage anywhere in the index surfaces only when a query reads that page.
+            print(f"warning: CRG index unreadable, planning without it: {error}", file=sys.stderr)
+            crg = None
+            plan = solve(crg=None)
     count = plan.mega_batch_change_count
     if count is not None and not force_single_batch:
         raise MegaBatchAborted(change_count=count, threshold=MEGA_BATCH_THRESHOLD)
@@ -99,8 +96,8 @@ def _plan(root: Path, request: Request, *, force_single_batch: bool) -> Result:
 
 def _publish(output: Path, document: bytes) -> None:
     """Link a complete draft to the output; an output that appeared meanwhile raises."""
-    draft = output.with_name(f".{output.name}.{secrets.token_hex(8)}")
-    descriptor = os.open(draft, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    descriptor, name = tempfile.mkstemp(prefix=f".{output.name}.", dir=output.parent)
+    draft = Path(name)
     try:
         with os.fdopen(descriptor, "wb") as stream:
             _ = stream.write(document)

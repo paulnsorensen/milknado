@@ -23,7 +23,7 @@ The `plan` object has the same fields as the MCP `milknado_plan_batches` result.
 The CLI writes one file: its output. It writes nothing in the project root.
 It writes the JSON to a temporary file in the output directory.
 Then it hard-links that file to the output path and deletes the temporary file.
-The output has mode 0644, less the umask. The output directory must support hard links.
+The output has mode 0600, less the umask, so only its owner can read it. The output directory must support hard links.
 A failed write deletes the temporary file, so the output is never partial or empty.
 An existing output stops the run before planning.
 The link never replaces a file. If another run publishes a plan to the same path during the solve, the CLI exits 1 and keeps that plan.
@@ -31,10 +31,11 @@ The link never replaces a file. If another run publishes a plan to the same path
 If `.code-review-graph/graph.db` exists, the CLI copies it, and its `-wal` file if present, to a temporary directory.
 The CRG adapter reads that copy, and the CLI then deletes the directory.
 Opening a CRG `GraphStore` sets WAL mode and runs schema migrations, so a read in place writes files next to the database.
-The CLI opens the copy before planning. If the copy is unreadable, the CLI prints one warning and plans from the explicit dependencies only.
+The solver reads the copy during planning. Damage can be in any page, so a read can fail at the header or at a later file lookup.
+If a read fails, the CLI prints one warning and plans again from the explicit dependencies only.
 The CLI never runs the CRG executable, so a missing or stale index stays missing or stale.
 Do not run a CRG build during planning, because a copy taken during a write can be inconsistent.
-The result field `crg_index_present` reports that an index file existed and was read. It does not report freshness or file coverage.
+The result field `crg_index_present` reports that an index file existed and the plan used it. It does not report freshness or file coverage.
 The CLI does not append telemetry to `.milknado/calibration.jsonl`.
 See [CRG adapter](../../../src/milknado/adapters/crg.py#L61-L135).
 
