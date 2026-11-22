@@ -14,32 +14,38 @@ The budget of 1 marks both batches oversized. The flag `--force-single-batch` pe
 Bad input exits 1 without a plan. The output file must not exist.
 
 Version 1 is a spike envelope around the MCP change lists. Milknado validates those lists as part of its own v2 manifest.
-The application seam validates, batches, and serializes the plan without a graph application call.
-See [application planner](../../../src/milknado/app/plan_batches.py#L44-L116).
+The CLI composes public slice functions: `decode_manifest`, the batching solver, and its mega-batch threshold.
+It does not call the [application planner](../../../src/milknado/app/plan_batches.py#L100-L116), because that call refreshes the index and appends telemetry.
+The `plan` object has the same fields as the MCP `milknado_plan_batches` result.
 
 ## Intelligence and writes
 
-The JSON goes to a file because the external CRG CLI prints build progress to stdout.
-The result field `crg_index_present` reports file presence, not index freshness, successful use, or coverage of any file.
-The application logs its fallback if CRG setup fails. A missing Python package is an import failure, not this fallback.
+The CLI writes one file: its output. It writes nothing in the project root.
+It writes the JSON to a temporary file in the output directory, then renames that file into place.
+A failed write deletes the temporary file, so the output is never partial or empty.
+An existing output stops the run before planning.
+
+If `.code-review-graph/graph.db` exists, the CLI copies it, and its `-wal` file if present, to a temporary directory.
+The CRG adapter reads that copy, and the CLI then deletes the directory.
+Opening a CRG `GraphStore` sets WAL mode and runs schema migrations, so a read in place writes files next to the database.
+The CLI never runs the CRG executable, so a missing or stale index stays missing or stale.
+Do not run a CRG build during planning, because a copy taken during a write can be inconsistent.
+The result field `crg_index_present` reports that an index file existed and was read. It does not report freshness or file coverage.
+The CLI does not append telemetry to `.milknado/calibration.jsonl`.
 See [CRG adapter](../../../src/milknado/adapters/crg.py#L61-L135).
 
-The command above produced `.code-review-graph/graph.db` and its companion `.gitignore`.
-The empty fixture confirms index setup, not impact enrichment. To exercise fallback, invoke the same module with
-`env PATH="$fixture" .venv/bin/python` in place of the `uv run` prefix on a fresh fixture.
-That run produced no CRG index, logged the missing executable, and preserved the explicit dependency.
-Both runs appended one record to `.milknado/calibration.jsonl`. A mega-batch rejection happens before that append, but after possible CRG writes.
-The CLI creates the output file before planning, so an existing output stops the run before any index or telemetry write.
-A planning failure deletes that empty output file.
-See [telemetry](../../../src/milknado/domains/planning/telemetry.py#L19-L41).
+In one manual run, `code-review-graph build` stored absolute file paths, and the solver queried relative change paths.
+No query matched, so that plan used only the explicit dependencies.
 
 ## Next extraction cut
 
 One Python 3.12 process with `-X importtime` and no CRG executable measured cumulative import times of
 14 ms for the initial application seam, 212 ms for OR-Tools CP-SAT, and 152 ms for the deferred CRG adapter.
-These are one-run measurements, not a performance benchmark. Missing the executable does not remove the Python adapter dependency.
+These are one-run measurements of an earlier version, not a performance benchmark. The CLI now imports the CRG adapter at startup.
 
-Keep manifest validation, the solver, and result serialization together in a callable that accepts caller-supplied intelligence.
-Keep external index refresh and telemetry on the Milknado orchestration side of that cut.
+This CLI is the cut in script form. It keeps manifest validation, the solver, and serialization together.
+It takes intelligence from an existing index or from no index, and it leaves index refresh and telemetry to Milknado orchestration.
+A library extraction moves that composition into a callable that accepts a caller-supplied CRG port.
+That extraction must also resolve the path mismatch between change paths and the index.
 Leave runtime launch, graph application, admission, and acceptance outside the call.
 This spike reuses installed Milknado code; it does not extract a standalone library or implement the external CRG engine.
