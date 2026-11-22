@@ -29,7 +29,8 @@ The empty fixture confirms index setup, not impact enrichment. To exercise fallb
 `env PATH="$fixture" .venv/bin/python` in place of the `uv run` prefix on a fresh fixture.
 That run produced no CRG index, logged the missing executable, and preserved the explicit dependency.
 Both runs appended one record to `.milknado/calibration.jsonl`. A mega-batch rejection happens before that append, but after possible CRG writes.
-The planner writes before opening the output file. If output creation fails, it does not roll back index or telemetry writes.
+The CLI creates the output file before planning, so an existing output stops the run before any index or telemetry write.
+A planning failure deletes that empty output file.
 See [telemetry](../../../src/milknado/domains/planning/telemetry.py#L19-L41).
 
 ## Next extraction cut

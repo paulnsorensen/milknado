@@ -87,6 +87,18 @@ def test_invalid_request(
     assert not (project / ".milknado").exists()
 
 
+def test_existing_output_stops_before_planning(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    output = project.parent / "plan.json"
+    _ = output.write_text("keep\n")
+    changes = [{"id": "api", "path": "api.py", "description": "Add API"}]
+    assert _run(project, {"version": 1, "budget": 1, "changes": changes}) == 1
+    assert "File exists" in capsys.readouterr().err
+    assert output.read_text() == "keep\n"
+    assert not (project / ".milknado").exists()
+
+
 def test_mega_batch_requires_explicit_override(
     project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

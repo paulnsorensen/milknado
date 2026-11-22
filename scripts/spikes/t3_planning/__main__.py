@@ -38,20 +38,24 @@ def main(argv: list[str] | None = None) -> int:
         if not root.is_dir():
             raise ValueError("project root must be a directory")
         request = msgspec.json.decode(args["request"].read_bytes(), type=Request)
-        plan = plan_batches(
-            request.changes,
-            request.budget,
-            root,
-            request.new_relationships,
-            force_single_batch=args["force_single_batch"],
-        )
-        result = {
-            "version": 1,
-            "plan": plan,
-            "crg_index_present": (root / ".code-review-graph" / "graph.db").is_file(),
-        }
         with args["output"].open("x", encoding="utf-8") as output:
-            _ = output.write(json.dumps(result, indent=2) + "\n")
+            try:
+                plan = plan_batches(
+                    request.changes,
+                    request.budget,
+                    root,
+                    request.new_relationships,
+                    force_single_batch=args["force_single_batch"],
+                )
+                result = {
+                    "version": 1,
+                    "plan": plan,
+                    "crg_index_present": (root / ".code-review-graph" / "graph.db").is_file(),
+                }
+                _ = output.write(json.dumps(result, indent=2) + "\n")
+            except BaseException:
+                args["output"].unlink(missing_ok=True)
+                raise
     except (OSError, ValueError, MegaBatchAborted) as error:
         print(error, file=sys.stderr)
         return 1
