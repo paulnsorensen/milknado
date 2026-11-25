@@ -88,11 +88,6 @@
     },
     {
       "rule": "SB-01",
-      "from": "src/milknado/cli/graph.py",
-      "to": "src/milknado/domains/graph/render_dot.py"
-    },
-    {
-      "rule": "SB-01",
       "from": "src/milknado/domains/coordinator/projection.py",
       "to": "src/milknado/loop/sessions/__init__.py"
     }
