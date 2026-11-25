@@ -11,7 +11,7 @@ The three ports and their adapters:
 | Port (protocols.py) | Adapter | External system |
 |---|---|---|
 | `GitPort` | `git.GitAdapter` | `git` CLI + `mergiraf` |
-| `LoopPort` | `loop.LoopAdapter` | `milknado.loop` (vendored engine, subprocess agent loops) |
+| `LoopPort` | `milknado.loop.LoopAdapter` (re-exported by `milknado.adapters`) | `milknado.loop` (vendored engine, subprocess agent loops) |
 | `CrgPort` | `crg.CrgAdapter` | `code-review-graph` library + CLI |
 
 Code intelligence is not a Milknado adapter boundary. Planning and execution agents inspect
@@ -35,9 +35,17 @@ abort that *itself* fails raises `RebaseAbortError` — fail-loud, since the wor
 is now in an unknown state. `squash_and_commit` swallows a `merge-base` failure
 (soft-reset is best-effort) and only commits when there are staged changes.
 
-## loop.py — LoopPort
+## LoopAdapter — LoopPort
 
-The largest adapter (~272 lines). Wraps the vendored `milknado.loop` engine, which
+`LoopAdapter` lives in the loop slice at `src/milknado/loop/_loop_adapter.py`, with its
+helpers in `_loop_types.py`, `_loop_local_runs.py`, and `_loop_session.py`. The loop crust
+exports it, and `milknado.adapters` re-exports it, so wiring code does not import loop
+internals. The adapter reaches `PreservedWorkerRun` and `build_completion_verifier` through
+the execution crust. The slice map allows `loop -> execution` for this reason (owner
+decision 2026-10-28). Execution does not import loop: `RunStatus`, `StopReason`, and
+`CompletionVerdict` live in `src/milknado/domains/common/run_lifecycle.py`.
+
+It wraps the vendored loop engine, which
 spawns coding-agent subprocesses ("loops") that iterate until a completion
 signal. This is where Milknado's parallel execution actually happens.
 
@@ -97,4 +105,4 @@ operations shell out to the `code-review-graph` CLI via `_run_crg`.
 _Source: PR #423 cure · Updated: 2026-09-07 · Supersedes: prior fail-open missing-verifier behavior_
 
 [^code-intelligence-boundary]: `src/milknado/domains/planning/context.py:11-36`; `src/milknado/domains/common/agent_argv.py:13-74`
-[^verification-outcomes]: `src/milknado/domains/common/protocols.py:21-24`; `src/milknado/adapters/loop.py:207-213`; `src/milknado/domains/execution/run_loop/__init__.py:488-494`; PR #423.
+[^verification-outcomes]: `src/milknado/domains/common/protocols.py:21-24`; `src/milknado/loop/_loop_adapter.py` (`verify_spec`); `src/milknado/domains/execution/run_loop/__init__.py:488-494`; PR #423.

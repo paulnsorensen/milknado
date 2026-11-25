@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from milknado.domains.common import (
     ProgressEvent,
+    RunStatus,
     SessionInput,
     TerminalRunOutcome,
     resolve_flavor_profile,
@@ -53,7 +54,6 @@ from milknado.domains.execution.run_loop.state import (
     summarize_description,
 )
 from milknado.domains.graph import ConcurrencyLimitReached
-from milknado.loop import RunStatus
 
 __all__ = ["RunLoop", "RunLoopResult", "TerminalRunOutcome"]
 

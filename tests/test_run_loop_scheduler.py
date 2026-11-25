@@ -6,14 +6,13 @@ from typing import cast
 
 import pytest
 
-from milknado.domains.common import ProgressEvent
+from milknado.domains.common import ProgressEvent, RunStatus
 from milknado.domains.common.protocols import LoopPort
 from milknado.domains.execution.executor import Executor
 from milknado.domains.execution.run_loop import RunLoop
 from milknado.domains.execution.run_loop._scheduler import Scheduler
 from milknado.domains.execution.run_loop.state import TerminalRunState
 from milknado.domains.graph import MikadoGraph
-from milknado.loop import RunStatus
 
 
 def test_scheduler_lifecycle_records_immutable_history_and_attempts() -> None:

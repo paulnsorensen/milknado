@@ -12,22 +12,13 @@ from typing import TYPE_CHECKING, Final, cast
 
 import psutil
 
-from milknado.adapters._loop_local_runs import (
-    UnconfirmedReviewStop,
-    drain_review_run,
-    drain_verify_run,
-)
-from milknado.adapters._loop_session import LoopSessionMixin
-from milknado.adapters._loop_types import ReviewVerdict
-from milknado.adapters._loop_types import RunHandleView as _RunHandle
-from milknado.adapters._loop_types import (
-    build_verify_prompt as _build_verify_prompt_impl,
-)
 from milknado.domains.common import (
     CompletionTimeout,
+    CompletionVerdict,
     Gate,
     NodeAgentSession,
     ProgressEvent,
+    RunStatus,
     TerminalRunOutcome,
     VerifySpecResult,
     WorkerOwner,
@@ -35,17 +26,23 @@ from milknado.domains.common import (
 )
 from milknado.domains.execution import PreservedWorkerRun, build_completion_verifier
 from milknado.domains.graph import default_worker_db_path, open_standalone_worker_evidence
-from milknado.loop import (
-    CompletionVerdict,
-    EventType,
-    QueueEmitter,
-    RunConfig,
-    RunManager,
-    RunStatus,
-    loop_protection,
+from milknado.loop._events import EventType, QueueEmitter
+from milknado.loop._loop_local_runs import (
+    UnconfirmedReviewStop,
+    drain_review_run,
+    drain_verify_run,
+)
+from milknado.loop._loop_session import LoopSessionMixin
+from milknado.loop._loop_types import ReviewVerdict
+from milknado.loop._loop_types import RunHandleView as _RunHandle
+from milknado.loop._loop_types import (
+    build_verify_prompt as _build_verify_prompt_impl,
 )
 from milknado.loop._process_gate import SpawnOptions
 from milknado.loop._process_lifecycle import ProtectedWorker, spawn_protected
+from milknado.loop._protection import loop_protection
+from milknado.loop._run_types import RunConfig
+from milknado.loop.manager import RunManager
 
 if TYPE_CHECKING:
     from milknado.loop._events import Event, EventData

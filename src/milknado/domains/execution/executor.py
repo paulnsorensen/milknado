@@ -23,7 +23,7 @@ from tenacity import (
     wait_exponential,
 )
 
-from milknado.domains.common import ReviewResult
+from milknado.domains.common import ReviewResult, RunStatus
 from milknado.domains.common.agent_argv import NodeAgentSession, capture_session_id
 from milknado.domains.common.errors import (
     GitOperationError,
@@ -86,7 +86,6 @@ from milknado.domains.execution._stop import (
 )
 from milknado.domains.execution.completion import NO_GATES_CONFIGURED_MESSAGE
 from milknado.domains.graph import StartTaskAttempt
-from milknado.loop import RunStatus
 
 if TYPE_CHECKING:
     from milknado.domains.common.protocols import (

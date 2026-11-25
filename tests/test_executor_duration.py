@@ -9,6 +9,7 @@ import pytest
 
 from milknado.domains.common import (
     ProgressEvent,
+    RunStatus,
     SessionInput,
     SessionView,
     TerminalRunOutcome,
@@ -18,7 +19,6 @@ from milknado.domains.common.config import Gate
 from milknado.domains.common.types import NodeStatus, RebaseResult
 from milknado.domains.execution import ExecutionConfig, Executor
 from milknado.domains.graph import MikadoGraph
-from milknado.loop import RunStatus
 
 # ---------------------------------------------------------------------------
 # Minimal fakes (mirrors test_execution.py without reimporting)

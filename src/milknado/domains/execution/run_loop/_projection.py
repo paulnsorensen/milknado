@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from milknado.domains.common import RunStatus
 from milknado.domains.execution.run_loop.state import (
     ActiveRunFacts,
     ActiveRunState,
@@ -7,7 +8,6 @@ from milknado.domains.execution.run_loop.state import (
     RunActionState,
     RunLoopState,
 )
-from milknado.loop import RunStatus
 
 
 def _action_reasons(run: ActiveRunFacts) -> RunActionState:

@@ -286,7 +286,7 @@ class TestStatus:
         assert result.exit_code == 0
         assert "/tmp/milknado-wt" in result.output
 
-    @patch("milknado.adapters.loop.LoopAdapter")
+    @patch("milknado.adapters.LoopAdapter")
     def test_enriches_running_node_with_run_state(
         self, mock_loop_cls: MagicMock, project_dir: Path
     ) -> None:
@@ -309,7 +309,7 @@ class TestStatus:
         assert result.exit_code == 0
         mock_loop_cls.return_value.get_run.assert_called_once_with("run-42")  # pyright: ignore[reportAny]
 
-    @patch("milknado.adapters.loop.LoopAdapter")
+    @patch("milknado.adapters.LoopAdapter")
     def test_run_state_enrichment_is_best_effort(
         self, mock_loop_cls: MagicMock, project_dir: Path
     ) -> None:

@@ -22,6 +22,7 @@ import pytest
 from _pytest.logging import LogCaptureFixture
 
 import milknado.loop._agent as agent_mod
+from milknado.domains.common import RunStatus
 from milknado.loop._agent import (
     _OUTPUT_TAIL_CHARS,  # pyright: ignore[reportPrivateUsage]
     AgentResult,
@@ -38,7 +39,6 @@ from milknado.loop._events import (
     QueueEmitter,
 )
 from milknado.loop._output import BoundedOutput
-from milknado.loop._run_types import RunStatus
 from milknado.loop.adapters import (
     AdapterEvent,
     CountsWhat,

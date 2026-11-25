@@ -12,12 +12,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import (
     CONTROLLER_MASTER_ENV,
     NodeKind,
     ProgressEvent,
     RunResult,
+    RunStatus,
     SessionInput,
     SessionView,
     TerminalRunOutcome,
@@ -48,7 +48,7 @@ from milknado.domains.graph import (
     MikadoGraph,
     StartTaskAttempt,
 )
-from milknado.loop import RunStatus
+from milknado.loop._loop_adapter import LoopAdapter
 
 pytestmark = pytest.mark.real_process
 
@@ -1993,7 +1993,7 @@ class TestLoopAdapterLogDir:
             captured_configs.append(config)
             return FakeRun(state=FakeRunState(run_id=run_id or "run-test"))
 
-        from milknado.adapters.loop import LoopAdapter
+        from milknado.loop._loop_adapter import LoopAdapter
 
         adapter = LoopAdapter(agent="claude")
 

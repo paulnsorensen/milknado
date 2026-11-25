@@ -9,9 +9,9 @@ from typing import cast
 
 import pytest
 
-from milknado.adapters.loop import LoopAdapter
 from milknado.domains.common import RunResult
 from milknado.loop._agent import AgentResult
+from milknado.loop._loop_adapter import LoopAdapter
 from milknado.mcp._core import Response
 from milknado.mcp.run import milknado_deposit_review
 from milknado.mcp.server import open_graph

@@ -127,6 +127,10 @@ forbidden_modules = [
     "milknado.domains.graph._verification",
     "milknado.domains.wiki._locate",
     "milknado.domains.wiki._serialize",
+    "milknado.loop._loop_adapter",
+    "milknado.loop._loop_local_runs",
+    "milknado.loop._loop_session",
+    "milknado.loop._loop_types",
 ]
 allow_indirect_imports = true
 
@@ -163,7 +167,6 @@ max-statements = 40
 
 # These production exceptions are the measured baseline for issue #331. Each rule
 # remains selected globally; remove an entry when its owning module is simplified.
-"src/milknado/adapters/loop.py" = ["ANN401", "ARG002", "PLR0913"]
 "src/milknado/app/node.py" = ["ANN001", "B904", "PLR0913"]
 "src/milknado/app/plan.py" = ["PLR0913", "UP022"]
 "src/milknado/app/plan_batches.py" = ["BLE001", "PLR0913"]
@@ -208,6 +211,7 @@ max-statements = 40
 "src/milknado/domains/planning/planner.py" = ["BLE001", "PLR0913"]
 "src/milknado/domains/wiki/_locate.py" = ["PTH100", "PTH208", "SIM105"]
 "src/milknado/loop/_agent.py" = ["ANN401", "B009", "BLE001", "PLR0913", "PLR0915", "PTH105", "SIM102", "SIM105"]
+"src/milknado/loop/_loop_adapter.py" = ["ANN401", "ARG002", "PLR0913"]
 "src/milknado/loop/_run_types.py" = ["PTH201"]
 "src/milknado/loop/adapters/_generic.py" = ["ARG002"]
 "src/milknado/loop/engine.py" = ["BLE001", "PLR0913", "PLR0915", "SIM102", "SIM108"]
@@ -347,7 +351,6 @@ allow = [
 max_file_lines = 300
 
 [tool.milknado.quality.file_exceptions]
-"src/milknado/adapters/loop.py" = { max_lines = 458, reason = "Pre-existing adapter; keep its measured ceiling until the adapter slice is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/adapters/git.py" = { max_lines = 365, reason = "Pre-existing Git adapter; keep its measured ceiling until the adapter slice is split." }
 "src/milknado/app/run.py" = { max_lines = 664, reason = "Pre-existing controller; keep its measured ceiling until execution orchestration is split. Bumped from 662 for the shared apply_runnable_root_exclusions helper used by both the CLI run path and the web run host." }
 "src/milknado/cli/__init__.py" = { max_lines = 328, reason = "Pre-existing CLI entry point; keep its measured ceiling until commands are split. Bumped from 326 for the doctor host pool report." }
@@ -363,5 +366,6 @@ max_file_lines = 300
 "src/milknado/domains/graph/graph.py" = { max_lines = 775, reason = "Pre-existing graph facade; keep its measured ceiling until the facade is split. Bumped from 756 for the atomic edit_node facade method (web AC-12)." }
 "src/milknado/domains/planning/manifest.py" = { max_lines = 349, reason = "Pre-existing planning manifest boundary; keep its measured ceiling until decoding is split." }
 "src/milknado/loop/_agent.py" = { max_lines = 1390, reason = "Pre-existing agent runner; keep its measured ceiling until process phases are split." }
+"src/milknado/loop/_loop_adapter.py" = { max_lines = 458, reason = "Pre-existing adapter, moved from adapters/loop.py into the loop slice; keep its measured ceiling until the adapter is split. Bumped from 455 for the configurable review_timeout_seconds deadline on top of the fail-closed verify_spec change." }
 "src/milknado/loop/engine.py" = { max_lines = 706, reason = "Pre-existing loop engine; keep its measured ceiling until phases are split." }
 "src/milknado/mcp/todo_mutate.py" = { max_lines = 336, reason = "Pre-existing MCP mutation boundary; keep its measured ceiling until tool groups are split." }

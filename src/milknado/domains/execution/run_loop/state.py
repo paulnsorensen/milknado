@@ -3,8 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from milknado.domains.common import SessionView
-from milknado.loop import RunStatus
+from milknado.domains.common import RunStatus, SessionView
 
 _US_PREFIX_RE = re.compile(r"^US-\d+:\s*")
 

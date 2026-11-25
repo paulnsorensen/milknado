@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-from milknado.domains.common import SessionContext, SessionEvent
+from milknado.domains.common import RunStatus, SessionContext, SessionEvent
 from milknado.domains.common.agent_argv import validate_worker_argv
 from milknado.loop._agent import (
     AgentResult,
@@ -48,7 +48,6 @@ from milknado.loop._run_types import (
     Command,
     RunConfig,
     RunState,
-    RunStatus,
 )
 from milknado.loop._runner import run_command
 from milknado.loop.adapters import CLIAdapter, select_adapter
