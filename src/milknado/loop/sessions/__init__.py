@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from milknado.loop.sessions._capabilities import RuntimeCapabilities, runtime_capabilities
 from milknado.loop.sessions._channel import SessionChannel, SessionSink
 from milknado.loop.sessions._factory import create_protocol, is_supported
 from milknado.loop.sessions._lifecycle import (
@@ -25,7 +24,6 @@ __all__ = [
     "ProtocolStep",
     "ProviderSessionIdentity",
     "RecoveryReceipt",
-    "RuntimeCapabilities",
     "RuntimeRecoveryRequest",
     "RuntimeActionReceipt",
     "RuntimePreflightError",
@@ -38,7 +36,6 @@ __all__ = [
     "create_protocol",
     "is_supported",
     "run_session",
-    "runtime_capabilities",
     "start_or_resume",
     "submit_runtime_action",
 ]
