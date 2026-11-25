@@ -66,12 +66,14 @@ def _wait_for_exit(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> 
 def _run(nonce: str, path: Path, brief_name: str, command: tuple[str, ...]) -> int:
     for pane_signal in _PANE_SIGNALS:
         _ = signal.signal(pane_signal, _terminate)
-    with Path(brief_name).open("rb") if brief_name != "-" else nullcontext(None) as brief:
+    context = protection_from_env(os.environ, os.environ["MILKNADO_RUN_ID"])
+    with (
+        Path(brief_name).open("rb") if brief_name != "-" else nullcontext(None) as brief,
+        context.evidence.held(),
+    ):
         stdin = brief.fileno() if brief is not None else subprocess.DEVNULL
         options = SpawnOptions(command, None, None, False, stdin, None, subprocess.STDOUT)
-        worker = spawn_protected(
-            options, protection_from_env(os.environ, os.environ["MILKNADO_RUN_ID"])
-        )
+        worker = spawn_protected(options, context)
         try:
             evidence = worker.worker.start_evidence
             if evidence is StartEvidence.STARTUP_FAILED:
