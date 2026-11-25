@@ -8,7 +8,7 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import CONTROLLER_MASTER_ENV
-from milknado.domains.coordinator import ControlEvent, CoordinatorControl, ProviderBinding
+from milknado.domains.coordinator import CoordinatorControl
 from milknado.domains.coordinator import projection as coordinator_projection
 from milknado.domains.coordinator.control_models import (
     DecideGoalReview,
@@ -19,6 +19,7 @@ from milknado.domains.coordinator.control_models import (
 )
 from milknado.domains.coordinator.control_services import CoordinatorServices
 from milknado.domains.coordinator.journal import append_control_event
+from milknado.domains.coordinator.model import ControlEvent, ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
 from milknado.domains.coordinator.recovery import (
     ProviderIdentity,

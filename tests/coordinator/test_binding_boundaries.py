@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.coordinator import ProviderBinding
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import (
     bind_provider_session,
     provider_bindings_for_session,

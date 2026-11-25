@@ -7,8 +7,8 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import NodeKind, NodeSpec
-from milknado.domains.coordinator import ProviderBinding
 from milknado.domains.coordinator.journal import control_history
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import (
     bind_provider_session,
     link_entity,

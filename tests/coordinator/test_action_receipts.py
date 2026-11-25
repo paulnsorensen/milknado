@@ -7,9 +7,9 @@ from typing import cast
 import pytest
 
 from milknado.domains.common import SessionAction, SessionContext, SessionInput
-from milknado.domains.coordinator import ControlEvent, CoordinatorSession, ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
 from milknado.domains.coordinator.journal import append_control_event, control_history
+from milknado.domains.coordinator.model import ControlEvent, CoordinatorSession, ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.graph import MikadoGraph

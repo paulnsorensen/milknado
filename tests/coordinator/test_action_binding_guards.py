@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 
 from milknado.domains.common import SessionContext, SessionInput
-from milknado.domains.coordinator import ProviderBinding
 from milknado.domains.coordinator.commands import CoordinatorAction, submit_coordinator_action
+from milknado.domains.coordinator.model import ProviderBinding
 from milknado.domains.coordinator.persistence import bind_provider_session, link_entity
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.graph import MikadoGraph

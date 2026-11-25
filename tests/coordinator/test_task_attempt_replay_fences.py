@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from milknado.domains.coordinator import CoordinatorSession
+from milknado.domains.coordinator.model import CoordinatorSession
 from milknado.domains.coordinator.workflow import CoordinatorWorkflow
 from milknado.domains.execution import NodeLoopOutcome
 from milknado.domains.graph import GroupWorkspace, MikadoGraph, TaskAttempt, TaskOutcome
