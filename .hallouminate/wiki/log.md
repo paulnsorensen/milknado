@@ -148,3 +148,4 @@
 
 2026-11-18 · 240f8798b8911449 · merged · architecture/web-metaharness-view.md · Add an unapproved pluggable execution backend proposal: goal/runtime ownership, durable attempt mapping, cancellation scopes, capabilities, and live-trial criteria. Sol boundary check and parent source verification reject a drop-in LoopPort claim. Four frozen probes pass after one section-opening repair.
 
+2026-11-25 · 4304eecbdce57597 · merged · architecture/distribution.md · Record why the MCP plugin selects Python 3.13 on the Git and PyPI channels.

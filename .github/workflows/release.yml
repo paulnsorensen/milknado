@@ -72,7 +72,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           tmp=$(mktemp)
           jq -c --arg v "$VERSION" \
-            '.mcpServers.milknado.args = ["--from", "milknado==\($v)", "milknado-mcp"]' \
+            '.mcpServers.milknado.args = ["--python", "3.13", "--from", "milknado==\($v)", "milknado-mcp"]' \
             plugins/milknado/.mcp.json > "$tmp"
           mv "$tmp" plugins/milknado/.mcp.json
           git add plugins/milknado/.mcp.json
