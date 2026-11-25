@@ -74,11 +74,13 @@ def _accepted_launcher_args(version: str) -> tuple[list[str], list[str]]:
     exactly one source of truth.
     """
     main_form = [
+        "--python",
+        "3.13",
         "--from",
         "git+https://github.com/paulnsorensen/milknado@main",
         "milknado-mcp",
     ]
-    pinned_form = ["--from", f"milknado=={version}", "milknado-mcp"]
+    pinned_form = ["--python", "3.13", "--from", f"milknado=={version}", "milknado-mcp"]
     return main_form, pinned_form
 
 
@@ -501,28 +503,28 @@ class TestLauncherFormAcceptance:
     def test_unpinned_legacy_form_is_rejected(self) -> None:
         # the pre-channels launcher floated the server independently of the ref;
         # it must no longer satisfy acceptance, or the channels coherence is a no-op
-        legacy = ["--from", "milknado", "milknado-mcp"]
+        legacy = ["--python", "3.13", "--from", "milknado", "milknado-mcp"]
         assert legacy not in _accepted_launcher_args(_pyproject_version())
 
     def test_version_mismatched_pin_is_rejected(self) -> None:
         # proves the pin is keyed to pyproject, not a hard-coded constant
-        wrong = ["--from", "milknado==0.0.0", "milknado-mcp"]
+        wrong = ["--python", "3.13", "--from", "milknado==0.0.0", "milknado-mcp"]
         assert wrong not in _accepted_launcher_args(_pyproject_version())
 
-    def test_release_rewrite_yields_an_accepted_pinned_form(self) -> None:
-        """Mirror the release workflow's `.mcp.json` rewrite and prove a tag / stable
-        checkout is self-consistent: the rewritten launcher passes the same manifest
-        target change on one side only). Mirrors, does not exec, release.yml's jq."""
+    def test_host_default_python_is_rejected_on_both_channels(self) -> None:
         version = _pyproject_version()
-        data = _read_json(MCP_JSON)
-        servers = _mapping(data["mcpServers"])
-        server = _mapping(servers["milknado"])
-        server["args"] = [
-            "--from",
+        accepted = _accepted_launcher_args(version)
+        for source in (
+            "git+https://github.com/paulnsorensen/milknado@main",
             f"milknado=={version}",
-            "milknado-mcp",
-        ]
-        assert _strings(server["args"]) in _accepted_launcher_args(version)
+        ):
+            assert ["--from", source, "milknado-mcp"] not in accepted
+
+    def test_release_rewrite_yields_an_accepted_pinned_form(self) -> None:
+        version = _pyproject_version()
+        _, pinned_form = _accepted_launcher_args(version)
+        workflow = TestReleaseWorkflow.RELEASE_YML.read_text().replace(r"\($v)", version)
+        assert f"'.mcpServers.milknado.args = {json.dumps(pinned_form)}'" in workflow
 
 
 class TestReadmeDocumentsChannels:
